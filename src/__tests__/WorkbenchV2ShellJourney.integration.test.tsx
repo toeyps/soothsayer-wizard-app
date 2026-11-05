@@ -2,37 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { noticeEl, noticeSentence, openTabStatus, openTabWords, primaryAction } from './helpers/workbenchStatus';
 
-/*
- * Spec: docs/design/handoff/workbench-detail-v2/README.md ("Workbench detail pages v2").
- *
- * The v2 shell was built in six separate passes — KPI tiles on Model fit (phase 1), the
- * score ruler (2), the Health score KPI tiles (3a), the stacked chart card (3b), the status
- * words on the kind tabs + the page-tab row (4a), the header state buttons + the notice line
- * (4b). Each pass has its own tests for its own piece:
- *   - `ScoreRuler.test.tsx` / `HealthScorePage.test.tsx`: the ruler marker, the tiles, the
- *     stack card — the PAGE alone, fed a hand-made preview;
- *   - `BuildModelWindow.test.tsx`: tab words, page tabs, state buttons, notice tone — the
- *     WINDOW alone, with `workspaceManager` mocked;
- *   - `WorkbenchSpineOneButton.integration.test.tsx`: the one-filled-button rule through an
- *     Individual journey that only ever types VALID set points.
- *
- * What none of them follows is ONE user action — typing a set point Rust rejects — through
- * EVERY piece at the same moment, for each model kind, with the real Dashboard + the real
- * Build Model window, the real `workspaceManager` and the fake Rust (which validates like
- * `health_score.rs`). SPEC §6 "Wrong values must warn" lists the pieces that must ALL show:
- *
- *     the red tick + input, a red marker on the band labelled as typed, the Checks sentence,
- *     the kind-tab words ("Fix set point"), the red notice line, Mark complete disabled with
- *     the reason under the button — and (§6 KPI strip / lock text) no score anywhere.
- *
- * This file walks, per kind:
- *
- *   not trained (page tab 2 closed with its reason, no "Next") → Train → the Model fit tiles +
- *   tab words → page tab 2 opens → empty set points (amber everywhere) → a REJECTED set point
- *   (red everywhere, as above) → fixed (everything clears, the score appears) → Mark complete
- *   → "Complete" on the tab, "Files saved …" as the notice, no filled button, "Mark
- *   incomplete" as a text button.
- */
+/* Walks, per kind, one user action through every piece: a set point Rust rejects shows the red tick and input, a red band marker, the Checks sentence, kind-tab words, a red notice, Mark complete disabled with its reason, and no score (SPEC section 6). Real Dashboard, Build Model, `workspaceManager`; fake Rust validates like `health_score.rs`. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -79,13 +49,12 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-// ── reading the v2 shell from outside ───────────────────────────────────────────────────
 
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => bmwEl().querySelector<T>(sel);
 const qa = (sel: string) => Array.from(bmwEl().querySelectorAll<HTMLElement>(sel));
 const tid = (id: string) => `[data-testid="${id}"]`;
 
-/** The open kind tab's status words element (`data-tone`: plain / need / bad / complete). */
+/** The status words element of a kind tab (`data-tone`: plain / need / bad / complete). */
 const words = (id: string) => bmw().getByTestId(`tab-words-${id}`);
 const tabDot = (id: string) => bmw().getByTestId(`tab-status-${id}`).getAttribute('data-dot');
 const healthTab = () => bmw().getByTestId('page-tab-health');
@@ -135,7 +104,7 @@ interface Kind {
     typeWrong: () => Promise<{ field: string; input: string; marker: RegExp; check: RegExp }>;
     /** Correct the rejected one. */
     fix: () => Promise<void>;
-    /** A file Mark complete must have written. */
+    /** A file Mark complete must NOT write (only Export results writes files). */
     file: string;
 }
 
@@ -242,8 +211,7 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         expect(words(k.id).getAttribute('data-tone')).toBe('need');
         expect(tabDot(k.id)).toBe('need');
         expect(openTabStatus(bmwEl())).toBe('Trained');
-        // page tab 2 is open now: no reason; it carries the next-step cue (amber dot + "set points
-        // needed", the kind tab's own verdict) — and there is NO filled button on Model fit
+        // Tab 2 is open with no reason; it shows the cue (amber dot, 'set points needed'); Model fit has no filled button.
         expect(healthTab().getAttribute('aria-disabled')).toBeNull();
         expect(q(tid('page-tab-health-why'))).toBeNull();
         expect(bmw().getByTestId('page-tab-health-cue').textContent).toBe('set points needed');
@@ -295,8 +263,7 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         expect(words(k.id).textContent).toBe('Set points needed');
         expectNoOldShell('empty set points');
 
-        // ── 4) a set point Rust REJECTS: red on the ruler, in the Checks, on the tab, in the notice,
-        //       under the button — and no score anywhere (SPEC §6 "Wrong values must warn") ──────────
+        // A set point Rust REJECTS shows red on the ruler, Checks, tab, notice and under the button, with no score (SPEC section 6).
         const wrong = await k.typeWrong();
         await waitFor(() => expect(checks()).toMatch(wrong.check));
         // (a) the ruler: that tick is an error, every other user tick is fine, ONE marker, labelled as typed
@@ -361,7 +328,7 @@ describe('Workbench detail v2 — one model of each kind through the whole new s
         expect(why()).toBeNull();
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         expect(filled()).toEqual(['mark-complete']);
-        // the score: tiles ready (the lowest score is a whole number in its band colour), the score chart under the set-point chart
+        // the score: tiles ready (lowest score is a whole number in its band colour), score chart under the set-point chart
         expect(kpis().getAttribute('data-state')).toBe('ready');
         const lowest = Number(bmw().getByTestId('score-lowest').textContent);
         expect(Number.isInteger(lowest)).toBe(true);

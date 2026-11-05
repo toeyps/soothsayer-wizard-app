@@ -44,3 +44,7 @@ The user tests the real app (`npm run tauri dev`) and reports what went wrong in
 - Same bug elsewhere?: [other places with the same pattern, or "none found"]
 - Not confirmed / needs the user: [anything you could not check without the running app]
 ```
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

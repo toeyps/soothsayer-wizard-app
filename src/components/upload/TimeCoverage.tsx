@@ -4,11 +4,7 @@ import { computeCoverage } from './setupHelpers';
 
 const LANE_COLORS = (T: Tokens) => [T.s1, T.s2, T.s3, T.s4];
 
-/**
- * "Time coverage": one bar per file on a SHARED time axis, so overlapping files
- * are visible at a glance. Renders nothing when no file has a readable time
- * range (the geometry helper returns null).
- */
+/** One bar per file on a SHARED time axis so overlaps show; renders nothing when no file has a readable time range. */
 export default function TimeCoverage({ T, files }: { T: Tokens; files: CsvFileInfo[] | null | undefined }) {
   const coverage = computeCoverage(files);
   if (!coverage) return null;

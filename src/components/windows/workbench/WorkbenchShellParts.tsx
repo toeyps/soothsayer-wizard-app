@@ -2,16 +2,9 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Loader2 } from 'lucide-react';
 import type { WorkbenchPage } from './workbenchTypes';
 
-/*
- * Small shared pieces of the Workbench shell that both pages sit under:
- * the "Model fit | Health score" page switch (detail header, right side),
- * the scroll area of the page body, the stale banner, and the ONE board shape of
- * every chart-less state with its "Train sensor ↑" text link. Presentational only.
- */
+/* Shared pieces of the Workbench shell under both pages; presentational only. */
 
-/** "Train sensor ↑": the text link every sentence uses to point at the ONE place
- *  to train — `onClick` moves the focus to the header's Train sensor button. Never
- *  a train button of its own. */
+/** 'Train sensor ↑': text link that moves focus to the header's Train sensor button; never a train button of its own. */
 export function TrainSensorLink({ testId, onClick }: { testId: string; onClick: () => void }) {
     return (
         <button type="button" className="tq-inline-link" data-testid={testId} onClick={onClick}>
@@ -20,12 +13,7 @@ export function TrainSensorLink({ testId, onClick }: { testId: string; onClick: 
     );
 }
 
-/**
- * The ONE board shape of every chart-less state: a
- * title, one sentence and an optional mono line. Its actions are text links to
- * the one place for them ("Train sensor ↑", "Model settings", "Running
- * condition ↑") — never a button of its own.
- */
+/** The one board shape of every chart-less state: title, one sentence, optional mono line. Actions are text links, never a button. */
 export function StateBoard({ testId, tone = 'plain', title, text, detail, className }: {
     testId: string;
     tone?: 'plain' | 'bad' | 'run';
@@ -50,32 +38,22 @@ export function StateBoard({ testId, tone = 'plain', title, text, detail, classN
 
 /** What the "Fit no longer in memory" board of both pages can do about it. */
 export interface FitGoneActions {
-    /** "Load it again": fit the same Relation model again from the same settings.
-     *  Nothing about the model changed, so nothing is saved and its status stays
-     *  (a Complete model stays Complete). Must be stable (the pages are memoised). */
+    /** Refit the same Relation model from the same settings; saves nothing, status stays. Must be stable (pages are memoised). */
     onReload: () => void;
     /** Why "Load it again" cannot run right now (a training run owns the engine). */
     reloadDisabledReason?: string;
-    /** "Train sensor ↑" — only for a model Train sensor really trains (not Complete:
-     *  a Complete model is "up to date" there and is never trained by it). */
+    /** Only for a model Train sensor really trains (not Complete: it is 'up to date' there). */
     onGoTrainSensor?: () => void;
     /** Why the last load did not work, or null. */
     error?: string | null;
-    /** The window knows the fit is gone (it was told NOT_FITTED for this model and
-     *  it has not been fitted again since) — also when the live answer of the page's
-     *  own request no longer says so (the tab was left and opened again after a load
-     *  that failed). */
+    /** The window knows the fit is gone (NOT_FITTED seen, not fitted since), even if the page's own request no longer says so. */
     gone?: boolean;
 }
 
 /** Title of the board, the tab tooltip and the start of the footer sentence. */
 export const FIT_GONE_WORDS = 'Fit no longer in memory';
 
-/**
- * The Relation-model fit Rust held is gone (NOT_FITTED). ONE board for both pages:
- * the model itself did not change, so the way back is "Load it again" (a text
- * link — the board has no button of its own). `tail` says what comes back.
- */
+/** The Relation-model fit Rust held is gone (NOT_FITTED). 'Load it again' is the way back; `tail` says what comes back. */
 export function FitGoneBoard({ testId, linkTestId, trainTestId, className, tail, actions }: {
     testId: string;
     linkTestId: string;
@@ -113,12 +91,7 @@ export function FitGoneBoard({ testId, linkTestId, trainTestId, className, tail,
     );
 }
 
-/**
- * The ONE scroll area of the detail pane (settings + banners + the page body;
- * the footer stays outside it). Switching the page or the kind tab — a new
- * `resetKey` — puts it back at the top. Only `scrollTop` is written: the
- * children are never remounted, so the charts are not rebuilt.
- */
+/** The one scroll area of the detail pane (footer stays outside). A new `resetKey` scrolls to top by writing only `scrollTop`; no remount. */
 export function WorkbenchScroll({ resetKey, page, children }: { resetKey: string; page: WorkbenchPage; children: ReactNode }) {
     const ref = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {
@@ -129,10 +102,7 @@ export function WorkbenchScroll({ resetKey, page, children }: { resetKey: string
 
 /** Why "Train sensor ↑" would not train an out-of-date model right now. */
 export interface StaleCantTrain {
-    /** `reason`: the model itself cannot train (`text` = why — a missing setting, its
-     *  running condition, a period outside the data). `run`: a training run is active
-     *  on other models. `stale`: the data in this window is out of date (`text` = the
-     *  whole sentence). */
+    /** `reason`: the model can't train (`text` = why). `run`: a run is active. `stale`: window data is out of date (`text` = whole sentence). */
     kind: 'reason' | 'run' | 'stale';
     text: string;
 }
@@ -142,22 +112,13 @@ interface StaleBannerProps {
     training?: boolean;
     /** The model is waiting in a training run. */
     queued?: boolean;
-    /** Train sensor would NOT train this model right now: the banner says why (or
-     *  when) instead of offering a link that would do nothing — or would start a run
-     *  that skips this very model. */
+    /** Why Train sensor won't train this model now; the banner says why or when instead of linking to nothing. */
     cantTrain?: StaleCantTrain;
     /** "Train sensor ↑": focus the header's Train sensor button. */
     onGoTrainSensor: () => void;
 }
 
-/**
- * "Settings or running condition changed — this model is Incomplete again. Train it
- * again with Train sensor ↑ to update the charts. Your set points are kept."
- * It has NO button of its own: the one place to train
- * is the header's Train sensor, and the sentence links there — unless Train sensor
- * would not train this model right now (`cantTrain`): then the sentence says why
- * ("It can't be trained yet: …"), or when ("…when the training run finishes").
- */
+/** Banner for a model made Incomplete by a change; set points are kept. Links to Train sensor unless `cantTrain` says why not. */
 export function StaleBanner({ training, queued, cantTrain, onGoTrainSensor }: StaleBannerProps) {
     const state = training ? 'training' : queued ? 'queued' : cantTrain ? 'blocked' : 'stale';
     return (
@@ -185,14 +146,7 @@ export function StaleBanner({ training, queued, cantTrain, onGoTrainSensor }: St
     );
 }
 
-/**
- * A trained model's result could not be worked out again when it was opened (the
- * silent load failed — not a lost Relation-model fit, which has `FitGoneBoard`).
- * Shown for a COMPLETE model on both pages: Train sensor never trains an up-to-date
- * Complete model, so "Train sensor ↑" would be a dead end there. The ways out that
- * work: "Load it again" (the same silent load — nothing is written, the model stays
- * Complete) and, when given, the ▾ menu row that really trains it.
- */
+/** A trained model's result couldn't be loaded when opened (a lost fit is `FitGoneBoard`). Ways out: 'Load it again' and, if given, the train menu row. */
 export function LoadFailedBoard({ testId, linkTestId, className, kindName, tail, error, onReload, reloadDisabledReason, trainMenu }: {
     testId: string;
     linkTestId: string;
@@ -236,14 +190,7 @@ export function LoadFailedBoard({ testId, linkTestId, className, kindName, tail,
     );
 }
 
-/**
- * "The model was not saved. <why>" — shown on the Model fit page when a "Mark
- * complete" was refused or failed. The Health score page
- * renders the same message in its own banner, but that page cannot be shown for
- * a model that went stale while Mark complete was validating (the usual reason
- * the save is refused at the last write), so without this the user would never
- * learn that their Mark complete did not take effect. Dismissible.
- */
+/** 'The model was not marked complete' notice on Model fit after a refused or failed Mark complete. Dismissible. */
 export function SaveErrorNotice({ message, onDismiss }: { message: string; onDismiss: () => void }) {
     return (
         <div className="wb2-stale" role="alert" data-testid="save-notice">

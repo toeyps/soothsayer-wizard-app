@@ -8,10 +8,7 @@ interface TitleBarProps {
   workspaceName?: string;
   /** Increments when the app menu's "Rename Workspace" is invoked: opens Project details. */
   renameTrigger?: number;
-  /** Given: the project name is a menu button ("Rename…" / "Project details…",
-   *  both open Project details — the name is "Plant · Machine") and the app
-   *  menu's Rename Workspace opens Project details too. Project details' save
-   *  is the only writer of the name; without this the name is plain text. */
+  /** Project name is a menu button ('Rename…' / 'Project details…', both open Project details); the app menu's Rename Workspace opens it too. Without this prop the name is plain text. */
   onOpenDetails?: () => void;
 }
 

@@ -226,8 +226,7 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
     const caption = (over: Partial<Parameters<typeof runningConditionCaption>[0]> = {}) =>
         runningConditionCaption({ trainPeriods: [P1, P2], scoringPeriods: [S1], bounds: BOUNDS, counts: state(), ...over });
 
-    // User decision 2026-10-14: the Build Model window never says how many data rows are
-    // used. The caption is DAYS only; the count still drives the running time and `noRows`.
+    // The caption is days only, no rows; the count still drives the running time and `noRows`.
     const NO_ROW_NUMBERS = /rows|%|14,391|25,880/i;
 
     it('the line: days of train (about N d running time) · days of scoring · ≥ 30 d recommended — and NO rows used / total / %', () => {
@@ -272,8 +271,7 @@ describe('runningConditionCaption (the one line under the timeline)', () => {
         expect(c.trainRunningDays).toBeNull();
         expect(c.text).toBe('81 d train · 59 d scoring · ≥ 30 d recommended');
     });
-    // "Only when running" without a complete condition. No condition is sent then, so
-    // Rust counts EVERY row of the periods: that answer is not the condition's and is not read.
+    // 'Only when running' without a complete condition sends no filter, so Rust counts every row; that answer isn't read.
     it('the running condition is not configured yet: no running time and no verdict, whatever the counts say (and no "set the condition to count the rows")', () => {
         const allRows: PeriodCounts = { ...TRAIN_COUNTS, union: { rows_in_period: 16_848, running_rows: 16_848, running_days: 117 } };
         const c = caption({ configured: false, counts: state({ train: allRows }) });

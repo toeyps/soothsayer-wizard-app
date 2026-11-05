@@ -1,21 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Health score — "Incomplete immediately" end to end, and
- * the ONE status truth across the Dashboard Failure Groups panel, the Build
- * Model list dot, the kind tab pill, and the page switch.
- *
- * Every trigger the SPEC lists (training period, Running condition Workspace /
- * Custom, condition edit, AND/OR, "no condition", periods, predictors, Y /
- * criteria sensor, cluster count, stiffness) is driven through the REAL UI on a
- * Complete model: the model must go Incomplete in the SAME write, keep its set
- * points / lastTrainedAt / trainedFingerprint / healthExport, the Dashboard dot
- * must follow (cross-window), the Health score page must close ("Re-train
- * first"), the charts must say "Out of date", and Re-train must bring it back.
- * The non-triggers (set points, name, notes, category, FG membership, the
- * Relationship scatter X) must leave it Complete.
- */
+/* Incomplete-immediately end to end: each trigger, driven through the real UI on a Complete model, demotes it in the SAME write, keeps set points and train record, and every view agrees. Non-triggers (name, notes, category, FG membership) leave it Complete. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -68,7 +54,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 const CLU_SP = { kind: 'clustering', outerSd: 5 };
-/** An export record as THIS build writes it (`scoringIntervalSecs`: the saved results use 1-hour averages). */
+/** An export record (`scoringIntervalSecs`: saved results use 1-hour averages). */
 const EXPORT = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: 'C:/x/workspaces/ws1/output', setPoints: sp, scoringIntervalSecs: 3600 });
 
 /** Four Complete, fresh models: three follow the WORKSPACE condition, one has its own (Custom). */
@@ -115,13 +101,10 @@ function expectStaleUi() {
 describe('workspace Running condition triggers (Apply in the modal)', () => {
     const cases: { name: string; fg?: Record<string, unknown>; edit: (m: ReturnType<typeof within>) => void }[] = [
         { name: 'condition value edit', edit: m => { fireEvent.change(m.getByLabelText('Running above this value'), { target: { value: '20' } }); } },
-        // The one line's sensor (since 2026-10-26 there is no operator, second
-        // condition, AND / OR or "Use all rows" to change, and a set condition
-        // cannot be removed).
+        // The one line's sensor: a set condition can't be removed and has no operator, second condition or AND/OR.
         { name: 'condition sensor changed', edit: m => { pickSingle(m.getByTestId('rc-one').querySelector('.rs-pick button') as HTMLElement, 'TAG3'); } },
         {
-            // Train/Test validation: at least one train period is required, so
-            // removing the ONLY one cannot be applied any more — remove one of two instead.
+            // At least one train period is required, so remove one of two.
             name: 'a training period removed',
             fg: { runningConditionTimePeriods: [
                 { id: 'p1', start: '2026-01-01T05:00', end: '2026-01-03T00:00' },
@@ -369,14 +352,11 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         await waitFor(() => expect(bmw().getByTestId('tab-status-i1').getAttribute('title')).toBe('Set points needed'));
         expect(bmwDot('i1')).toEqual({ state: 'trained', colour: expect.any(String) });
         const trainedColour = bmwDot('i1').colour;
-        // The Dashboard dot reads the persisted verdict too - "Set points needed" is
-        // the yellow "need" dot there, same colour as the Build Model list (it used to be the
-        // plain "trained" dot because the verdict only lived in the Build Model window).
+        // The Dashboard dot reads the persisted verdict: 'Set points needed' is the yellow 'need' dot, same as the Build Model list.
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('need'));
-        // the page tabs never carry a tick (their numbers are an order, not progress); the status
-        // words are on the kind tab and in the footer
+        // Page tabs never carry a tick; status words are on the kind tab and footer.
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
-        expect(bmwEl().querySelector('[data-testid="page-switch"]')).toBeNull(); // the header has no page switch any more
+        expect(bmwEl().querySelector('[data-testid="page-switch"]')).toBeNull(); // the header has no page switch
         expect(bmwEl().querySelector('[data-testid="page-tabs"]')!.textContent).not.toMatch(/✓/);
         expect(bmwEl().querySelector('[data-testid="tab-words-i1"]')!.textContent).toBe('Set points needed');
 
@@ -401,8 +381,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         expect(bmwEl().querySelector('[data-testid="footer-pill"]')).toBeNull(); // no status pill: the kind tab says it
         expect(bmwEl().querySelector('[data-testid="tab-words-i1"]')!.textContent).toBe('Complete');
 
-        // set points changed on a Complete model (export round 2026-10-20): Incomplete in the
-        // same write everywhere, still trained — Mark complete is the next step again
+        // Set points changed on a Complete model: Incomplete in the same write everywhere, still trained.
         await enterSp({ 'sp-lower': '11' });
         expect(diskModel('i1').status).toBe(false);
         expect(diskModel('i1').lastTrainedAt).toBeTruthy();
@@ -422,10 +401,7 @@ describe('ONE truth: Dashboard dot, Build Model dot, kind-tab words, page tabs',
         expect(bmwEl().querySelector('[data-testid="page-model-done"]')).toBeNull();
     });
 
-    // The validation verdict is persisted on the model (`healthVerdict`) and every
-    // surface reads it through `modelSetPointFlag`: a trained model whose set points
-    // Rust rejects is RED ("Fix set point") in Build Model AND on the Dashboard's
-    // Failure Groups panel.
+    // The verdict is persisted on the model (`healthVerdict`) and every surface reads it via `modelSetPointFlag`.
     it('the Dashboard Failure Groups dot shows "Fix set point" (red) like the Build Model list when the saved set points are rejected', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: 49, upper: 90, masterLower: null, masterUpper: null } })]));
         await mountWindows();

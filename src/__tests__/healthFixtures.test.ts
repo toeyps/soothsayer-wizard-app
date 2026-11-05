@@ -1,13 +1,5 @@
 // @vitest-environment node
-/**
- * The canned `compute_health_preview` answers UI tests are built on
- * (`helpers/healthPreviewFixture.ts`, `helpers/validationFixture.ts`) must have
- * the shape Rust sends since the health score is computed on 1-hour averages:
- * the RAW rows in `series` never carry a score, the HOURLY points in `hourly`
- * do, and a scoring-period result mixes raw rows / running days with hours.
- * A fixture that still scored `series` would let a component that reads the
- * wrong series pass its tests.
- */
+/** Fixtures must match Rust's 1-hour scoring: raw `series` rows carry no score, `hourly` points do. */
 import { describe, it, expect } from 'vitest';
 import { HOURLY_TS, makeHealthPreview, makeSetPointAwarePreview, SCORING_INTERVAL_SECS } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';

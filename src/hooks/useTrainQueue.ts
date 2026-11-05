@@ -10,32 +10,7 @@ import type {
 } from '../types/trainQueue';
 import { estimateTimeLeftMs, isStaleTrainError, planTrainRun, queuePosition, summarizeTrainRun } from '../utils/trainQueue';
 
-/**
- * The Build Model Workbench's train queue ("Train sensor" / "Train all").
- *
- * - Runs models STRICTLY one at a time, in the order given (one shared Rust
- *   session, one Python sidecar — never in parallel). Even after `reset()` a
- *   new run waits for a train call that is still in flight to settle before it
- *   starts its first model.
- * - Trains through the injected `train(modelId)` (the window's `executeTrain`
- *   wrapper); it is read through a ref, so every model gets the closure of the
- *   latest render. Between two models the loop yields one task, so React
- *   commits the previous model's state before the next one starts.
- * - Skips are decided BEFORE the run (`TrainCandidate.plan`, see
- *   `classifyTrainPlan`); `train()` may still answer `{ ok: false, skip }`
- *   when a model can no longer train at its turn.
- * - Cancel (`stopAfterCurrent`) never interrupts a train call: the run stops
- *   after the current model. Only an explicit second close stops the engine.
- * - A STALE_SESSION answer (`stale: true`, or an error text starting with
- *   `STALE_SESSION`) stops the run at once and sets `stale` until `reset()`.
- * - `scopeKey` (the workspace id): when it changes, the run is dropped
- *   (`reset()`); results of a train still in flight are ignored. The same
- *   happens on unmount — no state update after unmount, and the hook owns no
- *   timer that outlives a yield.
- *
- * State is one `run` object (plus `stale` / `lastTrained`), updated about three
- * times per model; everything else is derived with `useMemo`.
- */
+/** Train queue of the Workbench: runs models one at a time in the given order; a new run waits for any train call still in flight. Cancel stops after the current model; STALE_SESSION stops at once; a `scopeKey` change or unmount drops the run. */
 
 export interface UseTrainQueueOptions {
     /** Train ONE model. Must not throw for an ordinary failure (a rejection is
@@ -44,8 +19,7 @@ export interface UseTrainQueueOptions {
     /** Workspace id (or anything that identifies the data this window shows).
      *  A change drops the run, like `reset()`. */
     scopeKey?: string | null;
-    /** Called once per run when it ends (done / stopped / stale), with the
-     *  final run and its summary. Not called for a run dropped by `reset()`. */
+    /** Called once per run when it ends (done / stopped / stale); not for a run dropped by `reset()`. */
     onFinished?: (run: TrainRun, summary: TrainRunSummary) => void;
     /** Clock for durations (tests). Defaults to `Date.now`. */
     now?: () => number;
@@ -63,9 +37,7 @@ export interface UseTrainQueueResult {
     /** Derived from `run` (memoised); null when there is no run. */
     summary: TrainRunSummary | null;
     isRunning: boolean;
-    /** Same as `isRunning`, but read from the hook's own run ref at call time —
-     *  for handlers that run outside a render (the window's close handlers),
-     *  where `isRunning` of the last render can lag behind the run. */
+    /** Like `isRunning` but read from the run ref at call time, for handlers outside a render where `isRunning` can lag. */
     isRunningNow: () => boolean;
     /** A train returned STALE_SESSION: both Train buttons stay disabled until `reset()`. */
     stale: boolean;
@@ -73,23 +45,15 @@ export interface UseTrainQueueResult {
     canStart: boolean;
     /** Time left (ms) — average finished duration × models still to go; null until one finished. */
     timeLeftMs: number | null;
-    /** Models trained by the last finished run (for the Health score banner and
-     *  the "Set points needed" filter); kept after `dismiss()`, cleared by the next
-     *  `start()` and by `reset()`. */
+    /** Models trained by the last finished run; kept after `dismiss()`, cleared by the next `start()` and `reset()`. */
     lastTrained: { ids: string[]; finishedAt: number } | null;
-    /** Queue the models (`planTrainRun` decides queued vs skipped) and start.
-     *  Returns false (and does nothing) when a run is active, the data is stale,
-     *  or nothing would be queued. */
+    /** Queue the models (`planTrainRun` decides queued vs skipped) and start; false when a run is active, the data is stale, or nothing would queue. */
     start: (candidates: readonly TrainCandidate[], options?: StartTrainRunOptions) => boolean;
-    /** Take a QUEUED model out of the run (its status is unchanged). False when
-     *  it is not queued (running, finished, or not in the run). */
+    /** Remove a QUEUED model from the run; false if it is not queued. */
     removeFromRun: (modelId: string) => boolean;
-    /** Stop after the current model ('cancel' = Cancel, 'close' = the close
-     *  dialog's "Stop after this model and close"). No-op unless running. */
+    /** Stop after the current model ('cancel' or the close dialog's 'close'); no-op unless running. */
     stopAfterCurrent: (reason?: TrainStopReason) => void;
-    /** Resolves with the final summary when the active run ends (at once with
-     *  the last summary, or null, when nothing is running). Resolves with null
-     *  if the run is dropped by `reset()` / a scope change / unmount. */
+    /** Resolves with the final summary when the run ends (at once if idle); null if the run is dropped by `reset()`, a scope change or unmount. */
     whenIdle: () => Promise<TrainRunSummary | null>;
     /** Hide a finished run (the strip's Dismiss). No-op while running. */
     dismiss: () => void;
@@ -123,11 +87,7 @@ export function useTrainQueue(options: UseTrainQueueOptions): UseTrainQueueResul
     /** The pending between-models yield (cleared by `drop`, so no timer outlives the run). */
     const yieldRef = useRef<{ timer: ReturnType<typeof setTimeout>; resolve: () => void } | null>(null);
 
-    /** A task boundary (a 0 ms timer) between two models. It gives React a
-     *  chance to commit the previous model's state, and so refresh the `train`
-     *  ref, before the next model starts — usually, not guaranteed (React's
-     *  scheduler normally runs first, but nothing orders the two). `train` is
-     *  read through `latest`, so it is always the last COMMITTED closure. */
+    /** A 0 ms timer between models so React can commit the previous model's state; `train` is read through `latest`, the last COMMITTED closure. */
     const yieldToReact = useCallback(() => new Promise<void>(resolve => {
         const timer = setTimeout(() => { yieldRef.current = null; resolve(); }, 0);
         yieldRef.current = { timer, resolve };

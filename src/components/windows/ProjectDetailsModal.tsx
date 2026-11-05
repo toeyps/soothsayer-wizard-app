@@ -1,11 +1,4 @@
-/*
- * "Project details" — the one place to edit, after a project exists, what
- * Step 1 captured (plant, machine, tag, notes) plus the time zone of the data
- * (Step 2). Opened from the title bar's project menu (Rename… / Project
- * details…, and the app menu's Rename Workspace) and from Rename on a recent
- * project card. The project's name is "Plant · Machine", so renaming happens
- * here too. Saving goes ONLY through `saveProjectDetails`.
- */
+/* Project details: the one place to edit plant, machine, tag, notes and the data's time zone after creation. The name is 'Plant · Machine'. Saves only through `saveProjectDetails`. */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import type { MachineDetails, ProjectDetailsChangedPayload, WorkspaceState } from '../../types';
@@ -21,8 +14,7 @@ import {
 import { DUPLICATE_PAIR_REASON, MachineFields, TimeZoneSelect, missingFieldsReason } from '../upload/MachineFields';
 import { useModalFocus } from './useModalFocus';
 
-/** A data timestamp as the Wizard shows it ("2026/02/09 00:00") written the
- *  way the export writes it ("2026-02-09T00:00:00+07:00"). */
+/** A data timestamp written the way the export writes it ('2026-02-09T00:00:00+07:00'). */
 export function isoExample(ts: string, offsetMin: number): string {
     const m = ts.trim().match(/^(\d{4})[/-](\d{2})[/-](\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/);
     if (!m) return `${ts}${fmtOffset(offsetMin)}`;
@@ -56,8 +48,7 @@ export function ProjectDetailsModal({ workspace, existing = [], firstTimestamp, 
     onCloseRef.current = onClose;
     const savingRef = useRef(false);
 
-    // Esc closes ONLY this dialog, also when it sits on top of another one:
-    // capture phase, and the event is marked handled so nothing under it acts.
+    // Esc closes only this dialog, even over another one: capture phase, event marked handled.
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== 'Escape' || e.defaultPrevented) return;

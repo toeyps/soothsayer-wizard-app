@@ -3,25 +3,7 @@ import { cleanup } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';
 
-/*
- * Spec: docs/design/handoff/model-settings-layout/README.md — "Tab walks the form as it
- * reads": Model name → the kind's own setting → Training data → the sensors.
- *
- * `BuildModelWindow.test.tsx` ("Model settings layout") already pins the LABELS of the form
- * in DOM order for the three kinds, and the grid rules of App.css. Two things decide whether
- * the keyboard really follows what the eye reads, and neither is pinned there:
- *
- *   1. the CONTROLS a Tab stops on (not the labels) come in that order — in the real window,
- *      with the real pickers, not the mocked ones of that file; and nothing in the form takes
- *      itself out of the natural order with a positive `tabindex`;
- *   2. the CSS never moves a field away from its DOM position: the first SPEC draft placed the
- *      fields with `grid-area`, which made the visual order independent of the DOM (the dev
- *      pass dropped it and moved the JSX instead). If `grid-area` / `order` / an explicit
- *      row or column ever comes back on a field, the labels test still passes while Tab jumps
- *      around the form.
- *
- * This file checks both across the component (BuildModelWindow) and the stylesheet (App.css).
- */
+/* Tab order follows the form (docs/design/handoff/model-settings-layout/README.md); App.css must not reorder fields. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -52,8 +34,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 // jsdom does not load App.css (cwd is the repo root, as in BuildModelWindow.test.tsx).
 const APP_CSS: string = readFileSync('src/App.css', 'utf-8');
 
-/** What the keyboard can stop on, in the order the browser visits it (DOM order — the form
- *  must not contain a positive tabindex, which is asserted separately). */
+/** Tab stops in DOM order (the form must have no positive tabindex, asserted separately). */
 const TABBABLE = 'button, input, select, textarea, a[href], [tabindex]';
 const tabStops = (form: HTMLElement) => Array.from(form.querySelectorAll<HTMLElement>(TABBABLE))
     .filter(el => !(el as HTMLButtonElement).disabled && el.getAttribute('tabindex') !== '-1' && el.getAttribute('type') !== 'hidden');

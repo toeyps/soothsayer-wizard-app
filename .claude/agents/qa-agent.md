@@ -61,3 +61,7 @@ Output a HANDOFF block at the end of your work:
 - Worker HANDOFF discrepancies found: [none / describe — e.g. a claimed-passing test that's actually broken]
 - Blocking issues: [none / describe failing tests]
 ```
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

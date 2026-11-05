@@ -1,32 +1,4 @@
-/**
- * Cross-cutting checks of the portaled popovers:
- * the add-to-failure-group / alarm-setpoints popovers (SensorSelection) and
- * the two colour popovers (HighlightsPanel) render through
- * `AnchoredPopover` + `Portal` (position: fixed,
- * portaled into `#wizard-portal-root` on document.body).
- * (The add-to-failure-group one is the Failure Group
- * Assignment sheet — still portaled, but docked to the Sensors panel and not
- * dismissed by scroll/resize.)
- *
- * Seam under test: each component's own open/close state <-> the shared
- * `AnchoredPopover`'s portal + scroll/resize self-close + click
- * stopPropagation. The worker tests cover "it renders in the portal root";
- * these cover what a portal changes about INTERACTION:
- *   - React synthetic events still bubble through the React tree (not the
- *     DOM tree) across a portal, so a click inside the popover would reach
- *     the sensor row's own onClick (toggle selection) without the
- *     popover's stopPropagation.
- *   - onRequestClose must clear the component's own "which one is open"
- *     state, or the next trigger click would toggle it "closed" (a no-op
- *     from the user's point of view) instead of reopening it.
- *   - the scroll-closes-itself listener is `capture: true` on window, so it
- *     sees EVERY element's scroll — including scrolls that happen inside
- *     the popover itself; `AnchoredPopover` now ignores those (see the
- *     regression cases at the bottom).
- *
- * Real ColorPlatePicker is used (not mocked) so the HighlightsPanel case
- * exercises the actual pointer-driven picker inside the portal.
- */
+/** Portaled popovers: inside clicks must not toggle the sensor row; `onRequestClose` clears open state; inner scrolls are ignored. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import SensorSelection from '../components/dashboard/SensorSelection';
@@ -47,7 +19,6 @@ afterEach(() => {
 const portalRoot = () => document.getElementById('wizard-portal-root');
 const openPopovers = () => Array.from(document.querySelectorAll<HTMLElement>('#wizard-portal-root .sensor-popover'));
 
-// ── SensorSelection fixtures ─────────────────────────────────────────────
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmH: 90, alarmL: 10 },
@@ -92,12 +63,7 @@ function renderSensorSelection(overrides: Partial<React.ComponentProps<typeof Se
 const folderButtons = () => screen.getAllByTitle('Add to failure group');
 const sheet = () => screen.queryByTestId('fg-sheet');
 
-// The add-to-failure-group menu is no longer an AnchoredPopover — it
-// is the full-height assignment sheet docked to the Sensors panel (still
-// portaled into #wizard-portal-root). The alarm-setpoints list is still an
-// AnchoredPopover, so this file keeps covering both: what a portal changes
-// about INTERACTION (React events bubble through the React tree, not the DOM
-// tree) and the open/close state each one owns.
+// The failure-group menu is a docked sheet (portaled, not an `AnchoredPopover`); the alarm list is a popover. Both covered.
 describe('SensorSelection panels through Portal — interaction seam', () => {
     describe('clicks INSIDE the portaled sheet/popover never reach the sensor row (React bubbles through portals)', () => {
         it('assignment sheet: a matrix cell fires its own handler, does NOT toggle the row\'s selection, and the sheet stays open', () => {
@@ -198,15 +164,9 @@ describe('SensorSelection panels through Portal — interaction seam', () => {
         });
     });
 
-    // ── Popover regressions ──
 
     describe('popover bugs fixed 2026-10-02 (re-pointed at the sheet where they still apply)', () => {
-        // `AnchoredPopover`'s window-level `capture: true` scroll listener used
-        // to close a popover on the first wheel tick INSIDE its own scrolling
-        // list. The sheet has no such listener, but it has its own scrolling
-        // list of groups and its own re-measuring scroll listener — a scroll
-        // inside the sheet must neither close it nor be mistaken for the sensor
-        // list moving.
+        // A scroll inside the sheet's own group list must neither close it nor be mistaken for the sensor list moving.
         it('scrolling INSIDE the sheet\'s own group list (many groups) does not close it', () => {
             const manyGroups: FailureGroup[] = [{ no: 0, name: 'Not in Group' }];
             for (let i = 1; i <= 15; i++) manyGroups.push({ no: i, name: `Group ${i}` });
@@ -216,9 +176,7 @@ describe('SensorSelection panels through Portal — interaction seam', () => {
             expect(sheet()).not.toBeNull();
         });
 
-        // Chromium dispatches a `scroll` event on an <input> whose text
-        // scrolls horizontally once it overflows. That used to close the
-        // popover mid-typing; it must not close the sheet either.
+        // Chromium fires `scroll` on an overflowing <input>; that must not close the sheet mid-typing.
         it('typing a long name into "New failure group name" (the input scrolls horizontally) does not close the sheet', () => {
             renderSensorSelection();
             fireEvent.click(folderButtons()[0]);
@@ -228,9 +186,7 @@ describe('SensorSelection panels through Portal — interaction seam', () => {
             expect(screen.queryByPlaceholderText('New failure group name')).not.toBeNull();
         });
 
-        // The alarm list and the sheet's 📁 live in the same row; the alarm
-        // list is a `position: fixed` popover under the bell. One panel at a
-        // time (both directions) keeps them from stacking.
+        // The alarm popover and the sheet share a row; only one panel is open at a time.
         it('only one sensor-list panel is open at a time: the alarm popover and the sheet exclude each other', () => {
             renderSensorSelection();
             fireEvent.click(screen.getByTitle('Alarm setpoints')); // TAG1
@@ -244,7 +200,6 @@ describe('SensorSelection panels through Portal — interaction seam', () => {
     });
 });
 
-// ── HighlightsPanel (real ColorPlatePicker inside the portal) ─────────────
 
 function highlightProps(overrides: Partial<React.ComponentProps<typeof HighlightsPanel>> = {}) {
     return {

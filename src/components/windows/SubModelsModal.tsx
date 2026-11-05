@@ -10,24 +10,9 @@ import { tooltipDistinctEnds } from '../../utils/tooltipLayout';
 import { sensorAxisTitle } from './workbench/healthCharts';
 import type { SubModelFit, SubModelFitsState } from './useSubModelFits';
 
-/*
- * "Sub-models" / "Compare predictors" modal: one Relation-model fit per
- * cumulative predictor subset, each with its own R^2 / RMSE / 2*RMSE and a
- * scatter that shares the first predictor as X so the cards compare
- * apples-to-apples.
- *
- * The Build Model Workbench's Model fit page ("Compare predictors") is its
- * only caller. Preview only — nothing is saved.
- */
+/* "Sub-models" / "Compare predictors" modal: one Relation-model fit per cumulative predictor subset, each with its own R^2 / RMSE / 2*RMSE and a scatter sharing the first predictor as X so cards compare. Only caller: the Workbench Model fit page; preview only, nothing saved. */
 
-/** ECharts scatter option for ONE sub-model fit — Raw (blue) vs Model (red)
- *  against `xSensor`. Compact margins/fonts for the card layout.
- *
- *  A sensor is never shown by its tag alone (user rule 2026-10-14): the axis titles are
- *  the description + unit (the tag is in the card's title, right above the chart) and the
- *  tooltip rows are the shared inline label (description, then tag). The chart wrapper fits
- *  the titles to the card (`withAxisNames`, DESIGN_SYSTEM §4 rule 1b): the Y title wraps instead of
- *  being cut at its end. `lookup` is the window's sensor lookup; without one a sensor reads as its tag. */
+/** ECharts scatter option for ONE sub-model fit: Raw (blue) vs Model (red) against `xSensor`, compact for the card. Axis titles are description + unit (the tag is in the card title) and tooltip rows use the shared inline label; `withAxisNames` fits titles to the card. `lookup` is the window's sensor lookup; without one a sensor reads as its tag. */
 export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSensor: string, lookup: (tag: string) => SensorInfo = tag => ({ tag })) {
     const xInfo = lookup(xSensor);
     const yInfo = lookup(targetSensor);
@@ -87,7 +72,7 @@ export function buildSubModelOption(fit: SubModelFit, xSensor: string, targetSen
             backgroundColor: tooltipBg,
             borderColor: tooltipBorder,
             textStyle: { color: txtPrimary },
-            // Never cut off at the chart's edge (it used to be, at the card's left).
+            // Never cut off at the chart's edge.
             confine: true,
             formatter: (p: any) => {
                 const v = p.value as [number, number];
@@ -173,9 +158,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
             <div className="pm-preview-modal-card pm-submodels-modal-card" onClick={e => e.stopPropagation()}>
                 <div className="pm-preview-modal-header">
                     <div className="pm-chart-title-block">
-                        {/* The user reads "sub-model" as "this model has more than one fitted model" (2026-10-12)
-                            — it has ONE; this view only refits it with the predictors added one
-                            at a time. So the words "sub-model(s)" never appear on screen. */}
+                        {/* The words "sub-model(s)" never appear on screen: users read them as several fitted models. */}
                         <div className="pm-chart-title">Compare predictors</div>
                         <div className="pm-chart-subtitle">
                             The fit with the predictors added one at a time — the last step is the model you trained · target: {targetSensor ? <SensorInline tag={targetSensor} size="sm" muted /> : '—'} · stiffness: <code>{stiffnessText}</code>
@@ -218,8 +201,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                             <SensorSetProvider tags={compareTags} candidate={comparePrefix} drop>
                             <SetPrefixLine className="pm-submodels-prefix" testid="compare-prefix" />
                             {subModels.map((fit, idx) => {
-                                // The last entry of `r2_per_step` is the score for the full
-                                // subset of THIS sub-fit (sidecar contract) — the card's headline R².
+                                // The last `r2_per_step` entry is the score for the full subset of THIS sub-fit (sidecar contract): the card's headline R².
                                 const r2 = fit.result.r2_per_step[fit.result.r2_per_step.length - 1];
                                 const rmse2 = fit.result.rmse2_per_step[fit.result.rmse2_per_step.length - 1];
                                 const xSensor = fit.predictors[0] ?? '';
@@ -229,10 +211,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                         <div className="pm-submodel-header">
                                             <div className="pm-submodel-title-block">
                                                 <div className="pm-submodel-step">Step {idx + 1} of {subModels.length}</div>
-                                                {/* Every sensor with its description (then its tag) — never the tag alone.
-                                                    The TARGET comes first (user decision 2026-10-14): it is the same on
-                                                    every card, so it starts every title at the same place and the
-                                                    predictors — the part that differs — follow it. */}
+                                                {/* Target first (same on every card), then the differing predictors. */}
                                                 <div className="pm-submodel-predictors" data-testid="sub-model-sensors">
                                                     <span className="pm-submodel-sensor"><SensorInline tag={targetSensor} size="sm" /></span>
                                                     <span className="pm-submodel-arrow" title="predicted from"> ← </span>
@@ -257,8 +236,7 @@ export default function SubModelsModal({ fits, targetSensor, predictorCount, sti
                                                     <span className="pm-submodel-stat-label">2·RMSE</span>
                                                     <span className="pm-submodel-stat-value">{typeof rmse2 === 'number' ? rmse2.toFixed(4) : '—'}</span>
                                                 </div>
-                                                {/* No "N" (row count) tile: every step is fitted on the same rows, so the
-                                                    number told nothing apart (user decision 2026-10-14). */}
+                                                {/* No "N" (row count) tile: every step is fitted on the same rows. */}
                                             </div>
                                         </div>
                                         <div className="pm-submodel-chart">

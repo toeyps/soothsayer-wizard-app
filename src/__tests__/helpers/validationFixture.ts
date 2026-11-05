@@ -1,19 +1,6 @@
 import type { TestPeriodResult, ValidationResult } from '../../types/health';
 
-/**
- * Scoring-period fixtures for UI tests: a `HealthPreview.test_validation`
- * payload as Rust returns it (`health_validation.rs`, "just score it"
- * A result is facts only: no `label`, `event_time`, `lead_days`
- * or `first_below_80`). Small, hand-checkable numbers.
- *
- * Units, as in the real payload (the health score is computed on 1-hour
- * averages): `rows` / `days` / `train_rows` / `train_days` are RAW dataset rows
- * and their running time; `hours` / `train_hours` / `scored` / `pct_below_80` /
- * `lowest` count 1-hour points, and `lowest_at` is the START of an hour. The
- * default numbers are picked so the units cannot be mixed up unnoticed: S1 has
- * 3 600 raw rows (5-minute data, 12.5 d) but 300 hours, and the train block
- * 11 578 raw rows (40.2 d) but 965 hours.
- */
+/** Scoring-period fixtures: a `HealthPreview.test_validation` as Rust returns it. Raw: `rows`, `days`, `train_rows`, `train_days`; hourly: `hours`, `train_hours`, `scored`, `pct_below_80`, `lowest`; `lowest_at` = hour start. Defaults keep units distinguishable: S1 = 3 600 rows (12.5 d) but 300 hours; train 11 578 rows but 965 hours. */
 
 /** One scoring period's result (S1 by default). */
 export function makeTestResult(over: Partial<TestPeriodResult> = {}): TestPeriodResult {

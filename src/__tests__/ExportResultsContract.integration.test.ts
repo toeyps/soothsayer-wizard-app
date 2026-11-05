@@ -9,23 +9,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { applyIncompleteRule } from '../utils/incompleteRule';
 import { withFailureGroupState } from '../utils/failureGroupState';
 
-/*
- * QA cross-zone test (Export results, 2026-10-20).
- *
- * The TS half of the export request contract: the request the Build Model
- * window sends (`buildWorkspaceExportRequest`, fe-logic) for a realistic
- * project is pinned in `src-tauri/tests/fixtures/export_request_contract.json`.
- * The Rust half (`src-tauri/tests/internal/qa_workspace_export_internal.rs`)
- * deserializes THE SAME file, loads a CSV through the real loader, exports it
- * through `workspace_export::write_export` and checks every spec §7 item on
- * disk. So a field renamed on either side, or a TS request Rust would refuse,
- * fails one of the two tests.
- *
- * Regenerate the fixture after a deliberate wire change (a vitest file
- * snapshot):
- *   npx vitest run src/__tests__/ExportResultsContract.integration.test.ts -u
- * then re-run `cargo test qa_workspace_export` in src-tauri.
- */
+/* TS half of the export request contract: the request `buildWorkspaceExportRequest` builds is pinned in `src-tauri/tests/fixtures/export_request_contract.json`. The Rust half (`qa_workspace_export_internal.rs`) reads the SAME file. After a deliberate wire change: `npx vitest run src/__tests__/ExportResultsContract.integration.test.ts -u`, then `cargo test qa_workspace_export`. */
 
 const FIXTURE = '../../src-tauri/tests/fixtures/export_request_contract.json';
 
@@ -71,11 +55,7 @@ function project(): WorkspaceState {
             filterTimePeriods: [{ id: 'cp', start: '2024-01-09T22:30', end: '' }],
             healthSetPoints: { kind: 'relationship', residualAt80Lower: -4, residualAt80Upper: 4, residualAt0Lower: -8, residualAt0Upper: 8 } as FailureModel['healthSetPoints'] }),
         mk({ id: 'c1', name: 'Pump pattern', kind: 'clustering', xSensor: 'X', ySensor: 'Y', numClusters: 2, criteriaSensor: 'C',
-            // Open outer edges: the Rust export refuses finite outer edges
-            // (`regimes_not_contiguous`) although the Workbench's auto-divide
-            // writes the criteria's data min / max there — reported as an app
-            // bug by QA 2026-10-20; see the ignored Rust test
-            // `qa_workspace_export_auto_divided_ranges_export`.
+            // Open outer edges, as in the contract; finite data min/max edges (auto-divide) export the same rows, see `qa_workspace_export_auto_divided_ranges_export`.
             clusterRanges: [{ min: null, max: 2 }, { min: 2, max: null }], category: 'performance', groupNos: [2],
             healthSetPoints: { kind: 'clustering', outerSd: 5 } as FailureModel['healthSetPoints'] }),
         mk({ id: 'i2', name: 'Power band', kind: 'individual', targetSensor: 'POWER', category: 'performance', groupNos: [0],

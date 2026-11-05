@@ -10,12 +10,7 @@ import { PLANT_META, plantDataset, createFakeHealthRust, type HealthDataset } fr
 import { ALL_TIME_TRAIN, ONE_TEST } from './trainTestFixture';
 import { rowTag } from './sensorPicker';
 
-/**
- * Drivers for the health-score integration tests: mount the
- * REAL Dashboard and the REAL Build Model window side by side over the shared
- * environment of `healthEnv.tsx`, seed workspaces on the in-memory disk, and
- * drive the Workbench's two pages the way a user does.
- */
+/** Drivers for health-score integration tests: real Dashboard + Build Model window over the `healthEnv.tsx` environment, driven as a user would. */
 
 export const WS = 'ws1';
 export const wsFile = (id = WS) => `workspaces/${id}.json`;
@@ -38,9 +33,7 @@ export const BASE_FG = {
     categoryNormalisationNotice: null,
 };
 
-/** A model as Dashboard's `makeDefaultModelForKind` would build it, plus overrides.
- *  Its default name carries the id ("QA model i1"): model names are unique across the
- *  project (2026-10-20), so two fixture models must not share one by accident. */
+/** A model as Dashboard's `makeDefaultModelForKind` builds it, plus overrides. The default name carries the id (names must be unique). */
 export function model(o: Record<string, unknown>): Record<string, any> {
     const kind = (o.kind as string) ?? 'individual';
     return {
@@ -73,7 +66,6 @@ export function wsTrained(fg: Record<string, unknown>, models: Record<string, un
 export const writeDisk = (s: unknown, id = WS) => env.files.set(wsFile(id), JSON.stringify(s));
 export const readDisk = (id = WS) => JSON.parse(env.files.get(wsFile(id))!);
 export const diskModel = (mid: string, id = WS) => readDisk(id).failureGroupState.models.find((m: any) => m.id === mid);
-/** How many times the workspace file was written with a given model's set points changed. */
 
 export async function settle(ms = 0) {
     await act(async () => { await new Promise(r => setTimeout(r, ms)); });
@@ -124,9 +116,7 @@ export async function mountWindows(o: MountOpts = {}) {
     return ui;
 }
 
-/** "Close the app and open it again": every window unmounts, the next launch
- *  loads the CSV again (a NEW Rust session: generation + 1, fit cache empty),
- *  and both windows re-hydrate from the workspace file on disk. */
+/** Close and reopen the app: windows unmount, the CSV reloads (new Rust session: generation + 1, empty fit cache), both windows re-hydrate from disk. */
 export async function restartApp(o: MountOpts = {}) {
     cleanup();
     env.charts.length = 0;
@@ -151,8 +141,7 @@ export const selectSensor = (key: string, g = 1) => fireEvent.click(bmw().getByT
 export const selectKindTab = (label: 'Individual' | 'Relation model' | 'Clustering') =>
     fireEvent.click(bmw().getAllByRole('tab').find(t => t.textContent?.includes(label))!);
 
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status word of the open kind tab; there is no footer pill. */
 export const pill = () => openTabStatus(bmwEl());
 
 /** Wait until the active model's Model fit charts are on screen (a preview landed). */
@@ -160,9 +149,7 @@ export async function waitForCharts() {
     await waitFor(() => expect(bmw().getByTestId('results-chart')).toBeTruthy(), { timeout: 4000 });
 }
 
-/** Train exactly the ACTIVE model (the old per-model Train / Re-train): the header's
- *  Train sensor ▾ menu → "Train only the <kind> model" (
- *  items 8 + 9 — the footer button is gone; every train goes through the queue). */
+/** Train exactly the active model through the header's Train sensor menu ('Train only the <kind> model'); every train goes through the queue. */
 export async function train() {
     const tab = bmw().getAllByRole('tab').find(t => t.getAttribute('aria-selected') === 'true');
     // The tabs read Individual / Relation model / Clustering.
@@ -178,8 +165,7 @@ export async function train() {
 }
 
 export async function openHealth() {
-    // Page tab ② is the one door to the page, always on screen (there is no
-    // "Next: Health score →" button any more).
+    // Page tab 2 is the one door to the page, always on screen.
     const b = bmw().getByTestId('page-tab-health') as HTMLButtonElement;
     expect(b.getAttribute('aria-disabled'), `Health score page closed: ${b.title}`).toBeNull();
     fireEvent.click(b);
@@ -228,8 +214,7 @@ export const openDashSensorTab = () => fireEvent.click(dash().getByRole('button'
 export async function applyWorkspaceRc(edit: (modal: ReturnType<typeof within>) => void | Promise<void>) {
     fireEvent.click(bmw().getByTestId('rc-card-open'));
     const modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
-    // Not wrapped in one act(): `fireEvent` acts per event, so a step that opens
-    // the sensor picker renders it before the next step looks for its rows.
+    // Not in one act(): `fireEvent` acts per event, so a step that opens the picker renders it before the next step looks for rows.
     await edit(modal);
     await settle(30);
     await act(async () => { fireEvent.click(modal.getByTestId('rc-apply')); });
@@ -247,9 +232,7 @@ export async function saveChanges() {
     await settle(50);
 }
 
-/** Pick sensors in an open shared sensor picker:
- *  multi = the "Select {noun}" modal (tick rows + OK); single = the anchored popover named
- *  after the field (one click picks and closes). */
+/** Multi: 'Select {noun}' modal (tick rows + OK); single: anchored popover named after the field (one click). */
 export async function pickInModal(noun: string, tags: string[], single = false) {
     const dialog = () => screen.getByRole('dialog', { name: single ? noun : `Select ${noun}` });
     for (const tag of tags) {

@@ -2,30 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
-/*
- * Spec:
- * docs/design/handoff/workbench-redesign/README.md §4 "NOT_FITTED" and the
- * "Load it again" (a Complete model stays Complete).
- *
- * The Relation-model fit Rust held is gone. Seen across BOTH windows on one
- * in-memory workspace file (real Dashboard, real Build Model window, real
- * `workspaceManager`, the fake Rust health backend with its fit cache):
- *
- *   (a) a COMPLETE model: both pages show the "Fit no longer in memory" board with
- *       "Load it again" (never "Train sensor ↑": that cannot train a Complete
- *       model) -> loaded -> still Complete, NOTHING written to the workspace
- *       file, the Dashboard dot never moved;
- *   (b) the validating preview answers NOT_FITTED on Mark complete -> the
- *       board, "Load it again" -> Mark complete succeeds;
- *   (c) the Add Sensor window replaces a special sensor while Build Model is open
- *       (Rust drops every cached fit; the Dashboard writes the new recipe and
- *       broadcasts `recipesChanged`): the tab words, the list dot and the Dashboard
- *       dot stay in step the whole way.
- *
- * `HealthScoreDraftsAndRaces` covers a TRAINED (not Complete) model that loses its
- * fit twice; `BuildModelWindow.test.tsx` pins the boards with `workspaceManager`
- * mocked. Neither has the Dashboard next to it nor checks the file.
- */
+/* Spec: docs/design/handoff/workbench-redesign/README.md §4 (NOT_FITTED, 'Load it again'); Relation-model fit lost, across both windows. (a) Complete model: 'Load it again' on both pages, stays Complete, nothing written; (b) NOT_FITTED on Mark complete, then Load it again works; (c) Add Sensor replaces a special sensor. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -76,8 +53,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 const IND_SP = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
-/** An export record as THIS build writes it (`scoringIntervalSecs`: the saved results use 1-hour averages).
- *  A record without it gets the footer's "earlier row-by-row scoring" hint — covered in BuildModelWindow.test.tsx. */
+/** Export record as this build writes it (`scoringIntervalSecs` = 1-hour averages); without it the footer shows the 'earlier row-by-row scoring' hint. */
 const record = (sp: unknown) => ({ at: '2026-10-02T10:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints: sp, scoringIntervalSecs: 3600 });
 const FIT_GONE_ERROR = 'NOT_FITTED: this Relation model has no fit in memory (not trained yet, or the data changed) - train it first';
 
@@ -87,8 +63,7 @@ const wsWrites = () => env.writes.filter(w => w.path === wsFile()).length;
 /** The notice line (null when there is nothing to fix or wait for: no line at all). */
 const footer = () => bmw().queryByTestId('wb-notice');
 const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status word ('Complete'/'Trained'/'Incomplete') of the open kind tab; there is no footer pill. */
 const footPill = () => openTabStatus(bmwEl());
 /** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
 const tabWords = (id: string) => {
@@ -204,8 +179,7 @@ describe('(b) Mark complete answered NOT_FITTED by its check', () => {
         await waitFor(() => expect(markBtn().disabled).toBe(false));
         expect(bmw().queryByTestId('health-not-fitted')).toBeNull();
 
-        // Mark complete: the page's preview still answers, but by the time Mark complete
-        // checks the set points Rust has dropped the fit — its check answers NOT_FITTED.
+        // Mark complete: the page's preview answers, but Rust drops the fit before the set-point check, which answers NOT_FITTED.
         env.backend!.override('compute_health_preview', a => a.request?.kind === 'relationship' && a.request?.max_points === 8, () => {
             env.backend!.clearRelCache();
             throw FIT_GONE_ERROR;
@@ -247,9 +221,7 @@ describe('(b) Mark complete answered NOT_FITTED by its check', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(fits()).toBe(fitsBefore + 1);
         expect(diskModel('r1').lastTrainedAt, 'loaded, not re-trained').toBe(trainedAt);
-        // Loaded by the user's own "Load it again": nothing is left to fix, so the refusal's
-        // red card and the notice line's "Not saved · fix it" are gone — a model whose set
-        // points are valid has nothing to fix or wait for, so there is no notice line at all.
+        // Loaded by the user's own 'Load it again': nothing left to fix, so the refusal card and notice line are gone.
         expect(bmw().queryByTestId('save-error')).toBeNull();
         expect(bmw().queryByTestId('save-error-reason')).toBeNull();
         await waitFor(() => expect(bmw().queryByTestId('state-why')).toBeNull());
@@ -282,9 +254,7 @@ describe('(c) a special sensor is replaced from the Add Sensor window while Buil
     }
     const META = [...PLANT_META, SP_META];
 
-    /** What the Add Sensor window does when the user saves a new formula for SP1:
-     *  Rust replaces the column (and drops EVERY cached Relation-model fit), then the
-     *  window tells the Dashboard, which writes the recipe and broadcasts `recipesChanged`. */
+    /** Add Sensor saves a new SP1 formula: Rust replaces the column and drops every cached fit. The Dashboard writes the recipe and broadcasts `recipesChanged`. */
     async function replaceSpecialSensor(formula: string) {
         env.backend!.clearRelCache();
         const from = env.emitted.length;

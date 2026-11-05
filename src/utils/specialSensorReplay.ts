@@ -3,29 +3,11 @@ import { orderRecipesByDependency } from './specialSensorDeps';
 import { recomputeCall, Invoker } from './specialSensorRecompute';
 import { isSessionLostError } from './staleSession';
 
-/**
- * Rebuild every special sensor's column in the Rust session right after a
- * workspace's CSVs load (`DataUploadPage.handleLoadWorkspace`). The recipes
- * are the only thing that survives a restart; the computed columns do not.
- *
- * What makes this more than a loop:
- *  - Order: recipes are replayed in dependency order, not blindly in array
- *    order, so a file saved with a source sensor after its dependent (an old
- *    edit could do that -- see `orderRecipesByDependency`) still restores.
- *  - A recipe that fails to build (a source column was renamed or removed
- *    since) is reported, and every recipe built ON TOP of it is SKIPPED rather
- *    than attempted: it could only fail too, or -- worse -- read some other
- *    column that happens to share the name.
- *
- * `failed` and `skipped` are separate so the user can tell "this one broke"
- * from "this one was never tried because something it needs broke".
- */
+/** Rebuild every special sensor's column in the Rust session after a workspace's CSVs load (only recipes survive a restart), in dependency order. A recipe that fails to build is reported and everything built on it is skipped; `failed` = broke, `skipped` = never tried. */
 export interface ReplayResult {
     failed: string[];
     skipped: string[];
-    /** Why each `failed` tag failed, in the backend's own words -- e.g. for a
-     *  formula Rust refuses (`$A * pi`): "Formula error: unknown name
-     *  'pi'. Write pi() for π.". Only present when something failed. */
+    /** Why each `failed` tag failed, in the backend's words (e.g. unknown name 'pi'); only present when something failed. */
     errors?: Record<string, string>;
 }
 
@@ -73,16 +55,11 @@ export async function replaySpecialSensorRecipes(
             continue;
         }
         try {
-            // Same call the Manage tab's edit-and-recompute builds, from one
-            // place, so the two can't drift apart. `replace: true` makes no
-            // difference on a fresh load (nothing to replace yet) but keeps a
-            // second replay in the same session idempotent.
+            // Same call as the Manage tab's edit-and-recompute, so they can't drift; `replace: true` keeps a repeat replay idempotent.
             const { cmd, args } = recomputeCall(recipe);
             await invoker(cmd, args);
         } catch (err) {
-            // The session was replaced under this replay (a stale generation):
-            // every remaining recipe would fail the same way, and "couldn't be
-            // restored" would be a lie -- stop and let the caller reload.
+            // Session replaced mid-replay: every remaining recipe would fail the same way, so stop and let the caller reload.
             if (isSessionLostError(err)) throw err;
             console.warn(`Failed to restore special sensor "${recipe.tag}":`, err);
             failed.push(recipe.tag);

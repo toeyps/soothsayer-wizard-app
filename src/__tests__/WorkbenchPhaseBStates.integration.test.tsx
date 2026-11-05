@@ -2,29 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor } from '@testing-library/react';
 
-/*
- * Spec:
- * docs/design/handoff/workbench-redesign/README.md §1, §3, §4, and the user's
- * "at most 5 clusters" rule. Real Dashboard + real Build Model
- * window + real `workspaceManager` on one in-memory workspace file, the fake
- * Rust health backend:
- *
- *   - the health score fails to load: Mark complete is disabled with the footer
- *     reason, the input being typed in stays mounted and is saved on blur, Retry
- *     recovers; STALE_SESSION has its own reason and no Retry;
- *   - a save error and the way out of it (edit a set point -> both the red card
- *     and "Not saved" go -> Mark complete -> "Files saved <date>");
- *   - at most 5 clusters, and a 7-cluster model saved by an older build;
- *   - drafts with the new spine (the header page switch; a Model-settings draft
- *     on a tab that is not open);
- *   - CSV timestamps that carry `Z` / an offset keep their own wall clock (the raw
- *     rows on Model fit, and the clock HOUR the health score is averaged over).
- *
- * Covered elsewhere and NOT repeated here: a set point typed without blur is
- * saved exactly once on a sensor switch / kind-tab switch / page tab ① "Model fit" /
- * the Close button / a native close, and on Enter (`HealthScoreDraftsAndRaces`,
- * "a set point typed WITHOUT blur is persisted (exactly once) when the user leaves").
- */
+/* Real Dashboard + Build Model + workspaceManager on one in-memory file, fake health backend. Set-point drafts saved on leaving: see HealthScoreDraftsAndRaces. Covers: score load failure (Retry; none for STALE_SESSION), save error recovery, 5-cluster cap, drafts with page switch, CSV `Z`/offset timestamps keeping wall clock. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -84,8 +62,7 @@ const fgOnDisk = () => JSON.stringify(readDisk().failureGroupState);
 /** The notice line (null when there is nothing to fix or wait for: no line at all). */
 const footer = () => bmw().queryByTestId('wb-notice');
 const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status of the model whose kind tab is open, read from the status words on that tab. */
 const footPill = () => openTabStatus(bmwEl());
 /** A kind tab's status words: the dot's tooltip — and the SAME string shown on the tab beside the dot (v2 §2). */
 const tabWords = (id: string) => {
@@ -108,9 +85,6 @@ async function readyIndividual(over: Record<string, unknown> = {}) {
     await waitFor(() => expect(markBtn().disabled).toBe(false));
 }
 
-// ---------------------------------------------------------------------------
-// The health score failed to load
-// ---------------------------------------------------------------------------
 
 describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
     it('Mark complete is disabled with the reason in the notice line and under the button; a set point typed under the red card keeps its input mounted and is saved on blur; Retry recovers and Mark complete then writes what was typed', async () => {
@@ -201,9 +175,6 @@ describe('the health score failed to load (SPEC §4 "Preview failed")', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Save error, then the way out
-// ---------------------------------------------------------------------------
 
 describe('a Mark complete error and the recovery (SPEC §4 "Save error")', () => {
     it('Mark complete fails checking → red card with the reason + "Not marked complete…" → a set point is edited → both go and the notice line goes with them (nothing left to fix) → Mark complete succeeds → no "Files saved" line', async () => {
@@ -257,9 +228,6 @@ describe('a Mark complete error and the recovery (SPEC §4 "Save error")', () =>
     });
 });
 
-// ---------------------------------------------------------------------------
-// At most 5 clusters
-// ---------------------------------------------------------------------------
 
 describe('at most 5 clusters (user decision 2026-10-10)', () => {
     const CLU_SP = { kind: 'clustering', outerSd: 5 };
@@ -303,8 +271,7 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         await waitForCharts();
         await settle(500);
 
-        // opens exactly as saved: Complete, nothing clamped, no draft, the file untouched
-        // (the Dashboard autosaves its own view state on open — the models' slice is byte-identical)
+        // Opens exactly as saved: Complete, nothing clamped, no draft; the models' slice stays byte-identical on disk.
         expect(fgOnDisk(), 'opening it changed nothing about the models').toBe(seeded.fg);
         expect(diskModel('c1')).toMatchObject({ status: true, numClusters: 7, clusterRanges: seven, trainedFingerprint: seeded.fingerprint, lastTrainedAt: seeded.trainedAt });
         expect(footPill()).toBe('Complete');
@@ -320,8 +287,7 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         expect(req.args.request.n_clusters).toBe(7);
         expect(req.args.request.cluster_ranges).toHaveLength(7);
 
-        // Model fit: a point series per cluster — all 7 — in blues / violets only, on the ONE
-        // full-width chart (the "Clusters" summary card with a row per cluster was removed 2026-10-11)
+        // Model fit: a point series per cluster (all 7) in blues/violets only, on the ONE full-width chart.
         expect([...bmw().getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
         expect(bmw().queryByTestId('cluster-summary')).toBeNull();
         const fitChart = chartsWithSeries('Cluster 7').pop()!;
@@ -342,8 +308,7 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         for (let k = 1; k <= 7; k++) expect(chartsWithSeries(`Cluster ${k} 5× SD`).length, `5× ring of cluster ${k}`).toBeGreaterThan(0);
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
-        // an older build's export record has no scoring interval: nothing is offered for it any
-        // more (Mark complete writes no files) — the model stays Complete and untouched
+        // An older build's export record (no scoring interval) offers nothing (Mark complete writes no files); the model stays Complete.
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         expect(footPill()).toBe('Complete');
@@ -382,9 +347,6 @@ describe('at most 5 clusters (user decision 2026-10-10)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Drafts with the new spine
-// ---------------------------------------------------------------------------
 
 describe('drafts and the new page spine', () => {
     it('a set point typed WITHOUT blur is saved (once) when the page is left through the HEADER page switch', async () => {
@@ -464,14 +426,10 @@ describe('drafts and the new page spine', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Timestamps keep their own wall clock
-// ---------------------------------------------------------------------------
 
 describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (never shifted by the PC\'s time zone)', () => {
-    // 60 rows, 10 s apart from 22:55:00 on 2026/02/09 (so they straddle 23:00: rows 0-29 are in the
-    // 22:00 hour, rows 30-59 in the 23:00 hour), written the way three different loggers would:
-    // UTC ("Z"), Bangkok ("+07:00") and New York ("-05:00").
+    // 60 rows, 10 s apart from 22:55:00 on 2026/02/09, straddling 23:00; written as three loggers would:
+    // UTC ("Z"), Bangkok ("+07:00"), New York ("-05:00").
     const ZONES = ['Z', '+07:00', '-05:00'];
     const clock = (i: number) => {
         const s = 22 * 3600 + 55 * 60 + i * 10;
@@ -483,9 +441,8 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         return { ...d, timestamps: d.timestamps.map((_, i) => `2026-02-09T${clock(i).text}${ZONES[i % 3]}`) };
     }
 
-    // The health score is computed on 1-hour averages: the Model fit page still shows every raw row
-    // at its own clock (seconds included), while the Health score page has ONE point per clock hour,
-    // placed at — and read out as — the START of the rows' own wall-clock hour.
+    // Model fit shows every raw row at its own clock (seconds included); Health score has ONE point per clock hour,
+    // read as the START of the rows' own wall-clock hour.
     it('Model fit plots every raw row at its own clock (10 s apart); the Health score page reads the rows\' own clock HOUR — lowest-score time and hover read-out say 22:00 / 23:00 on 2026/02/09; the footer\'s own stamps are the app\'s local time in the same format', async () => {
         const data = zonedDataset();
         newBackend({ plant: data });
@@ -505,8 +462,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         selectSensor('tag1');
         await waitForCharts();
 
-        // No train date and no "scored on N periods" anywhere on the page (user decision
-        // 2026-10-12): a trained, up-to-date model has no notice line at all.
+        // No train date and no "scored on N periods" anywhere: a trained, up-to-date model has no notice line.
         expect(diskModel('i1').lastTrainedAt).toBeTruthy();
         expect(footer()).toBeNull();
         expect(bmwEl().textContent).not.toMatch(/scored on \d+ period|Trained \d{4}\/\d{2}\/\d{2}/);
@@ -534,8 +490,7 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
             series: { score: null };
             score_summary: { min_score: { timestamp: string; row: number } };
         };
-        // the 600 s of data are TWO hourly points, at the rows' own clock hours on 2026/02/09 — a "+07:00" row
-        // moved to UTC would be 15:00, a "-05:00" row 03:00 / 04:00 on the 10th
+        // 600 s of data = TWO hourly points at the rows' own clock hours (a "+07:00" row in UTC would be 15:00, a "-05:00" row 03:00/04:00 on the 10th).
         expect(answer.hourly.timestamps).toEqual(['2026-02-09T22:00:00', '2026-02-09T23:00:00']);
         expect(answer.series.score).toBeNull(); // the raw rows are never scored
         // each hour's first row was written inside that hour by its own clock, whatever zone its logger used
@@ -558,7 +513,6 @@ describe('a CSV stamp with "Z" / an offset shows its OWN wall clock everywhere (
         expect(bmw().getByTestId('kpi-lowest').textContent).toMatch(/ · 1 h average$/);
         expect(bmw().getByTestId('kpi-below80').textContent).toMatch(/of \d+ scored hours$/);
         expect(bmw().getByTestId('score-basis').textContent).toBe('1-hour averages of the running rows');
-        // (no per-period tile any more — the "Scoring results" card was removed 2026-10-12)
         expect(bmw().queryByTestId('test-results')).toBeNull();
 
         // the hover read-out: the hour START (a data row's time: "…22:00:00", never the raw text) and that hour's 1 h average

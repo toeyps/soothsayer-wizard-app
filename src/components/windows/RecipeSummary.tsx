@@ -57,8 +57,7 @@ function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescriptio
         if (i < 0) return null;
         const lead = text.slice(0, i);
         const end = text.slice(i + joined.length);
-        // Several sources: the start they share once, then each one's end, whole. Ends cut to "Segm…" say nothing:
-        // when they cannot all be read the line counts them instead, and `title` lists them.
+        // Several sources: shared start once, then each end whole. If they don't fit, show a count; `title` lists them.
         const prefix = commonPrefix(names);
         const list = (prefix ? names.map(n => afterPrefix(n, prefix)) : names).join(', ');
         const left = roomPx - textWidth(`${lead}${list}`, font) - (end ? END_MIN_PX : 0);
@@ -91,11 +90,7 @@ function summaryParts(recipe: SpecialSensorRecipe, desc: SpecialSensorDescriptio
     );
 }
 
-/**
- * The Manage list's one-line recipe. Plain text while it fits. Only once it is really cut, every sensor name in it
- * is cut in the MIDDLE (DESIGN_SYSTEM §4 rule 1), so the part that tells two recipes apart ("SegmentNo 1 - max",
- * "× 10") is never the part that is lost; words and operators never shrink. The full recipe stays in `title`.
- */
+/** Manage list's one-line recipe: plain text while it fits; once cut, only sensor names are cut in the middle (DESIGN_SYSTEM §4 rule 1), words and operators never shrink. Full recipe in `title`. */
 export function RecipeSummary({ recipe, desc, describe }: {
     recipe: SpecialSensorRecipe;
     desc: SpecialSensorDescription | undefined;

@@ -41,11 +41,7 @@ interface SensorDataPanelProps {
 
 const REQUIREMENTS = ['First column is date/time', 'Unique column names', 'Up to 2 GB per file'];
 
-/** A few of the date/time shapes the reader understands (`csv_processor.rs` reads many more:
- *  month names, weekdays, compact digits, Thai, Excel serials, epoch …; day/month order of a
- *  year-last date is decided per file — a value over 12 is the day; otherwise the order that
- *  keeps the rows in sequence). The Rust test `the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed`
- *  checks every one of these. */
+/** A few accepted timestamp shapes (`csv_processor.rs` reads many more); a Rust test checks that each one parses. */
 export const SUPPORTED_TIMESTAMPS = [
   '2025-01-31 13:05:00', '1/31/2025 1:05 PM', '31/01/2025 13:05', '01-Jan-25 12:00 AM',
   'Fri, 31 Jan 2025 13:05:00 +0700', '20250131130500', '31 ม.ค. 2568 13:05', '45688.5451389',
@@ -102,7 +98,7 @@ function Kpi({
   );
 }
 
-/** Step 2, left column: "Sensor data" -- dropzone, file rows with read progress, summary, time coverage, fixed-while-reading warnings. */
+/** Step 2, left column "Sensor data": dropzone, file rows with read progress, summary, time coverage, warnings. */
 export default function SensorDataPanel({
   T, files, report, isReady, isStale, isLoading, error, progress, onBrowse, onRemove, onParse, tzOffsetMin, onTzChange,
 }: SensorDataPanelProps) {
@@ -335,10 +331,7 @@ export default function SensorDataPanel({
           </>
         )}
 
-        {/* Non-fatal issues Rust found while reading (duplicate columns,
-            duplicate timestamps merged, a Buddhist-Era year corrected to
-            Gregorian, ...) -- parsing still succeeded, but the user should know
-            before opening the Dashboard. */}
+        {/* Non-fatal reading issues (duplicate columns, merged timestamps, year corrected); parsing succeeded. */}
         {warnings.length > 0 && (
           <div
             data-testid="fixed-while-reading"
@@ -357,7 +350,7 @@ export default function SensorDataPanel({
           </div>
         )}
 
-        {/* Two or more files: they must write the date/time the same way. */}
+        {/* Two or more files: a note on how they are merged by date and time. */}
         {files.length >= 2 && <TimestampFormatNote T={T} />}
 
         {hasFiles && (
@@ -385,9 +378,7 @@ export default function SensorDataPanel({
 
 const TZ_TOOLTIP = 'The data carries no time zone; this offset is added to every timestamp when the results are exported.';
 
-/** One line under the time coverage: the time zone the timestamps are read in
- *  (default this PC's) and "Change", which swaps in the picker and focuses it.
- *  The explanation is in the tooltip so the line never wraps. */
+/** Time-zone line under coverage; 'Change' swaps in the picker. The explanation is in the tooltip so the line never wraps. */
 function TimeZoneLine({ T, value, onChange }: { T: Tokens; value: number; onChange?: (min: number) => void }) {
   const [editing, setEditing] = useState(false);
   const selectRef = useRef<HTMLSelectElement>(null);

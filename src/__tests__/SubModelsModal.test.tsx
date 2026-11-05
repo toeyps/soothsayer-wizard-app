@@ -16,8 +16,7 @@ import { SensorMetaContext, type SensorInfo } from '../components/sensor/sensorI
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 
-// `total` = the real row count the fit used (`n_rows`); the arrays are the BOUNDED sample
-// of `n` rows the Rust command sends when `max_points` is passed (total defaults to n).
+// `total` = real row count (`n_rows`); the arrays are the bounded sample of `n` rows sent with `max_points`.
 const result = (n: number, r2 = 0.8, rmse2 = 0.4, total = n): RelationshipPreviewResult => ({
     request: 'r', r2_per_step: [r2], rmse2_per_step: [rmse2], n_rows: total,
     predicted: Array.from({ length: n }, (_, i) => i),
@@ -40,7 +39,6 @@ describe('buildSubModelOption', () => {
         expect(o.yAxis.name).toBe('TARGET');
     });
 
-    // User rule 2026-10-14: a sensor is never shown by its tag alone.
     it('with the window\'s sensor lookup: axis titles are description · unit, tooltip rows are description then tag (escaped)', () => {
         const info: Record<string, SensorInfo> = {
             B: { tag: 'B', description: 'FUEL GAS <FLOW>', unit: 'kg/s' },
@@ -121,7 +119,7 @@ describe('SubModelsModal', () => {
         const cards = screen.getAllByTestId('sub-model-card');
         const chips = (card: HTMLElement) => [...within(card).getByTestId('sub-model-sensors').querySelectorAll('.pm-submodel-sensor')]
             .map(el => [el.querySelector('.sl-desc')?.textContent, el.querySelector('.sl-tag')?.textContent ?? null]);
-        // the TARGET first (2026-10-14), then the predictors of the step
+        // Target first, then the step's predictors.
         expect(chips(cards[0])).toEqual([['VALVE POSITION', 'TARGET'], ['FUEL GAS FLOW', 'A']]);
         // B has no description: its tag is its label (once — no second line)
         expect(chips(cards[1])).toEqual([['VALVE POSITION', 'TARGET'], ['FUEL GAS FLOW', 'A'], ['B', null]]);
@@ -135,7 +133,6 @@ describe('SubModelsModal', () => {
         expect(sub.querySelector('.sl-tag')?.textContent).toBe('TARGET');
     });
 
-    // User decision 2026-10-14: "N" was the number of data rows — the same for every step — so it is gone.
     it('a card has exactly three numbers — R², RMSE, 2·RMSE — and no row count ("N")', () => {
         show(fits({ subModels: [{ predictors: ['A'], result: result(3, 0.8, 0.4, 159000) }] }));
         const card = screen.getByTestId('sub-model-card');

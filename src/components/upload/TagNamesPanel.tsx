@@ -43,7 +43,7 @@ function AlarmDots({ T, sensor }: { T: Tokens; sensor: SensorMetadata }) {
   );
 }
 
-/** Step 2, right column: "Tag names" (the required tag -> name / unit / component / alarm-limit lookup). */
+/** Step 2, right column: "Tag names" (optional tag -> name / unit / component / alarm-limit lookup). */
 export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps) {
   const [tab, setTab] = useState<Tab>('matched');
   const [query, setQuery] = useState('');

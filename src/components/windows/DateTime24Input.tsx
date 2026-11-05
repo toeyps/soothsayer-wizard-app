@@ -28,10 +28,7 @@ interface DateTime24InputProps {
     children?: ReactNode;
 }
 
-/**
- * Date and time field, always 24-hour: the text plus a calendar button, for the inside of `.f4-dtw` or another shell.
- * What is being typed stays in the field while it is incomplete, as in a `datetime-local`.
- */
+/** Always-24-hour date+time field: text plus a calendar button, for inside `.f4-dtw` or another shell. Typed text stays while incomplete, like a `datetime-local`. */
 export function DateTime24Input({ ariaLabel, invalid, value, min, max, onChange, onCommit, onClear, calClassName = 'f4-dtw-cal', calLabel = 'Open date picker', children }: DateTime24InputProps) {
     const [text, setText] = useState(() => formatDateTime24(value));
     const reported = useRef(value);

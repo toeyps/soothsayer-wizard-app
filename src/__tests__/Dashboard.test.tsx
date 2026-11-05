@@ -6,7 +6,6 @@ import type { CsvMetadata, SensorMetadata, WorkspaceState } from '../types';
 import type { DashboardRef } from '../components/dashboard/Dashboard';
 import { showSensorTab } from './helpers/dashboardLanding';
 
-// ── Child component mocks — capture props, expose trigger buttons ─────────
 
 const chartProps: any[] = [];
 vi.mock('../components/charts', () => ({
@@ -14,9 +13,7 @@ vi.mock('../components/charts', () => ({
     defaultSensorColor: (tag: string) => `default-${tag}`,
     LINE_CHART_COLORS: ['c0', 'c1', 'c2', 'c3', 'c4', 'c5'],
     MAX_PAIR_PLOT_SENSORS: 4,
-    // Real palette (not a stub) -- Dashboard's default-colour-assignment
-    // tests read actual entries from it, and it must match ScatterChart's
-    // own RANGE_PALETTE exactly since the two are meant to agree.
+    // Real palette, not a stub: default-colour tests read its entries and it must match ScatterChart's RANGE_PALETTE.
     RANGE_PALETTE: [
         [0.99, 0.75, 0.18, 1.0], [0.20, 0.83, 0.60, 1.0], [0.86, 0.40, 0.97, 1.0], [0.99, 0.45, 0.45, 1.0],
         [0.40, 0.85, 0.99, 1.0], [0.99, 0.55, 0.27, 1.0], [0.65, 0.85, 0.40, 1.0], [0.78, 0.66, 0.99, 1.0],
@@ -105,7 +102,6 @@ vi.mock('../components/dashboard/HighlightsPanel', () => ({
     },
 }));
 
-// ── Data hooks — controllable, no debounce/invoke timing to fight ─────────
 
 const mockUseChartData = vi.fn((_query?: { revision?: number } | null) => ({ view: null, loading: false, error: null } as any));
 vi.mock('../hooks/useChartData', () => ({ useChartData: (query: unknown) => mockUseChartData(query as any) }));
@@ -119,16 +115,12 @@ vi.mock('../hooks/useScatterSample', () => ({
         mockUseScatterSample(filter, max, active, revision),
 }));
 
-// Default `bounds: null` matches the old default fixture's `ts_min: null,
-// ts_max: null` — most tests don't care about the dataset's true extent and
-// expect `dataRange`-gated UI (the "Data …" hint, "Reset period") to stay
-// absent by default.
+// Default `bounds: null`: most tests don't need a dataset extent, so dataRange-gated UI stays absent.
 const mockUseDatasetTimeBounds = vi.fn(() => ({ bounds: null, loading: false, error: null } as any));
 vi.mock('../hooks/useDatasetTimeBounds', () => ({
     useDatasetTimeBounds: () => mockUseDatasetTimeBounds(),
 }));
 
-// ── Tauri / infra mocks ────────────────────────────────────────────────
 
 const mockInvoke = vi.fn().mockResolvedValue(undefined);
 vi.mock('@tauri-apps/api/core', () => ({
@@ -171,10 +163,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
     message: (text: string, opts: unknown) => mockMessage(text, opts),
 }));
 
-// GetCurrentWindow().onCloseRequested — the close-flush effect
-// (docs/BACKLOG.md item 8). `mockCloseRequestedHandler` captures the
-// registered handler so tests can invoke it directly, simulating the user
-// requesting a close.
+// Captures the onCloseRequested handler so tests can simulate a close request.
 const mockWindowClose = vi.fn().mockResolvedValue(undefined);
 let mockCloseRequestedHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
 const mockOnCloseRequested = vi.fn((handler: (event: { preventDefault: () => void }) => void | Promise<void>) => {
@@ -211,9 +200,7 @@ vi.mock('../workspaceManager', () => ({
     },
 }));
 
-// A sensor-kind toggle is now computed against what is on DISK (so a stale
-// mirror can't overwrite another window's write) — so a test that toggles must
-// say what disk holds. In real life it holds what the Dashboard was opened with.
+// A toggle is computed against what is on disk, so a test that toggles must say what disk holds.
 const seedDisk = (state: { failureGroupState?: unknown }) => {
     mockUpdateWorkspaceData.mockImplementation(async (id: string, patch: (s: any) => any) => patch({ id, failureGroupState: state.failureGroupState }));
 };
@@ -249,7 +236,6 @@ function last<T>(arr: T[]): T {
     return arr[arr.length - 1];
 }
 
-// ── Fixtures ────────────────────────────────────────────────────────────
 
 function makeMetadata(): CsvMetadata {
     return { headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3'], total_rows: 100 };
@@ -268,13 +254,7 @@ function makeInitialState(overrides: Partial<WorkspaceState> = {}): WorkspaceSta
     };
 }
 
-/**
- * A project with no failure groups (most
- * fixtures here) now LANDS on the Failure Groups tab. The tests in this file
- * were written for the Sensor tab, so by default this opens it with one click,
- * the way the user would; `{ landing: true }` keeps the tab the Dashboard
- * chose, for the tests about the landing itself.
- */
+/** Opens the Sensor tab; `{ landing: true }` keeps the tab the project lands on. */
 function renderDashboard(
     props: Partial<React.ComponentProps<typeof Dashboard>> = {},
     ref?: React.Ref<DashboardRef>,
@@ -422,10 +402,7 @@ describe('Dashboard', () => {
         await act(async () => { vi.advanceTimersByTime(300); }); // let the on-mount autosave settle
         mockSaveWorkspaceData.mockClear();
 
-        // Simulate a Build Model / Predictive Model window (a separate OS
-        // process) having written fresher failure-group state whose
-        // 'failure-group-state-changed' broadcast never reached this window
-        // -- loadWorkspaceData now resolves to that fresher disk content.
+        // Another window wrote fresher failure-group state whose broadcast never arrived; loadWorkspaceData returns it.
         const fresherFailureGroupState = {
             groups: [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }],
             models: [{ id: 'm-fresh', groupNos: [2] }], // shape trimmed -- never rendered, only round-tripped
@@ -595,10 +572,7 @@ describe('Dashboard', () => {
         // Still within the debounce window of the LAST change (100 + 100 = 200ms < 250ms) -- no write yet.
         expect(mockSaveWorkspaceData).not.toHaveBeenCalled();
 
-        // Let the debounce settle past the last change. Async because the
-        // autosave now awaits a fresh loadWorkspaceData() read before
-        // writing -- a sync
-        // advanceTimersByTime wouldn't let that awaited read resolve.
+        // Async so the autosave's awaited fresh read can resolve.
         await act(async () => { await vi.advanceTimersByTimeAsync(150); });
         expect(mockSaveWorkspaceData).toHaveBeenCalledTimes(1); // exactly one write, not three
     });
@@ -1177,11 +1151,7 @@ describe('Dashboard', () => {
             mockWindowClose.mockClear();
             expect(mockCloseRequestedHandler).not.toBeNull();
 
-            // Trigger an edit -- schedules a new debounced save, still pending.
-            // It has to be a REAL change: the autosave skips a
-            // write whose payload is byte-identical to what is already on disk,
-            // so re-selecting the already-selected TAG1 (as this test used to
-            // do) would legitimately write nothing at all.
+            // Must be a real change: the autosave skips a write identical to disk.
             act(() => { fireEvent.click(screen.getByText('select-none')); });
 
             const preventDefault = vi.fn();
@@ -1359,8 +1329,7 @@ describe('Dashboard', () => {
             expect(screen.getByText('Pump Pressure')).toBeTruthy();
         });
 
-        // Real-app report 2026-10-14: hide 3 of 4 sensors in the Selected Sensor tab, add a
-        // sensor in the Sensor panel -> every hidden sensor came back on the chart.
+        // Hide sensors in Selected Sensor, then add one: the hidden ones must stay hidden.
         describe('a sensor hidden in the Selected Sensor tab stays hidden when the selection changes', () => {
             const shown = () => screen.queryAllByTitle('Hide from chart').length;
             const hidden = () => screen.queryAllByTitle('Show on chart').length;
@@ -1408,12 +1377,7 @@ describe('Dashboard', () => {
             expect(lastChart.sensorColors).toEqual({ TAG1: 'c0', TAG2: 'c1' });
         });
 
-        // Reported as "un-ticking a sensor in the right-hand panel
-        // makes the chart flash a different colour before the line goes away".
-        // Colours used to come from the sensor's index in `selectedSensors`, so
-        // removing one re-packed every sensor after it onto a new slot, while
-        // useChartData deliberately keeps the previous view on screen during
-        // the refetch — old lines, new colours. These pin the fix.
+        // Colours come from a slot kept per sensor, so removing one doesn't re-colour the others during the refetch.
         describe('palette colours survive changes to the selection', () => {
             const lineColors = () => last(chartProps.filter((p) => p.chartType === 'line')).sensorColors;
 
@@ -1423,7 +1387,7 @@ describe('Dashboard', () => {
                 expect(lineColors()).toMatchObject({ TAG1: 'c0', TAG2: 'c1', TAG3: 'c2' });
 
                 act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG3']); });
-                // Before the fix TAG3 shifted from 'c2' to 'c1' here — the flash.
+                // TAG3 keeps 'c2' and does not shift to 'c1'.
                 expect(lineColors()).toMatchObject({ TAG1: 'c0', TAG3: 'c2' });
             });
 
@@ -1431,9 +1395,7 @@ describe('Dashboard', () => {
                 renderDashboard();
                 act(() => { last(sensorSelectionProps).onSensorChange(['TAG1', 'TAG2']); });
                 act(() => { last(sensorSelectionProps).onSensorChange(['TAG1']); });
-                // TAG2's line is still drawn from the previous fetch until the
-                // next one lands; without an entry here LineChart would fall
-                // back to defaultSensorColor() and repaint it mid-flight.
+                // TAG2's line is still drawn from the previous fetch; without an entry LineChart would fall back to the default colour.
                 expect(lineColors().TAG2).toBe('c1');
             });
 
@@ -1454,10 +1416,7 @@ describe('Dashboard', () => {
             });
 
             it('still lets an explicit colour override win over the assigned slot', () => {
-                // The sensor has to start out selected: an existing effect prunes
-                // explicit overrides for anything not in selectedSensors, so
-                // seeding a colour for an unselected sensor would be dropped on
-                // mount before this could observe it.
+                // The sensor must start selected: an effect prunes overrides for unselected sensors on mount.
                 renderDashboard({
                     initialState: makeInitialState({
                         selectedSensors: ['TAG1', 'TAG2'],
@@ -1469,10 +1428,7 @@ describe('Dashboard', () => {
             });
 
             it('still prunes an explicit override when its sensor is deselected — remembering the palette SLOT must not resurrect a user-picked colour', () => {
-                // Guards the interaction between the slot memory added here and
-                // the older deliberate rule that a deselected sensor loses its
-                // hand-picked colour (so re-adding it never silently restores
-                // one). The slot is remembered; the override is not.
+                // The slot is remembered but a deselected sensor's hand-picked colour is not.
                 renderDashboard({
                     initialState: makeInitialState({
                         selectedSensors: ['TAG1', 'TAG2'],
@@ -1529,8 +1485,7 @@ describe('Dashboard', () => {
             );
         });
 
-        // Pair Plot draws its sample once per cell (up to 10 WebGL canvases), so its cap is far
-        // below the single-canvas Scatter's — at 50,000 the user found Pair Plot very slow.
+        // Pair Plot draws one WebGL canvas per cell, so its cap is far below Scatter's.
         it('asks for a 200,000-point sample for Scatter and a 10,000-point sample for Pair Plot', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
             fireEvent.click(screen.getByText('Scatter'));
@@ -1560,9 +1515,7 @@ describe('Dashboard', () => {
 
             fireEvent.click(screen.getByText('select-5-tags'));
             const pairBtn = screen.getByText('Pair Plot') as HTMLButtonElement;
-            // Not a native `disabled` — the click must still fire so the
-            // warning dialog can explain why, per the user's explicit
-            // preference over silently redirecting away from the chart.
+            // Not a native `disabled`: the click must fire so the warning dialog can explain.
             expect(pairBtn.disabled).toBe(false);
             expect(pairBtn.className).toContain('blocked');
             expect(pairBtn.title).toContain('at most 4 sensors');
@@ -1689,8 +1642,7 @@ describe('Dashboard', () => {
 
         it('a workspace saved with the removed highlightLineDisplay: "line" still loads: highlights reach the Line chart (which always draws bands), nothing forwards a display mode, and the stale key is dropped on the next autosave', async () => {
             const timeHighlights = [{ id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true }];
-            // The field no longer exists on WorkspaceState -- build the
-            // legacy on-disk shape explicitly.
+            // Build the old on-disk shape explicitly; WorkspaceState has no highlightLineDisplay field.
             const legacy = { selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line', timeHighlights, highlightLineDisplay: 'line' } as unknown as Partial<WorkspaceState>;
             renderDashboard({ initialState: makeInitialState(legacy) });
             expect(last(chartProps).timeHighlights).toEqual(timeHighlights);
@@ -1779,9 +1731,7 @@ describe('Dashboard', () => {
 
     describe('lineTaggedPoints (Tag Point feature — in-memory only, per explicit user request: NOT saved to the workspace file, so it never survives closing and reopening the app; still lifted to Dashboard, not left as LineChart-local state, so it DOES survive switching chart type away and back within the same running session)', () => {
         it('always starts empty, regardless of what initialState carries (regression: this field must never round-trip through the saved workspace)', () => {
-            // WorkspaceState no longer even has a lineTaggedPoints field, so
-            // there's nothing to pass here — the point of this test is that
-            // it's impossible to seed it from a loaded workspace at all.
+            // WorkspaceState has no lineTaggedPoints field, so a loaded workspace can't seed it.
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'], chartType: 'line' }) });
             expect(last(chartProps).lineTaggedPoints).toEqual([]);
         });
@@ -1813,8 +1763,7 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).toBe('2026-01-01T00:00');
         });
 
-        // A condition whose sensor left the chart is kept and still
-        // applies; its note offers "Show on chart", which puts the sensor back on the chart.
+        // A condition whose sensor left the chart is kept and still applies; its note offers 'Show on chart'.
         it('"Show on chart" from the Filter tab adds the sensor back to the chart', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             fireEvent.click(screen.getByText('Filter'));
@@ -1839,16 +1788,7 @@ describe('Dashboard', () => {
             expect((last(filterPanelProps) as any).showSensorBlockedReason).toBeUndefined();
         });
 
-        // The
-        // workspace-wide Running Condition Filter is meant ONLY for every
-        // model's preview/training query (compute_sensor_stats,
-        // preview_relationship_model, compute_clustering_preview all take
-        // it) — Dashboard keeps its own copy in local state purely so its
-        // autosave can round-trip it without clobbering a fresher write from
-        // BuildModelWindow (see the data-loss-fix test above), never to
-        // filter its OWN chart/scatter display. That display is driven
-        // exclusively by Dashboard's own Filter tab (`filters.sensorFilters`
-        // -> wireValueFilters), a completely separate piece of state.
+        // Dashboard keeps the Running Condition Filter only for the autosave round-trip; its display follows the Filter tab.
         it("a non-empty Running Condition Filter does NOT leak into Dashboard's own chart/scatter queries — the main display keeps showing everything, unaffected", () => {
             renderDashboard({
                 initialState: makeInitialState({
@@ -1953,7 +1893,7 @@ describe('Dashboard', () => {
             fireEvent.click(screen.getByText('toggle-group'));
             let state = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(state.failureGroupState.models).toHaveLength(1);
-            // The legacy running-condition banner is gone (2026-10-26): nothing seeds its marker.
+            // No legacy running-condition banner: nothing seeds its marker.
             expect(state.failureGroupState.rcLegacyNotice).toBeUndefined();
             expect(state.failureGroupState.categoryNormalisationNotice).toBeNull();
             cleanup();
@@ -1998,7 +1938,7 @@ describe('Dashboard', () => {
                     });
                 seedDisk(initialState);
                 renderDashboard({ initialState });
-                // The mocked SensorSelection's toggle-group button always toggles TAG1 into group 1 as individual -- use onToggleSensorGroupKind directly via the same mock button pattern isn't available for group 2, so drive it through sensorSelectionProps instead.
+                // The mocked toggle button always uses group 1; drive group 2 through sensorSelectionProps.
                 act(() => { last(sensorSelectionProps).onToggleSensorGroupKind('TAG1', 2, 'individual'); });
                 return last(mockUpdateWorkspaceData.mock.results)!.value.then((state: any) => {
                     expect(state.failureGroupState.models).toHaveLength(1); // still just one record, not two
@@ -2118,13 +2058,7 @@ describe('Dashboard', () => {
             });
 
             it('toggling a sensor OUT of "Not in Group" when it\'s the model\'s only membership deletes the model (2026-08-31 fix: used to no-op, falling back right back to [0])', () => {
-                // Regression test — the old fallback logic re-added the
-                // exact same [0] sentinel it had just removed, making the
-                // "Remove from Not in Group" button silently do nothing.
-                // There's no other group left to represent once 0 itself
-                // is removed, so the placeholder model is deleted outright
-                // (same as clicking "Remove model" in Build Model),
-                // confirmed with the user rather than assumed.
+                // Removing the last group deletes the placeholder model.
                 const initialState = makeInitialState({
                         failureGroupState: {
                             groups: [],
@@ -2195,8 +2129,7 @@ describe('Dashboard', () => {
                 expect(state.failureGroupState.models[0].groupNos).toEqual([newGroupNo]); // 0 dropped, replaced by the real group
             });
 
-            // User decision 2026-10-17: a group's models that are ONLY in it are deleted with it;
-            // a model also in another group just loses this one.
+            // Models only in the deleted group go with it; a model also in another group just loses this one.
             it('deleteGroup deletes the models only in that group (no files are removed); a model also in another group survives there', async () => {
                 const initial = makeInitialState({
                         failureGroupState: {
@@ -2233,12 +2166,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // Removing a model's LAST group still deletes the model at once
-    //, but the Dashboard now says so —
-    // a 7-second "<Kind> model of <sensor> deleted — Undo" toast — and Undo puts
-    // the ORIGINAL model back whole through the same disk-derived write as every
-    // other Failure Group edit (so it broadcasts and never reverts another
-    // window's write with a stale mirror).
+    // Removing a model's last group deletes it and shows an Undo toast; Undo restores it through the disk-derived write.
     describe('2026-10-03 — Health score set points (phase 1: data only) are seeded when a model is created and survive every Dashboard writer', () => {
         const groupsAB = [{ no: 1, name: 'Group A' }, { no: 2, name: 'Group B' }];
         const stateFor = (models: any[], extra: Partial<WorkspaceState> = {}) =>
@@ -2391,9 +2319,7 @@ describe('Dashboard', () => {
                 expect(setPointsJson(box)).toBe(JSON.stringify(entered()));
             });
 
-            // 2026-10-20 (Export results): Mark complete writes no files, so deleting a model —
-            // by its last group, by Undo expiring, by being pushed out of the toast stack, or
-            // with a deleted group — never removes any (`remove_model_files` is never called).
+            // Mark complete writes no files, so deleting a model never calls remove_model_files.
             describe('a deleted model removes no files (Export results writes them)', () => {
                 const removeCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'remove_model_files');
 
@@ -2557,8 +2483,7 @@ describe('Dashboard', () => {
             expect(box.disk.failureGroupState.models).toHaveLength(0); // the model really is deleted at once
             expect(toast()!.textContent).toContain('Individual model of Pump Pressure deleted');
             expect(screen.getByRole('button', { name: 'Undo' })).toBeTruthy();
-            // The toast sits in the portal root (clear of every overflow-hidden panel) and is exempt
-            // from the assignment sheet's click-outside dismissal.
+            // The toast sits in the portal root and is exempt from the assignment sheet's click-outside dismissal.
             expect(document.getElementById('wizard-portal-root')!.contains(toast())).toBe(true);
             expect(toast()!.closest('[data-fg-sheet-keep]')).not.toBeNull();
         });
@@ -2569,8 +2494,7 @@ describe('Dashboard', () => {
             renderDashboard({ initialState: initial });
             remove('TAG3', 1, 'relationship');
             await flush();
-            // "Relation model of …" — the kind name already ends in "model" (never
-            // "Relation model model of …", never the old "Relationship model of …").
+            // The kind name already ends in 'model': no 'model model', no 'Relationship'.
             expect(toast()!.textContent).toContain('Relation model of TAG3 deleted');
             expect(toast()!.textContent).not.toMatch(/Relationship|model model/);
         });
@@ -2871,8 +2795,7 @@ describe('Dashboard', () => {
             expect(lastChart.sensorAxisRange.TAG1).toBeUndefined();
         });
 
-        // Real-app bug: at 230 px the row needed more width than the popover had, so
-        // "Y-axis:" wrapped onto two lines and Apply was clipped at the right edge (worse with Unpin).
+        // 'Y-axis:' must not wrap and Apply must not be clipped.
         it('the axis popover is wide enough for its row on one line: 270 px, 310 px once Unpin is shown; nothing in the row wraps', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             const axisPop = () => screen.getByPlaceholderText('min').closest('.sensor-popover') as HTMLElement;
@@ -2905,11 +2828,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // The colour and pin-Y-axis
-    // editors moved from inline blocks under each Selected Sensor row to
-    // `AnchoredPopover` (portaled into #wizard-portal-root, closes itself on
-    // any scroll/resize). These pin the seam between Dashboard's own
-    // open/close state and that shared component.
+    // Pins the seam between Dashboard's open/close state and AnchoredPopover (portaled, closes on scroll/resize).
     describe('Selected Sensor popovers through Portal (visual refresh Phase 1)', () => {
         const openPops = () => Array.from(document.querySelectorAll<HTMLElement>('#wizard-portal-root .sensor-popover'));
         const renderOne = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
@@ -2976,14 +2895,8 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
 
-        // ── Popover regressions ──
 
-        // Chromium fires a `scroll` event on an <input> whose content
-        // scrolls horizontally (e.g. typing "1013250" into a 64px number
-        // input). AnchoredPopover's window `capture: true` scroll listener
-        // must not treat it like a page scroll and close the popover
-        // mid-typing (dropping the draft): it ignores a scroll whose target
-        // is inside the popover's own DOM subtree.
+        // Chromium fires scroll on an overflowing input; AnchoredPopover must ignore scrolls inside its own subtree.
         it('typing a long number into the axis popover\'s 64px min field (the input scrolls) does not close it', () => {
             renderOne();
             fireEvent.click(screen.getByTitle(/Pin the Y-axis/));
@@ -2993,9 +2906,7 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).not.toBeNull();
         });
 
-        // The colour popover's open state does not survive its sensor being
-        // removed, so re-adding the sensor later does not re-render the
-        // popover at a stale fixed screen position.
+        // The colour popover's open state must not survive its sensor being removed.
         it('removing a sensor with its colour popover open, then re-adding it, does not resurrect the popover', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Line colour'));
@@ -3005,10 +2916,7 @@ describe('Dashboard', () => {
             expect(openPops()).toHaveLength(0);
         });
 
-        // Colour and axis popovers are independent and both
-        // `position: fixed` at the same `top` (adjacent buttons in one
-        // row), so opening one closes the other — otherwise the axis popover
-        // would cover most of the colour picker.
+        // Both popovers are position: fixed at the same top, so opening one closes the other.
         it('only one Selected Sensor popover is open at a time (two fixed popovers from one row overlap)', () => {
             renderOne();
             fireEvent.click(screen.getByTitle('Line colour'));
@@ -3026,8 +2934,7 @@ describe('Dashboard', () => {
             expect(screen.queryByPlaceholderText('min')).toBeNull();
         });
 
-        // The swatch IS the colour button (no pipette), the row
-        // text is the neutral stacked SensorLabel, and the picker marks the other sensors' colours.
+        // The swatch is the colour button; the row text is the neutral SensorLabel.
         it('the row is swatch + neutral SensorLabel; the picker marks colours other sensors on the chart use', () => {
             renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'], sensorColors: { TAG1: '#3b82f6', TAG2: '#10b981' } }) });
             const swatches = screen.getAllByTitle('Line colour');
@@ -3045,12 +2952,7 @@ describe('Dashboard', () => {
             expect(last(chartProps.filter((p) => p.chartType === 'line')).sensorColors.TAG1).toBe('#8b5cf6');
         });
 
-        // Chart-type switch: switching the chart type hides the popovers
-        // (their render is gated on `isLine`); their open state is cleared as
-        // soon as chartType leaves 'line', so switching back to Line never
-        // re-mounts a popover — unasked — at the screen position captured
-        // before the switch (the swatch may have moved: the Scatter/Pair Plot
-        // info banner above the list changes the layout).
+        // Leaving 'line' clears popover open state, so switching back doesn't remount one at a stale position.
         const lineBtn = () => screen.getAllByText('Line').find(el => el.classList.contains('chart-type-btn'))!;
         const rectAt = (top: number) => ({ top, bottom: top + 26, left: 300, right: 326, width: 26, height: 26, x: 300, y: top, toJSON() {} }) as DOMRect;
         const renderTwo = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1', 'TAG2'], visibleSensors: ['TAG1', 'TAG2'] }) });
@@ -3111,9 +3013,7 @@ describe('Dashboard', () => {
 
         it('applies "add-sensor-selection" payload — the delta added to the plot, operation config, and merged metadata', async () => {
             renderDashboard();
-            // `add-sensor-selection` is registered only after the first
-            // `await listen(...)` (for `request-sensors`) resolves, so a
-            // microtask flush is needed before its callback is registered.
+            // add-sensor-selection registers after the first awaited listen; flush a microtask.
             await act(async () => { await Promise.resolve(); });
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
@@ -3134,12 +3034,7 @@ describe('Dashboard', () => {
             expect(lastProps.sensors).toContain('CALC1'); // merged into sensorHeaders too
         });
 
-        // ---- add-sensor-selection is a DELTA, merged into the CURRENT plot --
-        //
-        // It used to replace the whole selection with the Add
-        // Sensor window's own copy -- which plotted the sensors a new one was
-        // built FROM and threw away anything changed in the Dashboard after
-        // the window opened.
+        // add-sensor-selection is a delta merged into the current plot, not a replacement.
         describe('"add-sensor-selection" merges into the current plot instead of replacing it', () => {
             async function fire(payload: Record<string, unknown>) {
                 await act(async () => {
@@ -3329,9 +3224,7 @@ describe('Dashboard', () => {
         it('a selected sensor is always in the Sensor tab\'s list, even if it never made it into sensorHeaders itself (2026-09-01: the reported case — building a special sensor from an ALREADY-special one, live, in one session — left the new tag selected and plotted but genuinely missing from sensorHeaders through a path this couldn\'t pin down with certainty; this derives the displayed list from selectedSensors/extraSensorMetadata too instead of trusting sensorHeaders\' own imperative bookkeeping to always stay complete)', () => {
             renderDashboard({
                 initialState: makeInitialState({
-                    // Deliberately NOT in extraSensorMetadata either — simulates
-                    // whatever gap let `selectedSensors` end up with a tag that
-                    // `sensorHeaders` itself never received.
+                    // Deliberately absent from extraSensorMetadata, simulating a tag sensorHeaders never received.
                     selectedSensors: ['GHOST1'],
                     visibleSensors: ['GHOST1'],
                 }),
@@ -3365,9 +3258,7 @@ describe('Dashboard', () => {
                 expect(saved.specialSensorRecipes).toEqual([seedRecipe, newRecipe]);
             });
 
-            // A second round for the SAME tag updates that entry in place
-            // rather than appending a duplicate (e.g. the user re-picks the
-            // same custom name for a tweaked formula).
+            // A second round for the same tag updates its entry in place instead of appending.
             const revisedRecipe = { kind: 'operation' as const, tag: 'CALC1', sourceSensors: ['TAG1', 'TAG2'], operationConfig: { mode: 'single' as const, singleOp: { type: 'multiply' as const, value: 2 } } };
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
@@ -3419,9 +3310,7 @@ describe('Dashboard', () => {
                     ],
                 }),
             });
-            // The delete listener is the third `await listen(...)` in that
-            // effect, so its callback is only registered a couple of
-            // microtasks in.
+            // The delete listener is registered after three awaited listens.
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
             await act(async () => {
@@ -3443,10 +3332,7 @@ describe('Dashboard', () => {
             });
         });
 
-        // A recipe change that reaches
-        // disk THROUGH the autosave demotes the models trained on it in that SAME write
-        // (`applyIncompleteRule` against what is on disk), the mirror adopts them and the
-        // change is broadcast -- an unrelated autosave changes no model and sends nothing.
+        // A recipe change saved by autosave demotes its models in the same write and is broadcast; other autosaves send nothing.
         describe('autosave + a special-sensor recipe change', () => {
             const baseModel = {
                 groupNos: [1], kind: 'individual' as const, category: 'performance' as const, notes: '', predictorSensors: [],
@@ -3599,9 +3485,7 @@ describe('Dashboard', () => {
             });
         });
 
-        // Repairing a special sensor that could
-        // not be restored changes the values every model using it trained on,
-        // and the train fingerprint does not cover special-sensor recipes.
+        // A repaired special sensor changes values the train fingerprint doesn't cover.
         describe('"update-special-sensor" with repaired: true', () => {
             const baseModel = {
                 groupNos: [1], kind: 'individual' as const, category: 'performance' as const, notes: '', predictorSensors: [],
@@ -3770,15 +3654,11 @@ describe('Dashboard', () => {
                 expect(saved.valueHighlight).toEqual({ sensor: 'CALC1-renamed', ranges: [] });
             });
 
-            // Failure Group model — persisted separately via the same
-            // read-modify-write path every other model mutation uses, so a
-            // concurrently open Build Model window would see it too.
+            // Persisted through the same read-modify-write path as other model mutations.
             const patched = await last(mockUpdateWorkspaceData.mock.results)!.value;
             expect(patched.failureGroupState.models[0].targetSensor).toBe('CALC1-renamed');
         });
 
-        // ---- (second pass): the Filter tab, the Running condition,
-        // the plotted-set answer and the rollback refresh ----------------------
         describe('special-sensor rename / delete reach the Filter tab and the workspace Running condition', () => {
             const cond = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '4', value2: '' });
             const rcModel = {
@@ -4029,11 +3909,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // With more than one project, every cross-window event is a
-    // global broadcast and a window left over from the PREVIOUS project keeps
-    // talking. Reported symptoms: a special sensor showing the component and
-    // name of a sensor from another project; Failure Groups appearing,
-    // vanishing, or belonging to the wrong project.
+    // Cross-window events are global broadcasts; a window left over from the previous project must not reach the new one.
     describe('multi-project isolation', () => {
         const otherWs = { workspaceId: 'some-other-workspace' };
 
@@ -4126,9 +4002,7 @@ describe('Dashboard', () => {
         it('answers request-build-model-data from ONE subscription, with the current workspace id -- no stale duplicates from re-subscribing on every state change', async () => {
             renderDashboard({ initialState: makeInitialState({ id: 'ws-A', selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
             await act(async () => { await Promise.resolve(); });
-            // Merging a special sensor's metadata changes `sensorMetadata`, one
-            // of the values the old subscription depended on -- it used to
-            // tear down and re-subscribe on every such change.
+            // Merging special-sensor metadata must not tear down and re-subscribe the listener.
             await act(async () => {
                 for (const cb of listenCallbacks['add-sensor-selection'] ?? []) {
                     cb({ payload: {
@@ -4189,10 +4063,7 @@ describe('Dashboard', () => {
             expect(mockEmit).toHaveBeenCalledWith('sensors-data', expect.objectContaining({ workspaceId: 'ws-B' }));
         });
 
-        // The Add Special Sensor window's body grid is a fixed
-        // `320px minmax(0, 1fr)` with no floor of its own on the right
-        // (Tooling) track, so a window-level minWidth (320px left track + a
-        // 150px floor) keeps that pane from shrinking to 0.
+        // Window minWidth (320px left track + 150px floor) keeps the right pane from shrinking to 0.
         it('"Add Special Sensor" opens with a minWidth that keeps the Tooling pane at least 150px (320px left track + 150px floor)', async () => {
             mockGetByLabel.mockResolvedValue(null);
             renderDashboard();
@@ -4217,8 +4088,7 @@ describe('Dashboard', () => {
         });
     });
 
-    // Always 24-hour: a native datetime-local follows the Windows region, and on
-    // an AM/PM machine the bar's narrow field could hide the PM (user request 2026-11-03).
+    // Always 24-hour text: a native datetime-local follows the Windows region.
     describe('TIME RANGE date inputs (24-hour text, a calendar button per side)', () => {
         const render1 = () => renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
         const startInput = () => screen.getByLabelText('Start date') as HTMLInputElement;
@@ -4288,11 +4158,7 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).not.toBe('');
         });
 
-        // Regression: this data is historical, and its end can sit anywhere
-        // relative to today — anchoring "last N D/W/M/Y" to `new Date()`
-        // (the machine clock) routinely landed outside the dataset entirely
-        // and silently produced 0 points. Must anchor to the dataset's OWN
-        // last timestamp instead.
+        // Anchor to the dataset's own last timestamp, not the machine clock, or the range can miss the data and give 0 points.
         it("anchors Apply to the dataset's own last timestamp, not the machine clock", () => {
             mockUseDatasetTimeBounds.mockReturnValue({
                 bounds: { min: '2020-01-01T00:00:00', max: '2026-01-15T10:00:00' },
@@ -4319,14 +4185,7 @@ describe('Dashboard', () => {
             expect(Math.abs(end.getTime() - Date.now())).toBeGreaterThan(24 * 60 * 60 * 1000);
         });
 
-        // The unit buttons (Y/M/W/D/H) show two separate claims:
-        // `isSelected` (relativeUnit === u — always live, an accent OUTLINE)
-        // and `isActive` (isSelected AND relativeRangeApplied — a SOLID accent
-        // fill). So a click is always visible, and a preset never reads as
-        // "in effect" after the dates were edited by hand. D is the default
-        // relativeUnit, so it renders as "selected" (outline) from the very
-        // first render even with nothing clicked yet. Asserted on the
-        // `.timebar-unit-btn` `is-selected`/`is-active` class modifiers.
+        // isSelected (outline) is always live; isActive (solid) also needs relativeRangeApplied.
         describe('unit-button selected/applied indicator (2-tier: outline = picked, solid = picked AND matches the shown dates)', () => {
             const dayBtn = () => screen.getByRole('button', { name: 'D' }) as HTMLButtonElement;
             const hourBtn = () => screen.getByRole('button', { name: 'H' }) as HTMLButtonElement;
@@ -4410,10 +4269,7 @@ describe('Dashboard', () => {
 
         describe('"Reset Period" button (regression: used to be labelled just "Reset" and sit after the AGGREGATION dropdown, reading as if it might also reset that — it only ever clears the time period)', () => {
             beforeEach(() => {
-                // The button only renders once there's a data range to reset
-                // BACK TO (dataRange, from useDatasetTimeBounds — the TRUE
-                // dataset extent, independent of the filter under test) and
-                // an active Start filter to reset AWAY FROM.
+                // The button renders only with a dataRange to reset to and an active Start filter.
                 mockUseChartData.mockReturnValue({
                     view: { headers: ['TAG1'], timestamps: [], series: [[]], total_rows: 5, ts_min: '2025-01-01T00:00:00Z', ts_max: '2025-06-01T00:00:00Z' },
                     loading: false, error: null,
@@ -4431,17 +4287,7 @@ describe('Dashboard', () => {
                 expect(screen.queryByText('Reset')).toBeNull();
             });
 
-            // The approved prototype's
-            // `.timebar` row explicitly orders Aggregation BEFORE "Reset
-            // period" (unit segmented control → vsep → Aggregation select →
-            // Reset period → spacer → Data range) -- the opposite of the
-            // order this test used to enforce. That's not a regression of
-            // the original ambiguity fix: the button's label ("Reset
-            // period", not the old bare "Reset") and its title ("...does
-            // not change Aggregation") already disambiguate it regardless
-            // of which side of Aggregation it sits on, so following the
-            // prototype's explicit layout here doesn't reopen the bug this
-            // test was written to catch.
+            // Follows the prototype order: Aggregation before 'Reset period'.
             it('sits after the Aggregation control in the DOM, matching the approved prototype\'s `.timebar` order', () => {
                 renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
                 fireEvent.click(screen.getByTitle('Apply relative range'));
@@ -4557,9 +4403,7 @@ describe('Dashboard', () => {
             let lastCall = last(mockUseChartData.mock.calls)![0] as any;
             expect(lastCall.filter.timestamp_start).toBeNull();
 
-            // Bounds "changing" (e.g. a re-render with a new object identity
-            // from the hook) must NOT re-fire the default and clobber the
-            // user's explicit reset.
+            // A bounds object with a new identity must not re-fire the default and clobber an explicit reset.
             mockUseDatasetTimeBounds.mockReturnValue({
                 bounds: { min: '2020-01-01T00:00:00', max: '2026-08-01T00:00:00' },
                 loading: false, error: null,
@@ -4574,10 +4418,6 @@ describe('Dashboard', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// The dataset generation, "workspace-closing", robust closing of
-// the child windows, and the autosave flush on leaving the Dashboard.
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('Dashboard: dataset generation and leaving the workspace (2026-10-03)', () => {
     const withGeneration = (generation: number | undefined): CsvMetadata => ({ ...makeMetadata(), generation });
@@ -4714,10 +4554,6 @@ describe('Dashboard: dataset generation and leaving the workspace (2026-10-03)',
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// Failure groups come first — where the
-// Dashboard lands, and the "Assign sensors" mode.
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('Dashboard landing tab and "Assign sensors" mode (customer batch 2026-10, item 5)', () => {
     const NONE = { no: 0, name: 'Not in Group' };

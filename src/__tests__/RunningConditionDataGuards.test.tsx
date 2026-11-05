@@ -16,20 +16,7 @@ import { rcOn } from './helpers/trainTestFixture';
 
 afterEach(cleanup);
 
-/*
- * "No data to train on" is stopped at the UI — what the
- * Running-condition rows, the timeline and the one-line card SHOW:
- *   - a period entirely outside the loaded data that is NEW / CHANGED in the
- *     draft: red edge, both date fields red, ONE reason line, a red sliver on
- *     the timeline (Apply / Save changes are blocked);
- *   - one that is exactly as it was SAVED: an amber edge, an amber sentence, an
- *     amber sliver, an amber line on the card — nothing is blocked;
- *   - a period partly outside: a quiet amber note, nothing red;
- *   - a settled count of zero running rows: one red line under the caption (all
- *     train periods), or an amber note on the one row that has none.
- * The pure rules are in periodDataGuards.test.ts; Apply / Save / Train are in
- * BuildModelWindow.test.tsx.
- */
+/* 'No data to train on' is stopped at the UI: new/changed draft periods outside the data block Apply/Save. Pure rules: periodDataGuards.test.ts. */
 
 // The user's example: the data covers 2025-01 … 2025-12.
 const DATA = { min: '2025-01-01 00:00:00', max: '2025-12-31 23:59:00' };
@@ -73,8 +60,7 @@ describe('Train period rows against the loaded data', () => {
         render(<TimePeriodsEditor periods={[INSIDE]} onChange={onChange} bounds={DATA} />);
         expect(screen.queryByTestId('period-invalid-1')).toBeNull();
         fireEvent.change(screen.getByLabelText('P1 start'), { target: { value: '2026-05-01T00:00' } });
-        // the parent gets the complete date (it is what the guard judges); here the props are
-        // not updated, so the editor judges its own typed value
+        // The parent gets the complete date; props aren't updated here, so the editor judges its own typed value.
         expect(onChange).toHaveBeenCalledWith([{ ...INSIDE, start: '2026-05-01T00:00' }]);
         // a reversed period first (its own reason) ...
         expect(screen.getByTestId('period-invalid-1').textContent).toMatch(/^P1 ends before it starts/);

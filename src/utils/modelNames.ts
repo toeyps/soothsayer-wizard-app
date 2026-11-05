@@ -1,48 +1,25 @@
 import type { FailureModel, ModelCategory, ModelKind } from '../types';
 import { modelSensorKey } from './modelGrouping';
 
-/**
- * THE kind names a user reads, in every window (Dashboard sheet, Failure Groups
- * tab, Build Model tabs / Train menu / run strip, special-sensor lock sentences,
- * suggested model names): Individual / Relation model / Clustering. The whole
- * app says "Relation model", never "Relationship" — and
- * never the algorithm name. `UserFacingWording.test.ts` guards it.
- * DISPLAY ONLY: the kind VALUE stays `'relationship'` (types, saved workspaces,
- * wire values, fingerprints).
- */
+/** The kind names users read in every window: Individual / Relation model / Clustering. Display only: the kind value stays `'relationship'`. Never the algorithm name; `UserFacingWording.test.ts` guards it. */
 export const MODEL_KIND_LABEL: Record<ModelKind, string> = {
     individual: 'Individual',
     relationship: 'Relation model',
     clustering: 'Clustering',
 };
 
-/** A kind inside a sentence: "Individual model", "Relation model", "Clustering model"
- *  (the Relation model's label already ends in "model" — never "Relation model model"). */
+/** A kind inside a sentence; the Relation model's label already ends in "model". */
 export const kindModelName = (kind: ModelKind): string =>
     (kind === 'relationship' ? MODEL_KIND_LABEL[kind] : `${MODEL_KIND_LABEL[kind]} model`);
 
-/**
- * The kind word a suggested name carried in older workspaces, per kind — only
- * where it differs from today's. Such a workspace still holds names like
- * "Pump (Relationship)": they are the user's data (and their export file names),
- * so they are never rewritten — but a new suggestion must not land next to one as
- * its twin "Pump (Relation model)".
- */
+/** Kind word older workspaces used in suggested names ("Pump (Relationship)"); these are user data, never rewritten, but a new suggestion must not sit beside one as a twin. */
 const LEGACY_KIND_WORD: Partial<Record<ModelKind, string>> = {
     relationship: 'Relationship',
 };
 
 const norm = (s: string): string => s.trim().toLowerCase();
 
-/**
- * Another model of the SAME sensor (workspace-wide, `modelSensorKey`) whose
- * trimmed, case-insensitive name equals `name`, or null. Empty names and
- * models with no key sensor yet never conflict. The model itself is skipped.
- *
- * Exact text only, on purpose: "X (Relationship)" (a name in an older
- * workspace) and "X (Relation model)" are two different names
- * here, so no saved workspace is blocked by it.
- */
+/** Another model of the same sensor (workspace-wide, `modelSensorKey`) with the same trimmed, case-insensitive name, or null. Empty names and models without a key sensor never conflict. Exact text only: "X (Relationship)" and "X (Relation model)" differ, so no saved workspace is blocked. */
 export function findSameSensorNameConflict(
     models: FailureModel[],
     model: Pick<FailureModel, 'id' | 'kind' | 'targetSensor' | 'xSensor'>,
@@ -54,13 +31,7 @@ export function findSameSensorNameConflict(
     return models.find(m => m.id !== model.id && modelSensorKey(m) === key && norm(m.name ?? '') === n) ?? null;
 }
 
-/**
- * "<name> (<Kind>)", then "<name> (<Kind>) 2", 3 … until no same-sensor model uses it.
- *
- * A candidate also counts as used when a same-sensor model holds its LEGACY
- * spelling ("<name> (Relationship)" for "<name> (Relation model)", same counter):
- * the two would read as one model to the user, so the counter moves on.
- */
+/** "<name> (<Kind>)", then " 2", 3 … until no same-sensor model uses it; a model holding the legacy spelling also counts as used (same counter). */
 export function suggestDistinctModelName(
     models: FailureModel[],
     model: Pick<FailureModel, 'id' | 'kind' | 'targetSensor' | 'xSensor'>,
@@ -78,12 +49,7 @@ export function suggestDistinctModelName(
     return `${base}${suffix}`;
 }
 
-/**
- * Another model of the WORKSPACE — any sensor, any kind — whose trimmed,
- * case-insensitive name equals `name`, or null. The model itself is skipped
- * and an empty name never conflicts. Model names must be unique across the
- * project because the export writes each one as the model's display name.
- */
+/** Another model in the workspace (any sensor or kind) with the same trimmed, case-insensitive name, or null; names are unique because the export uses them as display names. */
 export function findWorkspaceNameTwin(
     models: readonly FailureModel[],
     model: Pick<FailureModel, 'id'>,
@@ -104,20 +70,12 @@ export const CATEGORY_FIRST_REASON = 'Pick a category on the sensor first (Perfo
 export const modelTagOf = (m: Pick<FailureModel, 'kind' | 'targetSensor' | 'xSensor'>): string =>
     (m.kind === 'clustering' ? m.xSensor : m.targetSensor) ?? '';
 
-/**
- * The long Mark complete reason for a name twin: names the other model by its
- * kind and its sensor. `labelOf` turns a tag into the plain-text sensor label
- * ("DESCRIPTION · TAG", the tag alone when there is no description).
- */
+/** Long Mark complete reason for a name twin; `labelOf` gives the plain-text sensor label. */
 export function nameTwinMarkCompleteReason(name: string, twin: FailureModel, labelOf: (tag: string) => string): string {
     return `Model name “${name.trim()}” is also used by the ${kindModelName(twin.kind)} of ${labelOf(modelTagOf(twin))} — rename one in Model settings`;
 }
 
-/**
- * The Mark complete blocks that come from the project rather than the fit:
- * no category on the model's sensor (`category`, already resolved per sensor
- * by the caller), then a workspace name twin. `null` = neither blocks.
- */
+/** Mark complete blocks from the project, not the fit: no category on the model's sensor, then a name twin; `null` = neither. */
 export function markCompleteProjectBlock(
     models: readonly FailureModel[],
     model: FailureModel,

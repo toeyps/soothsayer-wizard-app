@@ -1,19 +1,4 @@
-/*
- * Props comparison for the memoised Workbench pages (`ModelFitPage`,
- * `HealthScorePage`): the Build Model
- * window re-renders on every step of a training run (list badges, the run
- * strip), and every ECharts option on those pages is rebuilt per render with
- * fresh formatter functions, which makes ECharts redraw. A page re-renders
- * only when one of its props really changed.
- *
- * COMPLETE by construction: every prop is compared, so a prop added later can
- * never be silently ignored —
- *   - by identity, by default (callbacks must therefore be stable);
- *   - `preview` (the `useHealthPreview` result, a fresh object per render) by
- *     its fields, each by identity;
- *   - the keys in `byValue` (small plain data the window rebuilds per render:
- *     the model re-read from disk, set points, scoring-period numbers …) by JSON value.
- */
+/* Props comparison for the memoised Workbench pages: identity (callbacks must be stable), `preview` by its fields, keys in `byValue` by JSON value. */
 export function samePageProps<T extends object>(a: T, b: T, byValue: readonly (keyof T)[]): boolean {
     const keys = new Set<keyof T>([...Object.keys(a), ...Object.keys(b)] as (keyof T)[]);
     for (const k of keys) {

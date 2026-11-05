@@ -21,10 +21,7 @@ function makeMockInstance() {
 }
 
 let lastInstance: ReturnType<typeof makeMockInstance> | null = null;
-/** Every instance created this test, in creation order — main canvas first
- *  (its creation effect is declared before the halo layer's), halo second
- *  when one gets created. Used by the halo-layer tests below to tell the
- *  two WebGL instances apart. */
+/** Every instance created this test, in creation order (main first, halo second), to tell the two WebGL instances apart. */
 let instances: ReturnType<typeof makeMockInstance>[] = [];
 const mockCreateScatterplot = vi.fn((_opts: any) => {
     lastInstance = makeMockInstance();
@@ -76,11 +73,7 @@ beforeEach(() => {
     lastResizeCallback = null;
     vi.stubGlobal('ResizeObserver', MockResizeObserver);
 
-    // jsdom has no layout engine — clientWidth/clientHeight are always 0,
-    // which would make ScatterChart's size guard (`innerDims.width === 0`)
-    // skip creating the WebGL instance entirely. Force a stable, non-zero
-    // box for every element so the component behaves as it would in a real
-    // window.
+    // jsdom has no layout (clientWidth/Height are 0), which would skip creating the WebGL instance; force a non-zero box.
     origClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
     origClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 800 });
@@ -129,15 +122,9 @@ describe('ScatterChart', () => {
         const expectedHeight = 600 - 50 - 56; // AXIS_PADDING.top/bottom
         expect(opts.width).toBe(expectedWidth);
         expect(opts.height).toBe(expectedHeight);
-        // Regression: regl-scatterplot defaults aspectRatio to 1 (assumes a
-        // square data domain) and letterboxes a non-square canvas — our x/y
-        // domains are both normalized to [-1,1] with nothing physical to
-        // preserve, so this must match the canvas's own ratio to fill the
-        // whole chart area instead of showing black bars on the sides.
+        // aspectRatio must match the canvas ratio, or regl letterboxes the normalised square domain.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
-        // Visual refresh: recoloured from a leftover navy
-        // slate-900 to match the app's own `--card-bg` — see ScatterChart.tsx's
-        // matching comment.
+        // Matches the app's `--card-bg`.
         expect(opts.backgroundColor).toEqual([0.0627, 0.0627, 0.0706, 1.0]);
     });
 
@@ -214,8 +201,7 @@ describe('ScatterChart', () => {
                 [0.55, 0.6, 0.68, 0.12], // VALUE_UNMATCHED_COLOR
                 [1, 0, 0, 1], // #ff0000
             ]);
-            // Row t0 (C=100) and t2 (C=300) fall outside [150,250] -> category 0;
-            // row t1 (C=200) falls inside -> category 1 (first, and only, range).
+            // Rows t0 (C=100) and t2 (C=300) fall outside [150,250] -> category 0; t1 (C=200) is inside -> category 1.
             const drawCall = last(lastInstance!.draw.mock.calls);
             expect(Array.from(drawCall[0].valueA as Float32Array)).toEqual([0, 1, 0]);
         });
@@ -330,10 +316,7 @@ describe('ScatterChart', () => {
             expect(haloInstance.destroy).toHaveBeenCalledTimes(1);
             const setCallsAtTeardown = haloInstance.set.mock.calls.length;
 
-            // Simulate a pan/zoom landing right after teardown — the main
-            // instance's `view` subscriber must not call `.set()` on the
-            // now-destroyed halo instance (that's what regl-scatterplot
-            // throws "The instance was already destroyed" for).
+            // A pan/zoom landing right after teardown must not call `.set()` on the destroyed halo instance (regl throws).
             const fakeScale = { domain: () => [0, 1] };
             act(() => { instances[0].__subs['view']({ xScale: fakeScale, yScale: fakeScale, view: new Float32Array([1, 0, 0, 0]) }); });
             expect(haloInstance.set.mock.calls.length).toBe(setCallsAtTeardown);
@@ -347,9 +330,7 @@ describe('ScatterChart', () => {
 
             rerender(<ScatterChart data={dataT} sensors={['A', 'B']} headers={headers} timeHighlights={[{ ...highlight1, enabled: false }]} />);
 
-            // destroy() only tears down the WebGL context — it leaves the canvas's
-            // last-rendered frame on screen. Re-assigning `width` is what actually
-            // forces the browser to clear the backing bitmap, so this must fire too.
+            // destroy() leaves the last frame on the canvas; re-assigning `width` is what clears the bitmap.
             expect(widthSetter).toHaveBeenCalledWith(300);
         });
     });
@@ -465,8 +446,7 @@ describe('ScatterChart', () => {
         expect(tooltip.textContent).toContain('t0');
     });
 
-    // One date format in the whole app (2026-10-12): the Scatter printed the CSV text as it was
-    // ("2025-03-14 21:25:00") while the Line chart's tooltip read "2025/03/14 21:25:00".
+    // One date format app-wide: the Scatter must match the Line chart tooltip (2025/03/14 21:25:00), not print the CSV text.
     it('the row time is in the one date format wherever it is printed (tooltip, the tag table\'s column head) — from the row\'s own clock', () => {
         const rows = [
             { timestamp: '2025-03-14 21:25:00', values: [1, 10] },
@@ -503,16 +483,14 @@ describe('ScatterChart', () => {
         expect(container.querySelector('.scatter-regl-tooltip')).toBeNull();
     });
 
-    // Scatter's axis titles have room — they are the
-    // Inline label (description then tag) + the unit, with the full name in `title`.
+    // Scatter's axis titles have room: Inline label (description, tag) + the unit, full name in `title`.
     describe('axis titles: Inline label + unit', () => {
         const sensorMetadata = [
             { tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
             { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
         ];
 
-        // User decision 2026-10-11 ("เอาเป็น 2 บรรทัด"): the description has its own line, so a
-        // long name is no longer cut by the tag + unit sharing it.
+        // The description has its own line, so a long name isn't cut by the tag + unit.
         it('X title is two lines: description, then tag + unit; the title attribute carries every part', () => {
             render(<ScatterChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
             const x = screen.getByTestId('scatter-axis-title-x');
@@ -553,9 +531,7 @@ describe('ScatterChart', () => {
         });
     });
 
-    // The native X / Y selects of are retired — the
-    // compact single picker shows the Inline label and opens an anchored popover scoped to the
-    // sensors on the chart; Y opens right-aligned so it stays inside the chart.
+    // The compact single picker opens an anchored popover of the chart's sensors; Y right-aligned to stay inside.
     describe('X/Y sensor pickers', () => {
         const sensorMetadata = [
             { tag: 'A', description: 'Pump Pressure', unit: 'bar', component: 'Pump' },
@@ -674,7 +650,7 @@ describe('ScatterChart', () => {
             expect(table.textContent).not.toContain('Δ');
         });
 
-        // User decision 2026-10-14: the columns run in TIME order (the row's own wall clock).
+        // Table columns run in time order (the row's own wall clock).
         it('the table columns are in TIME order, not tagging order; a row with no readable time keeps tagging order, after the dated ones', () => {
             const dated = [
                 { timestamp: '2025-03-14 21:00:00', values: [1, 10] },

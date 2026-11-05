@@ -235,7 +235,7 @@ When unsure between two sizes, start with the smaller one and step up only if it
 
 **An agent run without its report block has NOT passed (2026-10-09, found in 10 days of run data):** every agent ends with a named block — `## HANDOFF` (workers, qa, release, notion-sync), `## CODE REVIEW`, `## BUG REPORT`, `## DESIGN LEAD HANDOFF`, `## DESIGN HANDOFF`, `## DESIGN REVIEW`, `## PLAN`. If a run comes back without it (2 of 18 code-reviewer runs and 1 ui-design-reviewer run stopped mid-way), treat that step as not done: resume the same agent with SendMessage (or re-run it) until the block arrives. Never move to the next phase, commit or tell the user "reviewed" on a missing report.
 
-**Keep each agent run small:** one design run = at most 2–3 screens or one feedback round; one worker run = one phase. Split a bigger job into several runs (one "merge every mockup into the full-app mockup" run took 336 tool calls over ~16 h and stalled). Agents must stop any local server they started before reporting.
+**Keep each agent run small:** one design run = at most 2–3 screens or one feedback round; one worker run = one phase. Split a bigger job into several runs (one "merge every mockup into the full-app mockup" run took 336 tool calls over ~16 h and stalled). Everything an agent or the main session starts (scripts, servers, shells, watchers) must be stopped before reporting, and throwaway scripts get a time limit (user, 2026-11-05: leftovers slow their computer). The main session also checks for leftovers itself before saying a task is done: an agent saying "done" does not prove its processes ended.
 
 **Worker agents** — when your task is complete, output this block before stopping:
 

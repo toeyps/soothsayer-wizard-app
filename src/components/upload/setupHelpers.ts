@@ -1,12 +1,4 @@
-/**
- * Pure helpers for the Import page's setup steps (1 "Name your project" and
- * 2 "Add your sensor data"). Free of React / Tauri so they can be unit-tested
- * directly (setupHelpers.test.ts).
- *
- * Rule for every formatter here: a missing / non-finite input yields `null`
- * (or an empty list), never a made-up value and never the strings "NaN" /
- * "undefined" -- the view hides the matching card or segment instead.
- */
+/** Pure helpers for Import steps 1 and 2. Missing or non-finite input gives `null` or an empty list, never made-up values or 'NaN'. */
 
 import type { CsvFileInfo, CsvLoadProgress, CsvLoadReport, MappingResult } from '../../types/dataUpload';
 import type { SensorMetadata } from '../../types';
@@ -22,7 +14,6 @@ export function baseName(path: string): string {
   return path.split(/[/\\]/).pop() || path;
 }
 
-/* ------------------------------ sizes / numbers ------------------------------ */
 
 /** 1024-based file size: "512 B", "84.2 KB", "84.2 MB", "1.5 GB". `null` for a missing / negative / non-finite size. */
 export function formatFileSize(bytes: number | null | undefined): string | null {
@@ -44,12 +35,7 @@ function trimNumber(n: number, decimals: number): string {
   return String(Number(n.toFixed(decimals)));
 }
 
-/**
- * Sampling interval label: 300 -> "5 min", 3600 -> "1 h", 30 -> "30 s",
- * 86400 -> "1 d". Values that are not a whole number of a larger unit stay in
- * the unit that does not hide them (90 -> "90 s", 5400 -> "90 min"). `null`
- * for a missing / zero / negative / non-finite interval.
- */
+/** Interval label: 300 -> '5 min', 3600 -> '1 h', 5400 -> '90 min'; null if missing, <= 0 or non-finite. */
 export function formatInterval(seconds: number | null | undefined): string | null {
   if (!isNum(seconds) || seconds <= 0) return null;
   if (seconds < 60) return `${trimNumber(seconds, 2)} s`;
@@ -73,7 +59,7 @@ export function formatMissingPercent(p: number | null | undefined): string | nul
 
 const DAY_MICROS = 86_400_000_000;
 
-/** Duration between two epoch-microsecond instants as a short label ("6 h", "12 d", "18 mo", "2.5 y"). `null` if either is missing or end < start. */
+/** Duration label ('6 h', '12 d', '18 mo', '2.5 y'); null if either is missing or end < start. */
 export function formatSpan(startMicros: number | null | undefined, endMicros: number | null | undefined): string | null {
   if (!isNum(startMicros) || !isNum(endMicros) || endMicros < startMicros) return null;
   const days = (endMicros - startMicros) / DAY_MICROS;
@@ -92,16 +78,9 @@ export function formatCount(n: number | null | undefined): string | null {
   return isNum(n) ? n.toLocaleString() : null;
 }
 
-/* ------------------------------ project name ------------------------------ */
 
-/* ------------------------------ load report ------------------------------ */
 
-/**
- * A row time from the load report ("2024-01-01 00:00:00", as Rust writes it) in
- * the app's one date format: "2024/01/01 00:00:00" — read from the text's own
- * wall clock, never moved to another time zone. Text in another shape is shown
- * as it is.
- */
+/** Report row time '2024-01-01 00:00:00' shown as '2024/01/01 00:00:00' (no zone shift); other shapes unchanged. */
 export function rowTimeText(text: string): string {
   return formatRowTime(text) ?? text;
 }
@@ -120,7 +99,7 @@ export interface ReportSummary {
   missing: string | null;
 }
 
-/** Display-ready, null-safe summary of a `load_csv` report (fields added in Phase R may all be absent). */
+/** Display-ready, null-safe summary of a `load_csv` report; any field may be absent. */
 export function summarizeReport(report: CsvLoadReport | null | undefined): ReportSummary {
   const empty: ReportSummary = {
     rows: null, sensors: null, periodStart: null, periodEnd: null, periodSpan: null, interval: null, missing: null,
@@ -149,11 +128,7 @@ export function summarizeReport(report: CsvLoadReport | null | undefined): Repor
   };
 }
 
-/**
- * The report entry that belongs to a selected path: same position and same
- * file name first, then any entry with that name (the selection may have been
- * reordered or trimmed since the parse). `undefined` when nothing matches.
- */
+/** Report entry for a path: same position and name first, then any entry with that name; undefined if none. */
 export function findFileInfo(
   report: CsvLoadReport | null | undefined,
   path: string,
@@ -167,7 +142,6 @@ export function findFileInfo(
   return files.find((f) => f.name === name);
 }
 
-/* ------------------------------ time coverage ------------------------------ */
 
 export interface CoverageLane {
   /** Position of the file in the report's `files` array. */
@@ -194,8 +168,7 @@ export interface Coverage {
 
 const MIN_BAR_PCT = 1.2;
 
-/** An axis tick of the coverage chart: "2025/01/01" / "2025/01/01 00:05". The
- *  naive timestamps are stored as if UTC, so the wall clock is the UTC fields. */
+/** Axis tick text; naive timestamps are stored as UTC, so the wall clock is the UTC fields. */
 function microsToText(micros: number, withTime: boolean): string {
   const d = new Date(Math.round(micros / 1000));
   if (Number.isNaN(d.getTime())) return '';
@@ -205,12 +178,7 @@ function microsToText(micros: number, withTime: boolean): string {
   }, withTime ? 'minutes' : 'date');
 }
 
-/**
- * Geometry for the "Time coverage" chart: every file with a known time range
- * placed on ONE shared axis (so overlaps are visible). Returns `null` when no
- * file has both a start and an end (the card is then hidden). A single file
- * fills the axis; a single-instant range gets a minimum-width bar.
- */
+/** Time coverage geometry on one shared axis; null if no file has start and end; a single instant gets a minimum-width bar. */
 export function computeCoverage(files: CsvFileInfo[] | null | undefined): Coverage | null {
   if (!Array.isArray(files) || files.length === 0) return null;
   const usable = files
@@ -250,7 +218,6 @@ export function computeCoverage(files: CsvFileInfo[] | null | undefined): Covera
   return { lanes, minMicros, maxMicros, ticks, overlaps, hiddenCount: files.length - usable.length };
 }
 
-/* ------------------------------ read progress ------------------------------ */
 
 export type FileReadState = 'done' | 'reading' | 'waiting';
 
@@ -289,14 +256,13 @@ export function isCsvLoadProgress(p: unknown): p is CsvLoadProgress {
   );
 }
 
-/* ------------------------------ tag names ------------------------------ */
 
 export interface ComponentCount {
   name: string;
   count: number;
 }
 
-/** Sensors per component, biggest first. Sensors without a component are counted as "Uncategorized" only when named components exist too (otherwise the list would be a single meaningless chip). */
+/** Sensors per component, biggest first; 'Uncategorized' is counted only when named components exist too. */
 export function countComponents(metadata: SensorMetadata[] | null | undefined): ComponentCount[] {
   if (!Array.isArray(metadata) || metadata.length === 0) return [];
   const counts = new Map<string, number>();
@@ -333,12 +299,8 @@ export function matchedFraction(matched: number, total: number): number | null {
   return Math.min(1, Math.max(0, matched / total));
 }
 
-/* ------------------------------ tag-name file check ------------------------------ */
 
-/** Why the tag-name file (master data) blocks Continue, or `null` when it does
- *  not. A new project needs one, and it must list exactly the sensors in the
- *  data: the same number AND the same tags, so two files of equal size with
- *  different tags are refused too. */
+/** Why the tag-name file blocks Continue, or null: it must list exactly the data's sensors (same count and tags). */
 export function tagFileBlockReason(
   filePath: string | null,
   keyColumn: string | null,

@@ -86,7 +86,7 @@ describe('parseExportError', () => {
 });
 
 describe('exportFolderName', () => {
-    const D = new Date(2026, 9, 5, 9, 7); // local 2026-10-05 09:07
+    const D = new Date(2026, 9, 5, 9, 7); // Local time 2026-10-05 09:07.
     // Rust's rule for folder_name
     const RUST_RULE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$/;
 

@@ -1,27 +1,11 @@
 import { isFormulaAtom, tokenizeFormula, type ExcelRoundCall } from './formulaTokens';
 
-/**
- * Rounding in special-sensor formulas.
- *
- * The engine's `round(x)` takes ONE value (to a whole number). N decimals are
- * written with a literal power of ten -- `round(X * 100) / 100` for 2 dp,
- * `round(X)` for 0 dp -- the form Rust's legacy converter emits
- * (`formula_diagnostics::convert_legacy_round`). Quick
- * build's round transform, the "Round the result" setting and the
- * `round_excel` fix button all write this one form; never `round(0.01, X)` and
- * never the spreadsheet order `round(X, 2)` (which the engine reads as
- * "round 2 to a multiple of X" and the gate refuses).
- *
- * An Average / Median BLOCK is not rounded this way: it stores
- * `multiOp.decimals` (`quickBuild.ts`).
- */
+/** Rounding in formulas: the engine's `round(x)` takes one value. N decimals use a literal power of ten (`round(X * 100) / 100`, `round(X)` for 0), the form Rust's converter emits; never `round(X, 2)` (the engine reads it as 'round 2 to a multiple of X'). Average/Median blocks store `multiOp.decimals` instead (`quickBuild.ts`). */
 
 /** Rust's limit for a convertible `round(x, n)`: a whole n in 0..=15. */
 export const MAX_ROUND_PLACES = 15;
 
-/** `X` rounded to `decimals` places, in the engine form. `X` is bracketed
- *  unless it is one operand (`isFormulaAtom`); the result has a top-level `/`
- *  for decimals > 0, so a caller dropping it into a larger formula brackets it. */
+/** `X` rounded to `decimals` places in engine form (`X` bracketed unless one operand). For decimals > 0 the result has a top-level `/`, so callers bracket it in a larger formula. */
 export function roundExpression(expr: string, decimals: number): string {
     const x = expr.trim();
     if (!Number.isInteger(decimals) || decimals < 0) throw new RangeError(`decimals must be a whole number >= 0 (got ${decimals})`);
@@ -31,9 +15,7 @@ export function roundExpression(expr: string, decimals: number): string {
     return `round(${xs} * ${scale}) / ${scale}`;
 }
 
-/** A formula with the "Round the result" setting applied, plus where the
- *  user's own text (`body`, trimmed) starts inside it -- for mapping a Rust
- *  issue range on the stored text back into the textarea. */
+/** Formula with 'Round the result' applied, plus where the user's body sits, to map Rust issue ranges back to the textarea. */
 export interface RoundedFormula {
     formula: string;
     /** UTF-16 offset of the (trimmed) body inside `formula`. */
@@ -49,11 +31,7 @@ export function hasUnpairedBracket(text: string): boolean {
     return tokenizeFormula(text).some(t => (t.kind === 'open' || t.kind === 'close') && (t.pair ?? -1) < 0);
 }
 
-/** Apply "Round the result" (`decimals` = null: off) to the editor text.
- *  A body with an unpaired bracket is NOT wrapped: the added brackets could
- *  pair with the user's stray ones and turn a broken formula into a different
- *  valid one (`$A) + ($B` -> `round(($A) + ($B) * 100) / 100`). It is sent and
- *  saved as typed, so the check reports the user's own mistake. */
+/** Applies 'Round the result' (`decimals` null = off). A body with an unpaired bracket is NOT wrapped (added brackets could pair with the stray ones and turn a broken formula into a different valid one); it is sent as typed. */
 export function withRoundResult(body: string, decimals: number | null): RoundedFormula {
     const trimmed = body.trim();
     const bodyLead = body.length - body.trimStart().length;
@@ -66,12 +44,7 @@ export function withRoundResult(body: string, decimals: number | null): RoundedF
     return { formula, bodyStart, bodyLead, bodyLength: trimmed.length };
 }
 
-/**
- * Map a range on the STORED formula (what Rust checked) into the textarea's
- * text. Clamped to the body; `undefined` when the range lies entirely in the
- * added `round(… * 100) / 100` wrapper (the wrapper itself is never wrong for
- * a valid body, so that cannot point at anything the user typed).
- */
+/** Maps a range on the stored formula into the textarea; clamped to the body; undefined if wholly inside the added wrapper. */
 export function rangeToBody(range: [number, number] | undefined, r: RoundedFormula): [number, number] | undefined {
     if (!range) return undefined;
     const lo = Math.max(range[0], r.bodyStart);
@@ -80,13 +53,7 @@ export function rangeToBody(range: [number, number] | undefined, r: RoundedFormu
     return [lo - r.bodyStart + r.bodyLead, hi - r.bodyStart + r.bodyLead];
 }
 
-/**
- * Split a stored formula into the editor's text + "Round the result" setting:
- * an outer `round(X * 10^n) / 10^n` (n 1..15) or `round(X)` becomes
- * `{ body: X, decimals: n }`. Only when re-applying the setting gives back
- * EXACTLY the stored text (so opening and saving never rewrites a formula the
- * user did not touch); otherwise `{ body: formula, decimals: null }`.
- */
+/** Splits a stored formula into editor text + setting: an outer `round(X * 10^n) / 10^n` (n 1..15) or `round(X)`. Only when re-applying gives back EXACTLY the stored text, so opening/saving never rewrites an untouched formula. */
 export function splitRoundResult(formula: string): { body: string; decimals: number | null } {
     const f = formula.trim();
     const none = { body: formula, decimals: null };
@@ -134,10 +101,7 @@ function placesOfScale(text: string): number | null {
     return m ? m[1].length : null;
 }
 
-/** How many places a spreadsheet `round(x, n)` meant: a plain whole-number
- *  `n` in 0..=15, else null. (Rust also evaluates a constant expression such
- *  as `1 + 1`; this local twin only reads a plain number -- Rust's own
- *  `converted_formula` covers the rest.) */
+/** Places in spreadsheet `round(x, n)`: a plain whole `n` in 0..=15, else null; Rust's `converted_formula` handles the rest. */
 export function roundPlaces(n: string): number | null {
     const t = n.trim();
     if (!/^\d+(\.0*)?$/.test(t)) return null;

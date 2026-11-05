@@ -19,49 +19,7 @@ import {
 import { isCompleteDateInput, settleDateInput } from './periodDisplay';
 import type { PeriodBounds } from './TimePeriodsEditor';
 
-/*
- * The "Scoring periods" list (the file, the component and the test ids say
- * "test periods", like the storage keys do). Used by the Running condition
- * modal (workspace default) and by a Custom model's own panel in Model
- * settings — the same rows in both.
- *
- * "Just score it" (spec: docs/design/handoff/workbench-redesign/README.md §2):
- * a scoring period is ONLY start → end. The trained model gives a health score
- * for that time and the user reads the chart — there is no Normal / Known
- * problem label, no event time and no verdict.
- *
- * One quiet line per period: S# · start → end · "35 d · 30 d running" · remove
- * (the running days are Rust's per-period count, `counts`; while a new count is
- * on its way the previous number stays, dimmed). A scoring period MAY overlap
- * the train periods: one small grey line under the row says how many days of
- * train time it includes — never a block. An invalid period gets a thin red
- * left edge, a red date field and ONE reason line ("S1 needs an end date").
- *
- * Against the loaded data (`bounds` + `savedTests`): a scoring
- * period that is NEW or was CHANGED here and lies ENTIRELY outside the data's
- * time range is invalid ("S1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)",
- * both fields red, blocks Apply / Save); one that is exactly as it was SAVED
- * only gets an amber warning ("S1 is outside the data — nothing is scored
- * there") and blocks nothing; one only partly
- * inside gets a quiet amber note and blocks nothing; one whose settled count
- * holds no running row gets "no running rows in S1" (amber — Mark complete's
- * own rule about scored periods is unchanged).
- *
- * Old workspaces: a saved period may still carry `label` /
- * `eventTime` / `fromHighlight`. They are never shown, and every period this
- * editor hands back is built with `toScoringPeriod` (id / start / end only), so
- * an edit can never carry them on. Merely opening the editor writes nothing
- * (the change check ignores those legacy keys).
- *
- * Typing a date works as in `TimePeriodsEditor`: a COMPLETE date goes to the
- * parent on change, in the order on
- * screen, so the timeline, the counts and the impact line follow the edit
- * before Apply can be pressed; a half-typed `datetime-local` reports '' — that
- * stays in the field only (`onPendingChange` names the row) and on blur / Enter
- * a date that was set comes back instead of being emptied. The list is put in
- * time order on blur / Enter and on add / remove — never while a date is being
- * typed — so S1, S2 … read left to right on the charts.
- */
+/* Scoring periods list for the Running condition modal and a Custom model's panel; a period is only start -> end (`toScoringPeriod`). Only a complete date goes up while typing; the list is time-sorted on blur/Enter/add/remove. A new or changed period fully outside the data is invalid; a saved one only warns. */
 
 const pad = (n: number) => String(n).padStart(2, '0');
 const fmtLocal = (ms: number) => {
@@ -82,10 +40,7 @@ const msOf = (s: string): number | null => {
     return Number.isNaN(ms) ? null : ms;
 };
 
-/** Default range of "Add scoring period": 14 days starting one minute after the
- *  latest end among the train and scoring periods (so it does not touch train
- *  time), else at the dataset start; clamped to the dataset end. Start / end
- *  only — nothing else is ever written on a scoring period. */
+/** Add default: 14 days from 1 min after the latest train/scoring end (else data start), capped at data end. */
 export function nextDefaultTestPeriod(train: TimePeriod[], tests: TestPeriod[], bounds: PeriodBounds | null | undefined): TestPeriod {
     const min = toInputValue(bounds?.min);
     const max = toInputValue(bounds?.max);
@@ -113,7 +68,7 @@ function overlapNote(train: TimePeriod[], t: TestPeriod, i: number, bounds: { mi
 }
 
 export interface TestPeriodsEditorProps {
-    /** The scoring periods (a legacy label / event time on them is ignored). */
+    /** The scoring periods (a label / event time on them is ignored). */
     tests: TestPeriod[];
     /** The train periods next to them (for the overlap note and the Add default). */
     train: TimePeriod[];
@@ -121,30 +76,23 @@ export interface TestPeriodsEditorProps {
     onChange: (next: TestPeriod[]) => void;
     /** True dataset extent (`useDatasetTimeBounds`): defaults, min/max, day counts. */
     bounds?: PeriodBounds | null;
-    /** What the surrounding form does, for the empty note ("you can train and
-     *  apply now" in the Running-condition settings, "… and save now" in a
-     *  Custom model's own panel). Default `'apply'`. */
+    /** What the surrounding form does, for the empty note: 'apply' (Running-condition settings) or 'save' (Custom model panel). */
     blocks?: 'apply' | 'save';
     /** Per-period running-row counts of the list (`usePeriodCounts`). Omitted =
      *  the rows show their calendar days only. */
     counts?: PeriodCountsState;
-    /** The row whose date is still being typed ("S1"), or null once every field
-     *  holds what the parent has. Called when that changes, and with null on
-     *  unmount. */
+    /** Row whose date is still being typed (e.g. 'S1'), or null; also called with null on unmount. */
     onPendingChange?: (name: string | null) => void;
-    /** The list as it is SAVED. A period unchanged from it that lies outside the
-     *  data only warns; omitted = every period is new (outside the data = invalid). */
+    /** The saved list: an unchanged period outside the data only warns; omitted = all periods are new (invalid there). */
     savedTests?: PeriodBaseline;
 }
 
 export default function TestPeriodsEditor({ tests, train, onChange, bounds, blocks = 'apply', counts = PERIOD_COUNTS_IDLE, onPendingChange, savedTests }: TestPeriodsEditorProps) {
-    // The draft and the change check both work on the start / end only form, so a
-    // legacy label on the incoming periods is neither drawn nor read as a change.
+    // Draft and change check use the start/end-only form, so a stray label is neither drawn nor read as a change.
     const saved = toScoringPeriods(tests);
     const propsKey = JSON.stringify(saved);
     const [draft, setDraft] = useState<TestPeriod[]>(() => toScoringPeriods(tests));
-    // The list this editor last handed up: when exactly that comes back the local
-    // draft is already right (and may hold a half-typed field a reset would wipe).
+    // The list last handed up; when it comes back the draft is already right and may hold a half-typed field.
     const emittedKey = useRef<string | null>(null);
     useEffect(() => {
         const own = emittedKey.current === propsKey;
@@ -170,15 +118,12 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
         setDraft(sorted);
         emit(sorted);
     };
-    /** `list` with every field as it settles (`settleDateInput`): a date that was
-     *  set and is empty / half-typed in the field goes back to its committed value. */
+    /** `list` with each field settled: a set date that is empty or half-typed reverts to its committed value. */
     const settled = (list: TestPeriod[]): TestPeriod[] => list.map(t => {
         const was = savedById.get(t.id);
         return was ? toScoringPeriod({ id: t.id, start: settleDateInput(t.start, was.start), end: settleDateInput(t.end, was.end) }) : t;
     });
-    /** A date field changed. The field always shows what is typed; the parent gets
-     *  the list — in the order on screen — only once the date is complete, and
-     *  never a half-typed value of another field. */
+    /** The field shows what is typed; the parent gets the list only once the date is complete. */
     const type = (i: number, which: 'start' | 'end', v: string) => {
         const next = draft.map((t, j) => (j === i ? toScoringPeriod({ ...t, [which]: v }) : t));
         setDraft(next);
@@ -206,10 +151,7 @@ export default function TestPeriodsEditor({ tests, train, onChange, bounds, bloc
     useEffect(() => { onPendingRef.current?.(pendingName); }, [pendingName]);
     useEffect(() => () => { onPendingRef.current?.(null); }, []);
 
-    // The list as it is JUDGED on screen (validity, day counts, the train-time
-    // note): a field still being typed counts as the date the parent has, so a
-    // half-typed date does not flash "S1 needs an end date" (it never reaches the
-    // parent, and a blur puts the date back). The field shows what is typed.
+    // Judged on screen: a half-typed field counts as the parent's date, so it doesn't flash 'S1 needs an end date'.
     const judged = draft.map(t => {
         const was = savedById.get(t.id);
         if (!was) return t;

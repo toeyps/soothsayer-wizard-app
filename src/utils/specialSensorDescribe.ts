@@ -4,9 +4,7 @@ import { splitRoundResult } from './formulaRounding';
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-/** How a recipe reads in a list — the formula as typed, or the operation
- *  spelled out as `sum(a, b)` / `a + 10`. A rounded block (`multiOp.decimals`)
- *  says how many decimals it keeps. */
+/** How a recipe reads in a list: the formula as typed, or an operation like `sum(a, b)` / `a + 10`; rounding adds decimals. */
 export function describeRecipe(recipe: SpecialSensorRecipe): string {
     if (recipe.kind === 'formula') return recipe.formula;
     const sources = recipe.sourceSensors.join(', ');
@@ -24,9 +22,7 @@ export function describeRecipe(recipe: SpecialSensorRecipe): string {
         case 'multiply': return `${sources} × ${op.value}`;
         case 'divide': return `${sources} ÷ ${op.value}`;
         case 'power': return `${sources} ^ ${op.value}`;
-        // The decimal count is part of what the sensor IS ("round to 0" and
-        // "round to 3" are different sensors), and the locked editor shows
-        // only this text.
+        // The decimal count is part of what the sensor is ('round to 0' vs 'round to 3'); the locked editor shows only this text.
         case 'round': return `round(${sources}) to ${op.value} decimal${op.value === 1 ? '' : 's'}`;
         default: return `${op.type}(${sources})`;
     }
@@ -39,15 +35,7 @@ export interface SpecialSensorDescription {
     kind: SpecialSensorKind;
     /** "Formula" | "Average block" | "Median block" | "Sum" | "Operation". */
     kindLabel: string;
-    /**
-     * One human line for the Manage list / an Inline label's secondary text:
-     *   formula   -> its text without the rounding, then "· rounded to 2 decimals";
-     *   average   -> "Average of A, B, C · missing values skipped";
-     *   sum       -> "Sum of A, B, C";
-     *   operation -> "A + 10", "sqrt(A)", "A rounded to 2 decimals".
-     * Sensors in a block / operation read through `label` (default: the tag);
-     * a formula keeps its own `$TAG` text (the stored form, as typed).
-     */
+    /** One line for the Manage list / Inline label, e.g. 'Average of A, B · missing values skipped', 'Sum of A, B', 'A + 10'. A formula = its text + '· rounded to 2 decimals' and keeps `$TAG`; block/operation sources read through `label` (default: tag). */
     summary: string;
     /** The recipe as stored / spelled out (`describeRecipe`). */
     expression: string;

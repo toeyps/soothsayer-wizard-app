@@ -1,24 +1,5 @@
-//! Formula editor + Quick build, Rust side:
-//! `preview_formula`, the coded formula gate, `multiOp.decimals`, and the
-//! legacy `round(x, n)` conversion.
-//!
-//! In-crate (included from `lib.rs` under `cfg(test)`, like the other files in
-//! `tests/internal/`) because every function here is private.
-//!
-//! What is pinned:
-//! * every stable issue code, with its range pointing at the user's OWN text
-//!   (UTF-16 offsets — Thai, `${…}` names and an astral character included);
-//! * preview == validate == Create/Save: same verdict, same message, same code;
-//!   and the preview's numbers are the numbers the sensor will hold;
-//! * the preview is bounded on a large dataset; generation pinning → STALE;
-//! * `decimals` rounds exactly `(x * 10^n).round() / 10^n`, and a recipe
-//!   saved without the field computes unrounded;
-//! * the converter's output compiles, rounds exactly, is idempotent, leaves
-//!   other formulas alone, and a formula with another error stays refused;
-//! * `div_zero` / `agg_too_few` are CREATE-only: a replay / Save (`replace`)
-//!   and a `replace` preview accept a saved recipe that has them;
-//! * the chunked parallel column builders put every row back in its place
-//!   (> 16,384 rows), and a superseded preview stops with `CANCELLED:`.
+//! Formula editor and Quick build, Rust side (in-crate: functions are private).
+//! Pins: issue codes with UTF-16 ranges; preview == validate == Create/Save; bounded preview; decimals; div_zero/agg_too_few are create-only.
 
 use crate::csv_processor::ColumnarData;
 use crate::formula_diagnostics::{self as fd, convert_legacy_round};
@@ -88,9 +69,6 @@ fn state_with(data: ColumnarData) -> (AppState, u64) {
     (state, generation)
 }
 
-// ---------------------------------------------------------------------------
-// Issue codes + ranges
-// ---------------------------------------------------------------------------
 
 /// `(formula, code, the exact user text the range must cover — or None)`.
 const CODE_CASES: &[(&str, &str, Option<&str>)] = &[
@@ -165,8 +143,7 @@ fn size_limits_are_coded_and_the_depth_range_is_the_first_bracket_over_the_limit
 
 #[test]
 fn thai_formulas_are_measured_in_characters_not_bytes() {
-    // 2,000 Thai characters = 6,000 UTF-8 bytes: within the 4,096-character
-    // limit the editor shows (a byte count used to refuse it as "too long").
+    // 2,000 Thai characters = 6,000 bytes: under the 4,096-character limit, so a byte count must not refuse it.
     let data = dataset();
     let name = "ค่าแรงดัน";
     let refs = (0..180).map(|_| format!("${{{name}}}")).collect::<Vec<_>>().join("+");
@@ -177,8 +154,7 @@ fn thai_formulas_are_measured_in_characters_not_bytes() {
 
 #[test]
 fn a_remaining_text_error_is_mapped_back_through_the_variable_rewrite() {
-    // `${A}0` is rewritten to `_0 0`: fasteval stops at the second `0`. The
-    // range must point at the user's `0`, not at an offset in `_0 0`.
+    // `${A}0` is rewritten to `_0 0`; the range must point at the user's `0`, not an offset in the rewrite.
     let data = dataset();
     let f = "${ค่าแรงดัน} + ${A}0";
     let p = preview(&data, f);
@@ -187,9 +163,6 @@ fn a_remaining_text_error_is_mapped_back_through_the_variable_rewrite() {
     assert!(covered.contains('0'), "{covered:?}");
 }
 
-// ---------------------------------------------------------------------------
-// One verdict: preview == validate == Create / Save
-// ---------------------------------------------------------------------------
 
 const VALID: &[&str] = &[
     "$A + $B",
@@ -254,9 +227,6 @@ fn the_error_lists_the_engines_own_function_list() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bounded output, generation pinning, request shape
-// ---------------------------------------------------------------------------
 
 #[test]
 fn the_preview_is_bounded_on_a_large_dataset() {
@@ -341,12 +311,8 @@ fn request_and_response_json_shapes() {
     assert_eq!(v["converted_formula"], serde_json::Value::Null);
 }
 
-// ---------------------------------------------------------------------------
-// multiOp.decimals
-// ---------------------------------------------------------------------------
 
-/// `(v * 10^d).round() / 10^d`, with `-0.0` written as `0.0` (`+ 0.0` does
-/// exactly that in IEEE arithmetic) — what the builder promises.
+/// (v * 10^d).round() / 10^d with -0.0 written as 0.0 (`+ 0.0`), as the builder promises.
 fn round_dec(v: f64, d: i32) -> f64 {
     (v * 10f64.powi(d)).round() / 10f64.powi(d) + 0.0
 }
@@ -443,8 +409,7 @@ fn bad_decimals_and_too_few_sources_are_refused_alike_by_create_and_preview() {
 
 #[test]
 fn decimals_survive_the_session_create_path() {
-    // Hand-computed medians (two sources: the mean of the pair), then rounded
-    // to 1 decimal — written out, not derived from the code under test.
+    // Hand-computed medians (mean of the pair for two sources), rounded to 1 decimal; not derived from the code under test.
     let data = ColumnarData::from_parts(
         strs(&["timestamp", "P", "Q"]),
         (0..4).map(|i| Some(format!("2024-01-01T00:0{i}:00"))).collect(),
@@ -494,9 +459,6 @@ fn the_default_name_of_a_rounded_block_carries_its_decimals() {
     assert_ne!(name(serde_json::json!(1)), name(serde_json::json!(2)));
 }
 
-// ---------------------------------------------------------------------------
-// Create-only refusals: div_zero, agg_too_few
-// ---------------------------------------------------------------------------
 
 #[test]
 fn a_saved_division_by_zero_recipe_still_replays() {
@@ -549,9 +511,6 @@ fn a_replace_preview_accepts_a_legacy_one_source_block_like_save_does() {
     assert_eq!(p.issues[0].code, "agg_too_few", "no source at all is never a sensor");
 }
 
-// ---------------------------------------------------------------------------
-// Chunked parallel builders + cancellation
-// ---------------------------------------------------------------------------
 
 const MANY_ROWS: usize = 3 * 16_384 + 123;
 
@@ -632,9 +591,6 @@ fn the_request_token_cancels_every_preview_but_the_latest_to_arrive() {
     assert!(run(Some(1)).unwrap().ok);
 }
 
-// ---------------------------------------------------------------------------
-// Timestamp format
-// ---------------------------------------------------------------------------
 
 #[test]
 fn period_and_timestamps_use_the_rows_own_text() {
@@ -652,9 +608,6 @@ fn period_and_timestamps_use_the_rows_own_text() {
     assert_eq!(preview(&none, "$A").period, None);
 }
 
-// ---------------------------------------------------------------------------
-// Legacy round(x, n) conversion
-// ---------------------------------------------------------------------------
 
 #[test]
 fn converted_formulas_compile_and_round_exactly() {
@@ -708,8 +661,7 @@ fn conversion_leaves_other_formulas_alone_and_other_errors_still_refuse() {
     assert!(out.changed);
     assert_eq!(out.formula, "round($A * 100) / 100");
 
-    // Another problem in the same formula: the conversion fixes the round
-    // but the formula is still refused, and the preview offers no fix.
+    // Another problem in the same formula: conversion fixes the round but it stays refused, with no fix offered.
     for (f, still) in [
         ("round($A, 2) / 0", "div_zero"),
         ("round($A, 2) + sqr($B)", "unknown_function"),
@@ -757,9 +709,7 @@ fn conversion_and_the_size_limits() {
 
 #[test]
 fn the_converter_agrees_with_the_refusal_on_every_shape() {
-    // Whatever the gate refuses as round_excel and the converter changes, the
-    // result no longer has a round_excel refusal — and what the gate accepts,
-    // the converter never touches.
+    // Whatever the gate refuses as round_excel and the converter changes loses that refusal; what the gate accepts is never touched.
     let data = dataset();
     let shapes = [
         "round($A, 2)",

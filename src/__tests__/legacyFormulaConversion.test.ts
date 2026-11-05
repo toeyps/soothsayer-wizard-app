@@ -9,8 +9,7 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 
 const F = (tag: string, formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula });
 
-/** Stands in for Rust's `convert_legacy_formula` (same output on these inputs:
- *  formulaRounding.test.ts pins the local twin to Rust's own table). */
+/** Stands in for Rust's `convert_legacy_formula` (formulaRounding.test.ts pins the local twin to Rust's table). */
 function rustInvoker() {
     return vi.fn(async (cmd: string, args: Record<string, unknown>) => {
         if (cmd !== 'convert_legacy_formula') throw new Error(`unexpected ${cmd}`);

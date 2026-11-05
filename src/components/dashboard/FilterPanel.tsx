@@ -20,12 +20,7 @@ export interface FilterState {
     sensorFilters: SensorValueFilter[];
 }
 
-/**
- * A special sensor was renamed or deleted (Add Special Sensor window). The
- * Dashboard rewrites the APPLIED `filters` itself; this carries the same change
- * into the panel's own unapplied DRAFT, which the Dashboard cannot see. `id`
- * increments per event so each is applied exactly once.
- */
+/** Special sensor renamed/deleted: the Dashboard rewrites applied `filters`; this updates the draft. `id` rises per event. */
 export interface FilterSensorChange {
     id: number;
     rename?: { from: string; to: string };
@@ -40,14 +35,11 @@ interface FilterPanelProps {
     sensorChange?: FilterSensorChange;
     /** "Show on chart" on a condition whose sensor is no longer on the chart. */
     onShowSensor?: (tag: string) => void;
-    /** Why "Show on chart" can't add a sensor right now (e.g. the Pair Plot sensor cap) — the
-     *  button is then disabled with this as its tooltip instead of silently doing nothing. */
+    /** Why 'Show on chart' can't add a sensor now (e.g. Pair Plot cap); the button is disabled with this as its tooltip. */
     showSensorBlockedReason?: string;
 }
 
-// ── Operator segmented control ──────────────────────────────────────────
-// Matches the approved prototype's `.op` pill: 4 small buttons instead of
-// a native <select> for greater/less/equals/between.
+// Operator pill: 4 small buttons instead of a native <select>.
 const OPERATORS: { value: SensorValueFilter['operation']; label: string; title: string }[] = [
     { value: 'greater_than', label: '>', title: 'Greater than' },
     { value: 'less_than', label: '<', title: 'Less than' },
@@ -55,15 +47,8 @@ const OPERATORS: { value: SensorValueFilter['operation']; label: string; title: 
     { value: 'between', label: '↔', title: 'Between' },
 ];
 
-// ── Filter Row (memoized) ───────────────────────────────────────────────
-// One grid row per condition (`.frow`):
-// [sensor picker] [operator segmented] [value1] [value2 or blank] [delete].
-//
-// The sensor is the shared single picker, scoped to the sensors on the chart, and the value
-// boxes carry the unit as a suffix. A condition whose sensor is no longer on the chart is
-// KEPT and still applies (Dashboard's `wireValueFilters` sends every condition) — its row
-// gets a ⚠ and a solid amber picker border, and a note under it with "Show on chart" /
-// "Remove". Never the dashed `.req` look (that means "required and empty").
+// One grid row per condition: [sensor] [operator] [value1] [value2 or blank] [delete]; the picker is scoped to chart sensors.
+// A condition whose sensor left the chart is kept and still applies: ⚠, amber border, 'Show on chart' / 'Remove' note; never the dashed `.req` look.
 
 const FilterRow = memo(function FilterRow({
     filter,
@@ -149,7 +134,6 @@ const FilterRow = memo(function FilterRow({
     );
 });
 
-// ── Main Component ──────────────────────────────────────────────────────
 
 function sensorFiltersEqual(a: SensorValueFilter[], b: SensorValueFilter[]): boolean {
     if (a.length !== b.length) return false;
@@ -183,28 +167,11 @@ export default function FilterPanel({
     // the window's provider.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
-    // Sync from parent -- but only the pieces that actually changed
-    // upstream. `filters` bundles BOTH the time period (timestampStart/End
-    // -- owned by the Dashboard timebar; Reset period, Apply relative
-    // range and editing start/end all funnel through this same prop) AND
-    // the sensor value conditions this panel itself edits. The original
-    // version re-derived the WHOLE draft whenever `filters` differed from
-    // the CURRENT DRAFT -- so an unrelated period-only change (the draft
-    // now contains an unapplied condition `filters` never had) looked
-    // identical to an external reset and silently discarded the user's
-    // in-progress typing. Comparing each half of `filters` against what
-    // was last synced FROM the parent -- not against the current draft --
-    // lets a period change update only the period half, leaving a
-    // locally-edited sensorFilters draft alone unless the parent's own
-    // sensorFilters has genuinely moved on (e.g. Apply/Clear from this
-    // panel itself, or an external reset such as a workspace reload).
+    // Sync only the half of `filters` that changed (period = timebar, conditions = this panel).
+    // Compare each half to what was last synced, not the draft, or a period-only change discards unapplied typing.
     const lastSyncedFilters = useRef<FilterState>(filters);
 
-    // A special sensor's rename / deletion, carried into the draft. Declared
-    // BEFORE the sync effect below on purpose: it applies the same rewrite to
-    // `lastSyncedFilters` too, so when the sync effect then sees the Dashboard's
-    // already-rewritten applied filters they match what it last synced and it
-    // leaves the draft (with any unapplied typing) alone.
+    // Declared before the sync effect: it applies the same rewrite to `lastSyncedFilters`, so the sync effect leaves the draft alone.
     const lastChangeId = useRef(sensorChange?.id ?? 0);
     useEffect(() => {
         if (!sensorChange || sensorChange.id === lastChangeId.current) return;
@@ -267,12 +234,7 @@ export default function FilterPanel({
             ...prev,
             sensorFilters: prev.sensorFilters.map(f => {
                 if (f.id !== id) return f;
-                // Switching away from "between" hides the max-value input
-                // (see FilterRow above) -- clear its value with it, so a
-                // leftover max from an earlier "between" isn't silently
-                // carried in the draft/wire payload for an operator that no
-                // longer shows or uses it, and switching back to "between"
-                // starts fresh instead of resurrecting the old number.
+                // Leaving 'between' clears value2, so no stale max is sent and switching back starts fresh.
                 if (field === 'operation' && value !== 'between') {
                     return { ...f, operation: value as SensorValueFilter['operation'], value2: '' };
                 }
@@ -296,9 +258,6 @@ export default function FilterPanel({
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
         <div className="filter-panel">
-            {/* Header -- `.fhead` in the prototype: bold title + hint text +
-                spacer + "Add condition" (disabled with no sensors to pick
-                from). Replaces the old "SENSOR FILTERS (N)" caps label. */}
             <div className="filter-panel-head">
                 <b>Sensor filters</b>
                 <span className="filter-panel-hint">Show only rows that match every condition</span>
@@ -330,9 +289,6 @@ export default function FilterPanel({
                 </div>
             )}
 
-            {/* Footer -- Apply (primary, disabled unless dirty) + Clear
-                (ghost, only when there's something to clear) + spacer +
-                a dirty-state hint on the right, matching the prototype. */}
             <div className="filter-panel-footer">
                 <button
                     onClick={applyFilters}

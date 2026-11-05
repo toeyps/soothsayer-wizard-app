@@ -1,41 +1,11 @@
 import type { FailureModel } from '../types';
 import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from './runningCondition';
 
-/**
- * What a successful REPAIR of a special sensor does to the models.
- *
- * A special sensor that could not be restored on reopen (Rust refuses its
- * recipe) can have its formula fixed even when a model uses it -- otherwise it
- * would be a dead end. But the fix gives it (and everything built on it) NEW
- * values, and a model's train fingerprint (`computeTrainFingerprint`) only names the
- * sensors, not their recipes: a Complete model trained on the old values would
- * still read as Complete and fresh.
- *
- * So, in the SAME write, every model that trains on one of the affected tags is
- * handled like `applyIncompleteRule` handles a training-input change:
- *   - `status: false` (Complete -> Incomplete),
- *   - the saved `healthVerdict` and any `testsChangedAt` stamp are dropped
- *     (they describe the old fit),
- *   - set points, `lastTrainedAt` and the export record are KEPT,
- * plus one thing `applyIncompleteRule` gets for free from a changed input and
- * this case cannot: `trainedFingerprint` is removed. With `lastTrainedAt` still
- * set, `isModelStale` (modelStatus.ts, the status truth) then reads the model
- * as "was trained, out of date" and Mark complete's trained-and-fresh check
- * requires a re-train -- the minimal change that makes the status
- * machinery see it; no extra field. A re-train writes a fresh fingerprint.
- *
- * "Trains on" = the fields that decide what a model is trained on (the same
- * ones `computeTrainFingerprint` uses): target, predictors, X / Y / criteria
- * sensors, and the conditions of its EFFECTIVE running condition (the workspace
- * one for a Workspace-mode model, its own for a Custom one). `scatterXSensor`
- * is display-only and does not count.
- */
+/** A repair changes a sensor's values, but the train fingerprint names sensors, not recipes. So each model training on an affected tag gets `status: false` and loses `healthVerdict`, `testsChangedAt` and `trainedFingerprint` (stale: re-train needed); set points and `lastTrainedAt` stay. */
 
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/** Every sensor name `model` trains on (the "trains on" fields above, as
- *  written -- may repeat; blanks dropped). Shared with
- *  `specialSensorSignature.ts` so the two can never disagree on the list. */
+/** Every sensor `model` trains on (as written, may repeat, blanks dropped); shared with `specialSensorSignature.ts`. */
 export function trainingSensorsOf(model: FailureModel, fg: RunningConditionFg): string[] {
     const named = [
         model.targetSensor,
@@ -58,16 +28,11 @@ export function modelTrainsOnSensors(model: FailureModel, fg: RunningConditionFg
 export interface SensorRepairDemotion {
     /** The models after the demotion (same array reference when nothing changed). */
     models: FailureModel[];
-    /** Ids of the models that must be trained again: they were Complete or had
-     *  been trained (the user-facing "N model(s) set back to Incomplete"). */
+    /** Ids of models that must be trained again: they were Complete or had been trained. */
     retrain: string[];
 }
 
-/**
- * `models` with every model that trains on one of `tags` set back to
- * Incomplete and out of date (see the module note). Pure; run it on what is on
- * DISK inside the write (`persistFailureGroupStateFrom`). Idempotent.
- */
+/** `models` with every model training on one of `tags` set back to Incomplete and out of date. Pure and idempotent; run it on disk data inside the write. */
 export function demoteModelsTrainedOnSensors(
     models: FailureModel[],
     fg: RunningConditionFg,

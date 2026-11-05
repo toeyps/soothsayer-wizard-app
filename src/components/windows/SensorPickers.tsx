@@ -1,16 +1,9 @@
 import { useMemo, type ReactNode } from "react";
 import { SensorPickerMulti, SensorPickerSingle } from "../sensor/SensorPicker";
 
-// Shared by the Build Model Workbench (BuildModelWindow, RunningConditionPanel).
-//
-// There is ONE sensor picker — `src/components/sensor/SensorPicker.tsx`.
-// `SensorPickerModal` is a thin adapter kept so the Workbench call sites and
-// their tests keep one seam:
-//   - single → `SensorPickerSingle`: a select-like trigger and an anchored popover; one click
-//     picks and closes; no OK.
-//   - multi  → `SensorPickerMulti`: chips with × plus a dashed "Add…" opening a modal with
-//     checkboxes; nothing changes until OK; Cancel / Esc / scrim discard.
-// Labels (description first, then tag) come from the window's `SensorMetaProvider`.
+// Thin adapter over the ONE sensor picker (`src/components/sensor/SensorPicker.tsx`), keeping one seam for the Workbench call sites and tests.
+// single = `SensorPickerSingle` (trigger + popover, one click picks and closes); multi = `SensorPickerMulti` (chips + 'Add…' modal, nothing changes until OK).
+// Labels come from the window's `SensorMetaProvider`.
 export interface SensorPickerModalProps {
     sensors: string[];
     /** Groups the list by component (defaults to the metadata's component). */
@@ -23,7 +16,6 @@ export interface SensorPickerModalProps {
     /** false (default) = multi-select; true = single-select. */
     single?: boolean;
 
-    // ── multi ──
     /** The last CONFIRMED selection — what the modal starts from every time it opens. */
     selected?: string[];
     /** Fires once with the full new selection on OK (or when a chip's × removes one). */
@@ -31,7 +23,6 @@ export interface SensorPickerModalProps {
     /** Locked: chips without ×, "Add…" disabled showing the reason. */
     lockedReason?: string;
 
-    // ── single ──
     value?: string;
     onSelect?: (tag: string) => void;
     /** Adds a "None" row that clears the selection. */

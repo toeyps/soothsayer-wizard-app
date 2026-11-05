@@ -13,12 +13,7 @@ interface State {
     copied: boolean;
 }
 
-/**
- * Last line of defence: a render/effect crash anywhere below unmounts the
- * subtree, which in a production build would leave a silent black window.
- * Instead we show the actual error (message + stack), persist it to the
- * error log, and offer Reload / Copy so the user can recover and report.
- */
+/** Last line of defence: shows the error (message + stack), logs it, and offers Reload / Copy instead of a silent black window. */
 class ErrorBoundary extends Component<Props, State> {
     state: State = { error: null, componentStack: null, logPath: null, copied: false };
 

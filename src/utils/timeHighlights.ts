@@ -1,9 +1,6 @@
 import type { TimeHighlight } from '../types';
 
-/** Only enabled highlights with parseable start/end are ever matched against
- *  — this is recomputed by every caller from the full `timeHighlights` list
- *  rather than memoized here, since the list is small (a handful of entries)
- *  and callers already have their own effect/memo boundaries. */
+/** Only enabled highlights with parseable start/end match; recomputed per caller from the (small) list. */
 function parsedEnabled(highlights: TimeHighlight[]): Array<{ highlight: TimeHighlight; start: number; end: number }> {
     const out: Array<{ highlight: TimeHighlight; start: number; end: number }> = [];
     for (const h of highlights) {
@@ -16,11 +13,7 @@ function parsedEnabled(highlights: TimeHighlight[]): Array<{ highlight: TimeHigh
     return out;
 }
 
-/** First enabled highlight (in list order) whose window contains `timestamp`
- *  — same "first match wins" rule already used for Scatter's criteria-range
- *  bands, so a point in two overlapping highlights doesn't need a tie-break
- *  rule beyond "whichever was added first". Returns null for an unparsable
- *  timestamp or no match. */
+/** First enabled highlight in list order whose window contains `timestamp`; null if unparsable or none. */
 export function firstMatchingHighlight(timestamp: string | null | undefined, highlights: TimeHighlight[]): TimeHighlight | null {
     if (!timestamp) return null;
     const t = new Date(timestamp).getTime();

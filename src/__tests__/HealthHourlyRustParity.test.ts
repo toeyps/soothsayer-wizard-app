@@ -1,29 +1,5 @@
 // @vitest-environment node
-/**
- * Health score on 1-hour averages — the frontend's fake Rust backend
- * (`helpers/fakeHealthRust.ts`) against the SAME fixture the real Rust code is
- * tested with.
- *
- * `src-tauri/tests/fixtures/hourly_score_parity.json` holds one dataset
- * (5-minute rows), one `compute_health_preview` request per kind and the answer
- * expected for it. Rust asserts that answer in
- * `src-tauri/tests/internal/train_test_validation_internal.rs`
- * (`hourly_parity_*`); this file asserts the very same numbers on the fake.
- * Every integration test of the Workbench runs on the fake, so a fake that
- * drifts from Rust would pin behaviour the real app does not have.
- *
- * What the fixture pins on both sides (the points the hourly change turned on):
- *   - one hourly point per clock hour that has a running row (a stopped hour has
- *     none), the mean of the hour's RUNNING rows only, labelled by the hour start;
- *   - a missing score is `null`, never 0;
- *   - Clustering: an hour whose rows are not all in one cluster has no cluster,
- *     no SD distance and no score — and a row with NO criteria value still
- *     enters the hour's mean x / y;
- *   - a scoring period in which no hour has a cluster carries NO
- *     `inside_3sd_ring_pct` key at all (omitted — not `null`, not 0);
- *   - `rows` / `days` stay raw, `hours` / `scored` / `pct_below_80` / `lowest`
- *     are hourly.
- */
+/** Runs the frontend's fake Rust backend (`helpers/fakeHealthRust.ts`) against the fixture Rust uses (`src-tauri/tests/fixtures/hourly_score_parity.json`) so the fake can't drift. Pins: one point per hour with a running row (mean of running rows only); missing score is null, never 0; a mixed-cluster hour has no cluster/score; `rows`/`days` raw, the rest hourly. */
 import { describe, it, expect } from 'vitest';
 import fixture from '../../src-tauri/tests/fixtures/hourly_score_parity.json';
 import { createFakeHealthRust, type HealthDataset } from './helpers/fakeHealthRust';

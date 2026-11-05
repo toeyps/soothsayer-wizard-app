@@ -1,34 +1,16 @@
 #!/usr/bin/env python3
-"""Regenerate docs/testing/manual-test-plan.html's embedded test data from
-docs/testing/MANUAL_TEST_PLAN.md, so the two never drift.
+"""Rewrite the `const DATA = {...};` line of docs/testing/manual-test-plan.html from the docs.
 
-MANUAL_TEST_PLAN.md is the source of truth. Edit it, then run:
+Run: python scripts/build-manual-test-html.py [--check]  (--check exits 1 if the HTML is stale).
+Sources: MANUAL_TEST_PLAN.md (tests), TEST_ROUNDS.md (rounds; its ```rounds block maps each item to
+one round), TEST_DATA_GUIDE.md (its ```files block gives the "ไฟล์ที่ใช้" line). A bad or missing
+mapping fails the build and --check. Saved results are keyed by test id in localStorage.
 
-    python scripts/build-manual-test-html.py            # rewrite the HTML
-    python scripts/build-manual-test-html.py --check    # exit 1 if HTML is stale
-
-Only the `const DATA = {...};` line of the HTML is replaced; the tester's
-saved results live in the browser's localStorage keyed by test id, so ids that
-still exist keep their pass/fail/notes.
-
-Two more sources are folded into the same DATA line (the team only gets the
-HTML, so they must be inside it):
-    docs/testing/TEST_ROUNDS.md      the round-by-round order: the overview table,
-                                     each "## รอบ N — ..." section, the
-                                     "## ข้อที่ต้องทำมือเพิ่ม" list, and the fenced
-                                     ```rounds block = THE one item -> round map
-    docs/testing/TEST_DATA_GUIDE.md  the fenced ```files block = the
-                                     "ไฟล์ที่ใช้" line shown on an item
-Both fenced blocks are validated: an item with no round or two rounds, or a
-block naming an id / section that does not exist, fails the build AND --check.
-
-Markdown format (as used by the plan):
-    ## KEY                       section key
-    ### Title                    section title
-    _blurb_                      optional one-line blurb
-    - [ ] **ID — title** 🆕      item; trailing 🆕 = new, 👀 = watch, 🐍 = sidecar
+Plan format:
+    ## KEY / ### Title           section key / title;  _blurb_ = optional one-line blurb
+    - [ ] **ID — title** 🆕      item; flag 🆕 new, 👀 watch, 🐍 sidecar
       - step                     one bullet per step
-      - **คาดหวัง:** expected    the expected result (last bullet)
+      - **คาดหวัง:** expected    expected result (last bullet)
     ## ของที่รู้อยู่แล้ว ...       trailing "known issues" bullet list
 """
 import json
@@ -53,7 +35,7 @@ def parse(md_text: str) -> dict:
     item = None         # current test
     in_known = False
     lines = md_text.split("\n")
-    # only parse from the first "## KEY" section onward (skips intro + TOC)
+    # parse from the first "## KEY" section on (skips intro + TOC)
     for line in lines:
         m = re.match(r"^## ([A-Z][A-Z0-9]*)\s*$", line)
         if m:
@@ -164,7 +146,6 @@ def parse_rounds(md_text: str, data: dict) -> dict:
     sec_of = {t["id"]: s["key"] for s in data["sections"] for t in s["tests"]}
     lines = md_text.split("\n")
 
-    # intro = text between the H1 and the overview table
     intro, i = [], 1
     while i < len(lines) and not lines[i].startswith("|"):
         if lines[i].strip():
@@ -185,8 +166,7 @@ def parse_rounds(md_text: str, data: dict) -> dict:
     if not meta:
         raise PlanError("TEST_ROUNDS.md: overview table not found")
 
-    # "## รอบ N — title" / "## ข้ามได้ — title" bodies, and the extra hand-work list.
-    # Any other "## " section (e.g. the dev-only notes) is NOT embedded.
+    # Only the round bodies and the extra hand-work list are embedded, not other "## " sections.
     extra = {"title": "", "body": []}
     cur = None
     for l in lines[j:]:
@@ -213,14 +193,12 @@ def parse_rounds(md_text: str, data: dict) -> dict:
         if not r["title"]:
             raise PlanError(f"TEST_ROUNDS.md: round {k} has no '## รอบ {k} — ...' section")
 
-    # the team gets ONE installer and the data files without their folder:
-    # what is embedded must not name an installer version or a data path
+    # Testers get one installer and data files without folders: no version or data path may appear.
     shown = intro + extra["body"] + [x for r in meta.values() for x in [r["data"], r["what"], r["title"]] + r["body"]]
     for x in shown:
         if "WizardTestData" in x or re.search(r"\b\d+\.\d+\.\d+\b", x):
             raise PlanError(f"TEST_ROUNDS.md: text shown to testers names a data path or a version: '{x}'")
 
-    # the machine-readable map
     by_id, by_sec, order = {}, {}, {}
     for raw in fenced(md_text, "rounds", "TEST_ROUNDS.md"):
         l = raw.strip()
@@ -284,9 +262,8 @@ def parse_rounds(md_text: str, data: dict) -> dict:
 def apply_files(md_text: str, data: dict) -> None:
     """Attach the "ไฟล์ที่ใช้" text (t['f']) from TEST_DATA_GUIDE.md's files block.
 
-    Per item: every `ID => text` line naming it (joined with ·); if none, the
-    `SECTION@round` line; if none, the `SECTION` line. `+ ID => text` lines are
-    always appended on top.
+    Per item: all `ID => text` lines joined with ·; else the `SECTION@round` line; else `SECTION`.
+    `+ ID => text` lines are always appended.
     """
     sections = {s["key"]: s for s in data["sections"]}
     sec_of = {t["id"]: s["key"] for s in data["sections"] for t in s["tests"]}
@@ -301,7 +278,7 @@ def apply_files(md_text: str, data: dict) -> None:
         if " => " not in l:
             raise PlanError(f"TEST_DATA_GUIDE.md files block: bad line '{raw}'")
         lhs, text = (x.strip() for x in l.split(" => ", 1))
-        # file NAMES only: the team keeps the files wherever it likes
+        # file names only
         if "\\" in text or re.search(r"\S/\S", text):
             raise PlanError(f"TEST_DATA_GUIDE.md files block: write file names only, no folder/path: '{raw}'")
         for tok in lhs.split():
@@ -356,7 +333,6 @@ def main() -> int:
         print("could not find `const DATA = ...;` in the HTML", file=sys.stderr)
         return 2
     new_html = pat.sub(lambda _m: dump(data), html, count=1)
-    # header (version + count) baked into the HTML outside DATA
     version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
     new_html = re.sub(
         r'(<p class="sub">)v[\d.]+ · \d+ ข้อ(</p>)',

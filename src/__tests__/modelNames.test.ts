@@ -54,7 +54,7 @@ describe('suggestDistinctModelName', () => {
     describe('a workspace saved before the wording change (names ending "(Relationship)")', () => {
         const ind = mk({ id: 'i', name: 'TAG1' });
         const rel = mk({ id: 'r', kind: 'relationship', name: 'TAG1' });
-        // Saved back then by accepting the old suggestion on another model of the same sensor.
+        // A name saved by accepting the old suggestion on another model of the same sensor.
         const legacy = mk({ id: 'l', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', name: 'TAG1 (Relationship)' });
 
         it('never proposes the twin of a legacy name: "TAG1 (Relationship)" taken -> "TAG1 (Relation model) 2"', () => {
@@ -88,9 +88,6 @@ describe('suggestDistinctModelName', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Export round (2026-10-20): model names are unique across the WORKSPACE
-// ---------------------------------------------------------------------------
 
 
 describe('findWorkspaceNameTwin', () => {

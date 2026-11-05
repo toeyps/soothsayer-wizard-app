@@ -56,7 +56,6 @@ import { Plus, EyeOff, BarChart3, Radio, ArrowLeft, Check, Trash2, LineChart as 
 import { debugLog } from '../../utils/debugLog';
 import { formatDateTime } from '../../utils/dateFormat';
 
-// Panel configuration
 const PANELS = {
     chart: { id: 'chart', label: 'Chart', icon: BarChart3 },
     sensors: { id: 'sensors', label: 'Sensors', icon: Radio },
@@ -64,15 +63,10 @@ const PANELS = {
 } as const;
 
 
-/** Tag comparison is case-insensitive everywhere else this file matches a
- *  sensor tag (see the `byTag` maps in the `add-sensor-selection` listener
- *  below) — used here too for the special-sensor rename cascade. */
+/** Tags compare case-insensitively, as in the `byTag` maps below. */
 const sameTag = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
-// A model "of kind K for sensor S" is identified by targetSensor (for
-// individual/relationship) or xSensor (for clustering, which seeded this
-// sensor as X on creation — see makeDefaultModelForKind). Pure so it can run
-// against the mirror AND against what is on disk inside a write.
+// A model's key is targetSensor (individual/relationship) or xSensor (clustering). Pure: runs on the mirror and on disk.
 const findKindIn = (models: FailureModel[], tag: string, kind: ModelKind) =>
     models.find(m => m.kind === kind && modelSensorKey(m) === normalizeSensorTag(tag));
 
@@ -82,23 +76,18 @@ type PanelId = keyof typeof PANELS;
 interface FgUndoEntry {
     id: string;
     message: string;
-    /** The deleted model. Filled from the mirror immediately and REPLACED by the
-     *  copy on disk when the write runs (disk is the truth). */
+    /** Filled from the mirror, then replaced by the on-disk copy when the write runs (disk is the truth). */
     captured: { model: FailureModel };
 }
 // A burst of removals can't pile up an unbounded wall of toasts.
 const MAX_UNDO_TOASTS = 3;
 
-// Default split ratios used the first time a workspace is opened (no saved
-// layoutSizes yet). 66.67/33.33 mirrors the original CSS Grid `2fr 1fr`.
+// Initial split ratios when none are saved; 66.67/33.33 mirrors the CSS grid `2fr 1fr`.
 const DEFAULT_LAYOUT_SIZES: DashboardLayoutSizes = {
     columns: [66.67, 33.33],
     leftRows: [60, 40],
 };
 
-// Fixed panel-to-slot layout: chart at top-left, the data panel (Selected
-// Sensor / Filter / Highlights tabs) just under it, sensors filling the
-// right column.
 const SLOT_LAYOUT: DashboardSlotMap = {
     'left-top': 'chart',
     'left-bottom': 'data',
@@ -109,24 +98,12 @@ const SLOT_LAYOUT: DashboardSlotMap = {
 const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
 const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 
-// Point budget for the line chart. The Rust `get_chart_data` command
-// min/max-decimates the filtered rows down to at most this many x-positions,
-// so the IPC payload, JS heap, and ECharts buffers stay bounded no matter
-// how many rows the dataset holds. ~4k points ≈ 2 output points per pixel
-// on a typical panel width — visually indistinguishable from raw.
+// Rust min/max-decimates to this many x-positions (~2 per pixel), keeping IPC and heap bounded.
 const LINE_MAX_POINTS = 4000;
-/** Sample caps for the WebGL charts. Scatter is ONE canvas, so it can afford a large sample.
- *  Pair Plot draws the same sample once per cell — up to 10 WebGL canvases at 4 sensors (6
- *  scatter cells + 4 time-series cells) — so every point costs ten times: at the old 50,000 it
- *  was half a million points, and the user found it very slow. A cell is small (a few hundred
- *  px each way), so 10,000 points already fill its dense areas. */
+/** Pair Plot draws the sample once per cell (up to 10 WebGL canvases), so its cap is far smaller than Scatter's. */
 const SCATTER_MAX_POINTS = 200_000;
 const PAIR_MAX_POINTS = 10_000;
-// Same debounce window as useChartData/useScatterSample's own
-// backend-query debounce -- applied here to the autosave-to-disk write
-// instead. Without it, every tracked state change (including e.g. each
-// keystroke in a Filter value box, which has no debounce of its own)
-// triggered an immediate JSON.stringify + writeTextFile to $APPDATA.
+// Debounces the autosave so each keystroke does not cause a JSON.stringify + disk write.
 const AUTOSAVE_DEBOUNCE_MS = 250;
 /** A write that hangs must not keep the window open for ever: past this it counts as failed. */
 const CLOSE_SAVE_WAIT_MS = 10_000;
@@ -153,11 +130,7 @@ const FG_SAVE_FAILED_UNREAD_NOTICE = 'Could not save your last Failure Group cha
 const RENAME_MODELS_FAILED_NOTICE = 'Could not update the models that use the renamed sensor. In the project file they still use its old name: reopen the project and check them.';
 const REPAIR_DEMOTE_FAILED_NOTICE = 'Could not set the models that use the fixed sensor back to Incomplete. Its values changed, so train them again.';
 
-/** Workspace fields that are no longer read by anything.
- *  `highlightLineDisplay` ('band' | 'line') may still be carried by an old
- *  workspace file; it is ignored on load and dropped by the next Dashboard
- *  autosave write instead of being carried forward forever by the
- *  `...initialState` spread in `buildWorkspaceState`. */
+/** Old workspace files may carry `highlightLineDisplay`; it is ignored on load and dropped by the next autosave. */
 type LegacyWorkspaceFields = { highlightLineDisplay?: unknown };
 
 function withoutLegacyWorkspaceFields(state: WorkspaceState | null | undefined): WorkspaceState {
@@ -167,14 +140,7 @@ function withoutLegacyWorkspaceFields(state: WorkspaceState | null | undefined):
 
 type RelativeRangeUnit = 'Y' | 'M' | 'W' | 'D' | 'H';
 
-/**
- * `end` minus `n` of `unit` — calendar-accurate for Y/M (not a fixed
- * duration, so `setFullYear`/`setMonth`, with a clamp for month-end
- * overflow like Mar 31 minus 1 month landing on Mar 3 instead of Feb 28/29)
- * and plain millisecond math for W/D/H. Shared by the relative-range Apply
- * button and the one-time "last 6 months" default so both agree on what
- * "N months back" means.
- */
+/** `end` minus `n` units: calendar-accurate for Y/M (month-end clamped), plain ms for W/D/H. */
 const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): Date => {
     const start = new Date(end);
     switch (unit) {
@@ -197,26 +163,17 @@ const subtractRelativeAmount = (end: Date, unit: RelativeRangeUnit, n: number): 
     return start;
 };
 
-// Alarm-level constants/helpers live in ../../utils/alarmLevels — shared
-// with SensorSelection.tsx, which is where the setpoint checkboxes render.
-// Stable empty array for the line chart's unused row-based `data` prop
-// (the chart consumes the bounded `columnar` feed instead).
+// Stable empty array for the line chart's unused `data` prop (it reads `columnar`).
 const EMPTY_RECORDS: CsvRecord[] = [];
 
-// Build the gutter element split.js inserts between panels. We use a wider
-// hit-target (12px) with a thin centered line so the resize handle is easy
-// to grab without dominating the layout visually.
+// Wide 12px hit target with a thin centred line, so the handle is easy to grab.
 const createGutter = (_index: number, direction: 'horizontal' | 'vertical'): HTMLElement => {
     const el = document.createElement('div');
     el.className = `gutter gutter-${direction}`;
     return el;
 };
 
-// Override split.js's default inline styling. Default sets `width`/`height`
-// inline, but in a flex layout those are overridden by `flex-basis` (from our
-// CSS `flex: 1` / `flex: 2 1 0`). Setting `flex-basis` inline beats the CSS
-// rule and actually controls the rendered size — without this, dragging the
-// gutter does nothing visually.
+// Set `flex-basis` inline: in a flex layout it overrides split.js's width/height, so dragging would do nothing.
 const flexElementStyle = (_dim: string, size: number, gutSize: number): Record<string, string> => ({
     'flex-basis': `calc(${size}% - ${gutSize}px)`,
 });
@@ -238,9 +195,7 @@ export interface DashboardRef {
 }
 
 
-/** The project's name, description, machine and data time zone as they are on
- *  disk. Only Project details (`saveProjectDetails`) writes them, so every
- *  full-object write here carries them over instead of this window's copy. */
+/** Name, description, machine and time zone are written only by `saveProjectDetails`; full writes carry them over from disk. */
 function projectDetailsFromDisk(disk: WorkspaceState | null | undefined): Partial<WorkspaceState> {
     if (!disk) return {};
     return {
@@ -255,12 +210,7 @@ function projectDetailsFromDisk(disk: WorkspaceState | null | undefined): Partia
 const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMetadata: sensorMetadataProp, onBack, initialState }, ref) => {
     const [localName, setLocalName] = useState(initialState?.name || "");
 
-    // Seeded from `metadata.headers` (the raw CSV columns) PLUS the persisted
-    // special sensors: a special/calculated sensor has no column in the CSV,
-    // only an `extraSensorMetadata` entry, so it is added here on mount the
-    // same way the live "Add Special Sensor" flow appends a new tag via the
-    // `add-sensor-selection` listener below. (`SensorSelection` reads the
-    // derived `allSensorTags` below, not this state directly.)
+    // Raw CSV columns plus persisted special sensors (they have metadata but no CSV column).
     const [sensorHeaders, setSensorHeaders] = useState<string[]>(() => {
         const csvHeaders = metadata.headers.filter(h => {
             const lower = h.trim().toLowerCase();
@@ -273,33 +223,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return extraTags.length > 0 ? [...csvHeaders, ...extraTags] : csvHeaders;
     });
 
-    // Metadata for sensors created at runtime via "Add Special Sensor" --
-    // the mapping-CSV-derived `sensorMetadataProp` never changes after
-    // initial load, so calculated sensors' component assignments live here
-    // instead, seeded from the persisted workspace and merged below into the
-    // `sensorMetadata` every child actually reads.
+    // Metadata of special sensors created at runtime; merged into `sensorMetadata`.
     const [extraSensorMetadata, setExtraSensorMetadata] = useState<SensorMetadata[]>(
         initialState?.extraSensorMetadata ?? []
     );
-    // What actually rebuilds a special sensor's data on the NEXT workspace
-    // open (DataUploadPage.tsx replays these, in order, right after
-    // `load_csv`) -- `extraSensorMetadata` above is cosmetic only. See
-    // `WorkspaceState.specialSensorRecipes`'s own doc comment for why this
-    // exists at all.
+    // Recipes are replayed after `load_csv` on the next open; `extraSensorMetadata` is cosmetic only.
     const [specialSensorRecipes, setSpecialSensorRecipes] = useState<SpecialSensorRecipe[]>(
         initialState?.specialSensorRecipes ?? []
     );
-    // Bumped when a special sensor's column is recomputed in the Rust session
-    // after its recipe was edited. The chart and scatter queries are unchanged
-    // by that — same sensors, same filters — so they would happily keep
-    // showing values from the old recipe; this is what tells them to refetch.
-    // Deliberately NOT part of `buildWorkspaceState`: it describes this
-    // session's in-memory data, not anything worth persisting.
+    // Bumped when a special sensor's column is recomputed so chart/scatter queries refetch; not persisted.
     const [dataRevision, setDataRevision] = useState(0);
-    // Tells an OPEN Filter panel to carry a special sensor's rename / deletion
-    // into its unapplied draft too (the applied `filters` are rewritten by the
-    // listeners directly). `id` increments per event so the panel applies each
-    // once; not persisted.
+    // Tells an open Filter panel to apply a special-sensor rename/delete to its draft; `id` bumps per event; not persisted.
     const [filterSensorChange, setFilterSensorChange] = useState<FilterSensorChange>({ id: 0 });
     const sensorMetadata = useMemo(() => {
         if (extraSensorMetadata.length === 0) return sensorMetadataProp;
@@ -313,14 +247,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const [visibleSensors, setVisibleSensors] = useState<string[]>(initialState?.visibleSensors || []);
     const [operationConfig, setOperationConfig] = useState<SensorOperationConfig | null>(initialState?.operationConfig || null);
 
-    // `allSensorTags` derives the full list fresh every render instead of
-    // relying on the imperative "push if missing" sync of `sensorHeaders`
-    // (in the `add-sensor-selection` listener below) staying correct: a tag
-    // that is SELECTED or has metadata can never be excluded from the list it
-    // must be pickable/searchable from, however it got there (e.g. a special
-    // sensor built on another special sensor). This is what `SensorSelection`
-    // reads; `sensorHeaders` itself is still used by `request-sensors`,
-    // `add-sensor-selection`'s own bookkeeping and persistence.
+    // Derived each render so a selected or described tag is always pickable, however it got there.
     const allSensorTags = useMemo(() => {
         const known = new Set(sensorHeaders.map(h => h.toLowerCase()));
         const extras: string[] = [];
@@ -342,17 +269,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     const deferredSensors = useDeferredValue(selectedSensors);
 
-    // Keep visibleSensors in lockstep with selectedSensors WITHOUT clobbering
-    // hide/show state: newly-selected sensors default to visible, sensors
-    // that get deselected drop out, but a sensor the user hid via the
-    // "Selected Sensor" tab (see toggleSensorVisibility) stays hidden across
-    // unrelated selection changes instead of being forced visible again.
-    //
-    // "Newly selected" = not in the PREVIOUS selection. It used to be "not in
-    // visibleSensors", which also matched every HIDDEN sensor, so adding any
-    // sensor put every hidden one back on the chart (real-app report
-    // 2026-10-14). A workspace saved before visibleSensors existed starts with
-    // no previous selection, so its sensors all show on the first pass.
+    // Sync visibleSensors with selectedSensors without un-hiding hidden ones: 'new' means not in the PREVIOUS selection.
     const prevSelectedRef = useRef<string[]>(initialState?.visibleSensors ? selectedSensors : []);
     useEffect(() => {
         const before = prevSelectedRef.current;
@@ -364,23 +281,17 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     }, [selectedSensors]);
 
-    // Toggle a plotted sensor's visibility on the chart without deselecting
-    // it (i.e. without removing it from selectedSensors / the sensor list's
-    // checkboxes).
     const toggleSensorVisibility = useCallback((sensor: string) => {
         setVisibleSensors(prev =>
             prev.includes(sensor) ? prev.filter(s => s !== sensor) : [...prev, sensor]
         );
     }, []);
 
-    // Fully removes a sensor from the plot — same effect as unchecking it in
-    // the Sensor panel. visibleSensors drops it too via the sync effect above.
     const removeSensor = useCallback((sensor: string) => {
         setSelectedSensors(prev => prev.filter(s => s !== sensor));
     }, []);
 
-    // "Show on chart" from a Filter condition whose sensor is no longer plotted.
-    // Respects the Pair Plot cap the same way the Sensor tab does (`maxSelectable`).
+    // Respects the Pair Plot cap (`maxSelectable`).
     const showSensorOnChart = useCallback((sensor: string) => {
         setSelectedSensors(prev => {
             if (prev.includes(sensor)) return prev;
@@ -396,8 +307,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    // Every sensor label / picker / tooltip in this window resolves through
-    // this lookup (merged metadata + the ƒ / Σ badges of the special sensors).
+    // Every sensor label, picker and tooltip resolves through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata, specialSensorRecipes);
     const sensorLookupRef = useRef(sensorLookup);
     sensorLookupRef.current = sensorLookup;
@@ -406,35 +316,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         [sensorMetaMap]
     );
 
-    // ── Failure group assignment (Sensor tab quick-assign + Failure Groups
-    //    tab) ─────────────────────────────────────────────────────────────
-    // Owns WorkspaceState.failureGroupState jointly with the Build Model
-    // window. Dashboard creates / removes models and groups (the Sensor tab's
-    // per-kind toggle, the Failure Groups tab) and edits a group's name /
-    // description / recommendation; a model's own settings, training and
-    // health score are edited only in the Build Model window
-    // (BuildModelWindow.tsx). Persisted via `updateWorkspaceData`
-    // (read-modify-write) rather than Dashboard's own full-overwrite
-    // autosave so the two windows can't clobber each other.
-    //
-    // A sensor can belong to multiple groups at once (many-to-many — see
-    // FailureModel.groupNos in types.ts), so membership is "does the sensor's
-    // model of that kind include groupNo in its groupNos" — one model per
-    // (tag, kind), not one per (tag, groupNo).
+    // Shared with Build Model; writes are read-modify-write via `updateWorkspaceData`.
+    // One model per (tag, kind); membership = the model's `groupNos` includes the group.
     const [fgGroups, setFgGroups] = useState<FailureGroup[]>(
         initialState?.failureGroupState?.groups ?? [NOT_IN_GROUP]
     );
     const [fgModels, setFgModels] = useState<FailureModel[]>(
         initialState?.failureGroupState?.models ?? []
     );
-    // Everything in `failureGroupState` that Dashboard does NOT own — the
-    // workspace running condition (filters, AND/OR, time range) and any field
-    // added later — mirrored whole rather than field by field. BuildModelWindow
-    // owns these, but Dashboard's full-overwrite autosave (`buildWorkspaceState`
-    // below) rebuilds `failureGroupState` from local state on every tick, so
-    // without a complete mirror the very next autosave would erase whatever it
-    // didn't list.
-    // Persistence round-trip ONLY — never read into `dataFilter`/`scatterFilter`.
+    // Rest of `failureGroupState`, mirrored whole so the full-overwrite autosave cannot erase it. Never feeds filters.
     const [fgExtra, setFgExtra] = useState<Omit<FailureGroupStateSlice, 'groups' | 'models'>>(() => {
         const { groups: _g, models: _m, ...rest } = initialState?.failureGroupState ?? { groups: [], models: [] };
         void _g; void _m;
@@ -457,20 +347,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setFgExtra(rest);
     }, []);
 
-    // Core writer: `compute` receives the groups/models that are on DISK right
-    // now (`prev` is a fresh read, not this window's possibly-stale mirror) and
-    // returns the new ones. Everything else in `failureGroupState` — filters,
-    // combine, the workspace time range, fields added later — is carried by
-    // `withFailureGroupState`'s spread, so this writer never has to know about
-    // it.
-    //
-    // `compute` may also return `runningConditionFilters` -- the
-    // workspace Running condition's conditions as they should be after this
-    // write (a special-sensor rename has to re-key them). Left out, the field is
-    // carried through untouched like every other one.
-    //
-    // A failed write (or a missing file) must not leave the screen on a value that
-    // never reached the file: the mirror is reloaded from disk and the user is told.
+    // `compute` gets groups/models fresh from disk, not the mirror; other slice fields carry through `withFailureGroupState`.
+    // `compute` may return `runningConditionFilters` (re-keyed on rename); a failed write reloads the mirror and tells the user.
     const persistFailureGroupStateFrom = useCallback((
         compute: (disk: { groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters: WorkspaceSensorFilter[] }) => {
             groups: FailureGroup[]; models: FailureModel[]; runningConditionFilters?: WorkspaceSensorFilter[];
@@ -485,10 +363,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 models: before?.models ?? [],
                 runningConditionFilters: before?.runningConditionFilters ?? [],
             });
-            // The FIRST model of a workspace is created here (Dashboard), i.e.
-            // by a workspace that never had a category mix-up: mark the
-            // category clean-up as handled. A workspace that already had models
-            // is left untouched.
+            // The first model created here marks the category clean-up as handled.
             const seed = (before?.models ?? []).length === 0 && result.models.length > 0
                 ? {
                     ...(before?.categoryNormalisationNotice === undefined ? { categoryNormalisationNotice: null } : {}),
@@ -497,19 +372,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             return withFailureGroupState(prev, { ...result, ...seed });
         })
             .then((next) => {
-                // The result may differ from what the click computed from the
-                // mirror (another window wrote first) — adopt what is durable:
-                // the WHOLE slice, including `fgExtra` (the workspace running
-                // condition), same as the broadcast listener right below —
-                // otherwise the next FG write would compute the status dot
-                // against a stale running condition.
+                // Adopt the whole slice from disk (incl. `fgExtra`): another window may have written first.
                 if (!next) throw new Error('The project file is missing.');
                 if (next.failureGroupState) {
                     adoptFgSlice(next.failureGroupState);
-                    // Tell any open Build Model window (a separate OS window that
-                    // otherwise only sees Dashboard's edits when it is next
-                    // opened) — scoped to this workspace, and tagged so this
-                    // window's own listener below skips its own echo.
+                    // Tell open Build Model windows; scoped to this workspace and tagged so our listener skips the echo.
                     emit('failure-group-state-changed', {
                         ...next.failureGroupState,
                         workspaceId: initialState.id,
@@ -533,21 +400,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         trackWrite(write);
     }, [initialState, adoptFgSlice, trackWrite]);
 
-    // EVERY FG writer (toggle, create/rename/edit/delete group, delete model,
-    // tag rename) derives its result from disk via
-    // `persistFailureGroupStateFrom` — never from the mirror.
+    // Every FG writer derives its result from disk via `persistFailureGroupStateFrom`, never from the mirror.
 
-    // BuildModelWindow persists failureGroupState independently (its own
-    // updateWorkspaceData read-modify-write calls) since it's a separate OS
-    // window. Without this listener, this window's own fgGroups/fgModels
-    // (and the running-condition mirror) would go stale the moment it
-    // writes. Both windows broadcast this event after every persist so this
-    // copy never drifts.
-    //
-    // Events are global broadcasts across every window, so with more than
-    // one project the payload can belong to a DIFFERENT workspace (a stale
-    // window from the previous project). Only apply the one that names THIS
-    // workspace — and skip this window's own echo.
+    // Keeps the mirror current with Build Model's writes; drops other workspaces' events and our own echo.
     const currentWorkspaceId = initialState?.id;
     useEffect(() => subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
         if (event.payload.workspaceId !== currentWorkspaceId) return;
@@ -559,20 +414,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setFgExtra(rest);
     }), [currentWorkspaceId]);
 
-    // Default build config for a freshly created model of a given kind.
-    // Models are created/deleted only on the Dashboard (Sensor tab's per-kind
-    // toggle + Failure Groups tab's delete button); Build Model only
-    // edits/trains existing ones. A sensor can carry more than one model KIND
-    // at once (e.g. both an Individual and a Relationship model), so this is
-    // parameterized by kind. Clustering has no single "target sensor" (it
-    // needs X and Y); adding it from a single-sensor toggle seeds that sensor
-    // as X and leaves Y blank for later.
-    // `category` is the sensor's existing category (category is per SENSOR,
-    // set on Build Model's sensor header), so a new model inherits it instead
-    // of starting unset. Callers compute it via `sensorCategory` against the
-    // same models list they append to.
-    // `models` = every model of the project the new one joins: its default name
-    // must not be a twin of any of them (`defaultModelName`).
+    // Defaults for a new model; clustering seeds the sensor as X, Y blank. Category is inherited; name is unique among `models`.
     const makeDefaultModelForKind = useCallback((models: readonly FailureModel[], tag: string, groupNos: number[], kind: ModelKind, category: ModelCategory | null = null): FailureModel => ({
         id: `model-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         groupNos,
@@ -591,9 +433,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         relModelName: '',
         relStiffness: 100_000,
         clusterModelName: '',
-        // One cluster by default — 2+ clusters need a criteria sensor (Rust
-        // refuses n_clusters > 1 without one). Picking a criteria sensor lets
-        // the stepper raise the count.
+        // One cluster by default: 2+ needs a criteria sensor (Rust refuses otherwise).
         numClusters: 1,
         criteriaSensor: '',
         clusterRanges: [],
@@ -601,10 +441,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         runningConditionMode: 'workspace',
         customRunningConditionFilters: [],
         customRunningConditionCombine: 'and',
-        // Health score set points: Individual snapshots the
-        // sensor's master-data alarmL/alarmH NOW (null/null for a special sensor
-        // or one without them) and prefills lower/upper from it; Relationship
-        // and Clustering start empty. Never written back to master data.
+        // Individual snapshots the master alarmL/alarmH (null if none) as prefill; other kinds start empty. Never written back.
         healthSetPoints: seedHealthSetPoints(kind, getSensorMeta(tag) ?? null),
     }), [getSensorMeta]);
 
@@ -612,22 +449,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         isDuplicateFailureGroupName(fgGroups, name, excludeNo),
     [fgGroups]);
 
-    // A sensor's per-kind, per-group toggle (SensorSelection's FolderPlus
-    // menu and its chips). A sensor can sit in several Failure Groups at
-    // once (several entries in one model's `groupNos`, not one duplicate
-    // model per group) and carry more than one model KIND at once. This one
-    // control both creates AND removes a specific (sensor, group, kind)
-    // membership, toggling instantly with no confirm step.
-    // Toggling ON reuses this sensor's existing model of that kind if one
-    // exists (adding `groupNo`, dropping the `0` "Not in Group" sentinel
-    // now that it has a real group) or creates a fresh one. Toggling OFF
-    // removes just this one (group, kind) membership — deleting the model
-    // outright once it has no group left to represent (whether the group
-    // just removed was a real one or `0` itself).
-    // Pure: the models after toggling one (sensor, group, kind) membership.
-    // Run twice — once against the mirror for the instant UI update, once
-    // against DISK inside the write, so a stale mirror can never revert what
-    // another window just wrote to any model.
+    // Per-group toggle of a kind: reuses the sensor's model (dropping sentinel `0`) or creates one; deletes it with its last group.
+    // Pure: runs on the mirror for instant UI and on disk inside the write, so a stale mirror can't revert another window.
     const applyToggle = useCallback((models: FailureModel[], tag: string, groupNo: number, kind: ModelKind): FailureModel[] => {
         const existing = findKindIn(models, tag, kind);
         const isMember = !!existing && existing.groupNos.includes(groupNo);
@@ -645,19 +468,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return [...models, makeDefaultModelForKind(models, tag, [groupNo], kind, sensorCategory(models, normalizeSensorTag(tag)))];
     }, [makeDefaultModelForKind]);
 
-    // Removing a model's LAST group deletes the model at once (no confirm) and
-    // says so — a 7-second "<Kind> model of <sensor> deleted — Undo" toast.
-    // Undo puts the ORIGINAL model object back whole (same id, settings,
-    // training) through the same disk-derived write as any other FG edit, so it
-    // broadcasts `failure-group-state-changed` like they do and never reverts
-    // another window's write with a stale mirror.
+    // Removing a model's last group deletes it at once with a 7 s Undo toast; Undo restores it via the disk-derived write.
     const [undoToasts, setUndoToasts] = useState<FgUndoEntry[]>([]);
     const undoSeq = useRef(0);
     const dismissUndo = useCallback((id: string) => {
         setUndoToasts(prev => prev.filter(t => t.id !== id));
     }, []);
-    // An Undo that is gone without being used (expired, or pushed out by newer toasts)
-    // just disappears: deleting a model removes no files (Export results writes them).
+    // An expired or pushed-out Undo just disappears.
     const undoToastsRef = useRef(undoToasts);
     undoToastsRef.current = undoToasts;
     const expireUndo = useCallback((id: string) => {
@@ -688,9 +505,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const onDisk = findKindIn(disk.models, tag, kind);
             const removedOnDisk = !!onDisk && !models.some(m => m.id === onDisk.id);
             if (removedOnDisk) {
-                // What disk holds is the model actually being deleted — Undo
-                // restores THAT. (The mirror said no deletion, e.g. it was stale:
-                // announce from here instead.)
+                // Undo restores what disk holds; if the mirror missed the deletion, announce it from here.
                 const e = entry ?? {
                     id: `undo-${++undoSeq.current}`,
                     message: `${kindModelName(kind)} of ${getSensorMeta(tag)?.description || tag} deleted`,
@@ -699,9 +514,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 e.captured.model = onDisk!;
                 announce(e);
             } else if (entry) {
-                // The mirror said "this deletes the model" but disk shows it
-                // survives (another window added it to a second group meanwhile):
-                // nothing was deleted, so retract the toast.
+                // Disk shows the model survives (another window added a group): retract the toast.
                 dismissUndo(entry.id);
             }
             return { groups: disk.groups, models };
@@ -725,11 +538,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }));
     }, [undoToasts, dismissUndo, fgGroups, fgModels, persistFailureGroupStateFrom]);
 
-    // "Create a brand new group for this sensor" — creates the empty group
-    // and, for convenience, reuses-or-creates this sensor's Individual
-    // model into it (the common case); additional kinds are then added the
-    // same way as any other group, via toggleSensorGroupKind on the new
-    // group's own row once it appears in the menu.
+    // Creates the empty group and puts this sensor's Individual model (reused or new) in it; other kinds are added via the toggle.
     const createGroupForSensor = useCallback((tag: string, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
@@ -754,17 +563,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => build(disk.groups, disk.models));
     }, [fgGroups, fgModels, isDuplicateGroupName, makeDefaultModelForKind, persistFailureGroupStateFrom]);
 
-    // Model deletion lives on Dashboard (Failure Groups tab's own per-model
-    // delete button) — Build Model has no "Remove model" control. No
-    // confirmation dialog, and no files to remove (Export results writes them).
+    // No confirmation.
     const deleteModel = useCallback((modelId: string) => {
         setFgModels(fgModels.filter(m => m.id !== modelId));
         persistFailureGroupStateFrom(disk => ({ groups: disk.groups, models: disk.models.filter(m => m.id !== modelId) }));
     }, [fgModels, persistFailureGroupStateFrom]);
 
-    // Renaming/deleting a group is global (not tied to one sensor's model),
-    // so these operate on fgGroups/fgModels directly rather than through
-    // toggleSensorGroupKind.
+    // Group-wide, not per sensor, so these act on groups/models directly.
     const renameGroup = useCallback((groupNo: number, name: string) => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed, groupNo)) return;
@@ -774,10 +579,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
     }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);
 
-    // Name + Description + Recommendation together, for the Failure Groups
-    // tab's own "Edit details" panel. FailureGroupsPanel.tsx does its own
-    // duplicate-name check locally before calling this, so this is a plain
-    // apply, not a validating gate.
+    // Plain apply: FailureGroupsPanel checks duplicate names before calling.
     const updateGroupDetails = useCallback((groupNo: number, name: string, description: string, recommendation: string) => {
         const trimmed = name.trim();
         if (!trimmed) return;
@@ -786,10 +588,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => ({ groups: apply(disk.groups), models: disk.models }));
     }, [fgGroups, persistFailureGroupStateFrom]);
 
-    // Deleting a group deletes the models that belong to THAT group only; a model
-    // that also belongs to another group just loses this one and keeps living
-    // there untouched. Both delete buttons confirm first and say how many
-    // models go (FailureGroupsPanel, FailureGroupAssignSheet).
+    // Deletes models only in this group; a model also in another group just loses this one.
     const deleteGroup = useCallback((groupNo: number) => {
         if (groupNo === 0) return;
         const apply = (groups: FailureGroup[], models: FailureModel[]) => {
@@ -807,34 +606,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         persistFailureGroupStateFrom(disk => apply(disk.groups, disk.models));
     }, [fgGroups, fgModels, persistFailureGroupStateFrom]);
 
-    // ── Failure Groups tab (group-centric preview) ───────────────────────
-    // Supports FailureGroupsPanel.tsx. Reuses fgGroups/fgModels/
-    // persistFailureGroupStateFrom above; toggleSensorGroupKind/
-    // createGroupForSensor (also above) are the entry points used by
-    // SensorSelection.tsx's per-sensor quick-assign.
-    //
-    // The Dashboard lands on the Failure Groups tab right after Import step 3
-    // (`lastRoute: 'failure-group'`) AND whenever the project has no failure
-    // groups yet (a skipped step 3, or a project reopened from Recent with
-    // zero groups) — failure groups come first. Decided once, at mount;
-    // afterwards the user's tab clicks rule.
+    // Opens on the Failure Groups tab after Import step 3 or when the project has no real groups; decided once at mount.
     const [activeSensorTab, setActiveSensorTab] = useState<'sensor' | 'failure-groups'>(() =>
         initialState?.lastRoute === 'failure-group'
             || realFailureGroups(initialState?.failureGroupState?.groups).length === 0
             ? 'failure-groups' : 'sensor'
     );
-    // "Assign sensors →" on a Failure Groups card: the group the Sensor tab is
-    // filling (its bar names it, the assignment sheet pins it first). `null` =
-    // ordinary Sensor tab. Cleared by Done and by switching back to the FG tab.
+    // Group the Sensor tab is filling after 'Assign sensors'; null = ordinary tab. Cleared by Done and on returning to the FG tab.
     const [assignGroupNo, setAssignGroupNo] = useState<number | null>(null);
     const startAssignSensors = useCallback((groupNo: number) => {
         setAssignGroupNo(groupNo);
         setActiveSensorTab('sensor');
     }, []);
-    // Where keyboard focus goes after Done: back to that group's "Assign
-    // sensors →" link if it is still there (the group is still empty), else to
-    // the Failure Groups tab button — never <body>. Applied once the FG tab has
-    // rendered (effect below).
+    // After Done, focus that group's 'Assign sensors' link if still there, else the FG tab button; applied once the tab renders.
     const sensorsSectionRef = useRef<HTMLDivElement>(null);
     const fgTabButtonRef = useRef<HTMLButtonElement>(null);
     const focusAfterAssignRef = useRef<number | null>(null);
@@ -850,10 +634,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         const link = sensorsSectionRef.current?.querySelector<HTMLElement>(`[data-assign-group="${no}"]`);
         (link ?? fgTabButtonRef.current)?.focus();
     }, [activeSensorTab]);
-    // The group being filled was deleted (from the sheet's ⋯ or the FG tab):
-    // end the run, so a group created later that reuses its number does not
-    // bring the bar and the pinned "Assigning" row back for a group the user
-    // never chose.
+    // End the run if the group was deleted, so a reused group number does not revive the bar.
     useEffect(() => {
         if (assignGroupNo !== null && !fgGroups.some(g => g.no === assignGroupNo)) setAssignGroupNo(null);
     }, [fgGroups, assignGroupNo]);
@@ -869,48 +650,29 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // Per-sensor line-color override and pinned Y-axis bounds, set from the
     // "Selected Sensor" tab.
     const [sensorColors, setSensorColors] = useState<Record<string, string>>(initialState?.sensorColors ?? {});
-    // min/max are independently optional — pinning just one side (e.g. a
-    // floor with no ceiling) is valid; the unset side keeps auto-fitting.
+    // min and max are independently optional; an unset side auto-fits.
     const [sensorAxisRange, setSensorAxisRange] = useState<Record<string, { min?: number; max?: number }>>(
         initialState?.sensorAxisRange ?? {}
     );
 
-    // Scatter chart's X/Y sensor pair — owned here (not local to
-    // ScatterChart) because Chart.tsx unmounts ScatterChart entirely
-    // whenever chartType leaves 'scatter'; without lifting this up, the
-    // pair reset to the first two sensors every time the user switched
-    // chart type and back.
+    // Lifted here because Chart.tsx unmounts ScatterChart on chart-type switch, which would reset the pair.
     const [scatterAxes, setScatterAxes] = useState<{ x: string; y: string } | null>(initialState?.scatterAxes ?? null);
     const handleScatterAxesChange = useCallback((x: string, y: string) => {
         setScatterAxes(prev => (prev?.x === x && prev?.y === y) ? prev : { x, y });
     }, []);
 
-    // Scatter chart's pinned axis SCALE (ruler-icon editor) — a different
-    // thing from `scatterAxes` above (which just tracks which sensor is on
-    // which axis). Same "lift out of ScatterChart" reasoning: it unmounts
-    // on every chart-type switch, so anything left as local state there is
-    // lost the moment the user looks away and back.
+    // Pinned axis scale, lifted for the same reason as `scatterAxes`.
     const [scatterAxisPins, setScatterAxisPins] = useState<ScatterAxisPins>(initialState?.scatterAxisPins ?? {});
     const handleScatterAxisPinsChange = useCallback((pins: ScatterAxisPins) => {
         setScatterAxisPins(pins);
     }, []);
 
-    // Line chart's tagged points ("Tag Point" feature) — lifted out of the
-    // chart component for the same reason as scatterAxisPins above:
-    // LineChart unmounts on every chart-type switch, so its own local state
-    // would be lost the moment the user looked away and back. Deliberately
-    // NOT seeded from `initialState`/included in `buildWorkspaceState` below
-    // — tags should NOT survive closing and reopening the app, only an
-    // in-session chart-type switch. Scatter's own tagged points are kept as
-    // local ScatterChart state, not here — see LineTaggedPoint's docstring in
-    // types.ts for why (no stable point identity across a resampled query).
+    // Lifted so tags survive a chart-type switch; deliberately not persisted. Scatter tags stay local to ScatterChart.
     const [lineTaggedPoints, setLineTaggedPoints] = useState<LineTaggedPoint[]>([]);
     const handleLineTaggedPointsChange = useCallback((points: LineTaggedPoint[]) => {
         setLineTaggedPoints(points);
     }, []);
-    // The values of the tagged points (Line and Scatter) are shown in the "Tagged points" tab
-    // of the panel under the chart: the chart renders its table INTO that tab's element
-    // (`tagTableHost`, null while the tab is closed) and reports how many tags it has.
+    // The chart renders its tag table into `tagTableHost` (null while the tab is closed) and reports the tag count.
     const [tagTableHost, setTagTableHost] = useState<HTMLElement | null>(null);
     const [tagCount, setTagCount] = useState(0);
     const [activeDataTab, setActiveDataTab] = useState<'selected' | 'filter' | 'highlights' | 'tags'>('selected');
@@ -920,8 +682,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (added) setActiveDataTab('tags');
     }, []);
 
-    // Time-window highlights ("Highlights" tab) — global across every chart
-    // type except Pair Plot. See TimeHighlight in types.ts for why.
+    // Global across chart types except Pair Plot.
     const [timeHighlights, setTimeHighlights] = useState<TimeHighlight[]>(
         initialState?.timeHighlights ?? [],
     );
@@ -952,11 +713,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setTimeHighlights(prev => prev.map(h => h.id === id ? { ...h, label } : h));
     }, []);
 
-    // "By value" highlighting ("Highlights" tab) — Scatter-only. Lives
-    // alongside timeHighlights in the same tab. See ValueHighlight in
-    // types.ts for why this is one sensor + its ranges rather than a flat
-    // list like timeHighlights — Scatter only has one colour channel, so
-    // ranges from more than one sensor active at once would be ambiguous.
+    // Scatter-only; one sensor plus ranges, because Scatter has a single colour channel.
     const [valueHighlight, setValueHighlight] = useState<ValueHighlight>(
         initialState?.valueHighlight ?? { sensor: '', ranges: [] },
     );
@@ -989,58 +746,30 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setValueHighlight(prev => ({ ...prev, ranges: prev.ranges.map(r => r.id === id ? { ...r, color } : r) }));
     }, []);
 
-    // Drop the criteria sensor (turn "by value" coloring off) if it's no
-    // longer among the selected sensors — same reasoning as scatterAxes/
-    // scatterAxisPins elsewhere in this file. Its ranges go with it — they're
-    // meaningless for a different sensor.
+    // Drop the criteria sensor and its ranges when it leaves the selection.
     useEffect(() => {
         if (valueHighlight.sensor && !selectedSensors.includes(valueHighlight.sensor)) {
             setValueHighlight({ sensor: '', ranges: [] });
         }
     }, [selectedSensors, valueHighlight.sensor]);
 
-    // Quick relative time range (e.g. "last 2 D") — an alternative to
-    // manually picking absolute start/end dates. Y/M use calendar-accurate
-    // arithmetic (setFullYear/setMonth) since those units aren't a fixed
-    // duration; W/D/H are plain millisecond math. Declared here (rather than
-    // next to `applyRelativeRange` below, where it conceptually belongs)
-    // because `buildWorkspaceState` — defined earlier in this file — reads
-    // it, and TypeScript's block scoping doesn't allow forward references.
+    // Declared here because `buildWorkspaceState` above reads it. Y/M are calendar units; W/D/H plain ms.
     const RANGE_UNITS = ['Y', 'M', 'W', 'D', 'H'] as const;
     type RangeUnit = typeof RANGE_UNITS[number];
     const [relativeAmount, setRelativeAmount] = useState(initialState?.relativeTimeRange?.amount ?? '1');
     const [relativeUnit, setRelativeUnit] = useState<RangeUnit>(initialState?.relativeTimeRange?.unit ?? 'D');
-    // Whether the currently-shown Start/End dates were actually produced by
-    // the last "Apply relative range" click — NOT just whether a unit is
-    // selected in the picker. Without this, the unit buttons (and the
-    // amount field) kept showing the last-applied preset as "active" even
-    // after the user hand-edited Start/End directly, falsely implying the
-    // dates on screen still equal that preset. Cleared on manual edit,
-    // set on Apply. Deliberately not persisted — on workspace reload we
-    // don't actually know whether the saved dates still match the saved
-    // amount/unit, so defaulting to "not active" is the honest state.
+    // True only if the shown dates came from the last Apply; cleared on manual edit. Not persisted: reloaded dates may differ.
     const [relativeRangeApplied, setRelativeRangeApplied] = useState(false);
 
     const setSensorColor = useCallback((sensor: string, color: string) => {
         setSensorColors(prev => ({ ...prev, [sensor]: color }));
     }, []);
 
-    // Palette slot each sensor has been handed, remembered for the lifetime
-    // of this window. Once a sensor owns a slot it keeps it — see
-    // `resolvedSensorColors` below for why that matters.
+    // Palette slot per sensor for this window's lifetime; a slot never moves.
     const colorSlotsRef = useRef<Map<string, number>>(new Map());
 
-    // Fills in a default for every selected sensor that doesn't have an
-    // explicit override. Assignment is by palette SLOT, not by hashing the
-    // tag (hashing lets unrelated sensors collide onto the same or a
-    // near-identical colour), so every simultaneously-selected sensor (up to
-    // the palette size) gets a visually distinct color.
-    //
-    // Two rules keep colours stable: an assigned slot never moves, and a
-    // sensor keeps its entry here after being deselected — `useChartData`
-    // keeps the previous view on screen while the next query is in flight, so
-    // a line still on screen from the previous fetch must keep the color it
-    // was drawn with.
+    // Colours are assigned by palette slot, not tag hash, so selected sensors stay distinct.
+    // A slot survives deselection: useChartData keeps the previous view on screen with its old colours.
     const resolvedSensorColors = useMemo(() => {
         const slots = colorSlotsRef.current;
         const assigned = new Map<string, number>();
@@ -1072,9 +801,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
         for (const [sensor, slot] of assigned) slots.set(sensor, slot);
 
-        // Every sensor that has ever held a slot, not just the currently
-        // selected ones — a line from the in-flight previous view is still
-        // being drawn and must not lose its color mid-flight.
+        // Includes deselected sensors: the in-flight previous view still draws their lines.
         const map: Record<string, string> = {};
         for (const [sensor, slot] of slots) {
             map[sensor] = sensorColors[sensor] ?? LINE_CHART_COLORS[slot];
@@ -1099,11 +826,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     }, []);
 
-    // (The line colour is picked with the shared ColourPicker on the Selected Sensor
-    // row — it owns its own open state and anchor, and unmounts with the row.)
 
-    // Inline "pin Y-axis scale" editor — one sensor's min/max fields open at
-    // a time, directly under its row in the Selected Sensor tab.
+    // Pin Y-axis popover state: one sensor's min/max fields open at a time.
     const [axisEditorFor, setAxisEditorFor] = useState<string | null>(null);
     const [axisDraftMin, setAxisDraftMin] = useState('');
     const [axisDraftMax, setAxisDraftMax] = useState('');
@@ -1126,16 +850,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setAxisEditorAnchor(null);
     }, []);
 
-    // The pin icon is the only way in — clicking it again while its own
-    // editor is already open closes it, instead of a separate Cancel button.
+    // The pin icon toggles its own editor; there is no Cancel button.
     const toggleAxisEditor = useCallback((sensor: string) => {
         if (axisEditorFor === sensor) closeAxisEditor();
         else openAxisEditor(sensor);
     }, [axisEditorFor, closeAxisEditor, openAxisEditor]);
 
-    // Validates before applying, so a mistyped min/max is reported instead of
-    // silently ignored. Either field may be left blank — pinning only a min
-    // (or only a max) is valid, the blank side keeps auto-fitting to the data.
+    // Validates before applying; either field may be blank (that side auto-fits).
     const applyAxisEditor = useCallback(() => {
         if (!axisEditorFor) return;
         const minText = axisDraftMin.trim();
@@ -1158,12 +879,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         closeAxisEditor();
     }, [axisEditorFor, axisDraftMin, axisDraftMax, setSensorFixedRange, closeAxisEditor]);
 
-    // Which alarm setpoint lines are toggled on, per sensor tag — e.g.
-    // `{ '11FQ1603.PV': ['H'] }`. Unlike sensorColors/sensorAxisRange above,
-    // this DOES persist to WorkspaceState (see buildWorkspaceState below):
-    // re-checking the same alarms every time a workspace reopens would be
-    // exactly the kind of re-selection tedium the FG assignment feature
-    // exists to avoid elsewhere in this file.
+    // Persisted per sensor tag, e.g. `{ '11FQ1603.PV': ['H'] }`.
     const [alarmLinesEnabled, setAlarmLinesEnabled] = useState<Record<string, AlarmLevel[]>>(
         initialState?.alarmLinesEnabled ?? {}
     );
@@ -1180,12 +896,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     }, []);
 
-    // Prune per-sensor color/axis-range/alarm-line overrides (and close the
-    // inline axis/alarm/colour editors) once a sensor is deselected — via
-    // the trash button, unchecking it in the Sensor panel, or "Clear
-    // selection". Without this, re-adding the same tag later silently
-    // resurrects a stale color/pinned range/checked alarms with no
-    // indication anything carried over from the earlier session.
+    // Prune per-sensor overrides and close editors on deselect, so a re-added tag doesn't resurrect stale settings.
     useEffect(() => {
         const selectedSet = new Set(selectedSensors);
         setSensorColors(prev => {
@@ -1212,27 +923,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setAxisEditorFor(prev => (prev && !selectedSet.has(prev) ? null : prev));
     }, [selectedSensors]);
 
-    // Collapsed panels state. Filters out ids that no longer exist in PANELS
-    // (e.g. a workspace saved before Filter moved from its own panel into a
-    // data-panel tab) so a stale entry can't crash the collapsed-tabs sidebar.
+    // Drops ids no longer in PANELS so a stale saved entry can't crash the collapsed-tabs sidebar.
     const [collapsedPanels, setCollapsedPanels] = useState<Set<PanelId>>(
         new Set((initialState?.collapsedPanels ?? []).filter(
             (id): id is PanelId => id in PANELS
         ))
     );
 
-    // Resizable layout sizes (split.js percentages). Initialized from the
-    // persisted workspace value or DEFAULT_LAYOUT_SIZES on first open. Each
-    // tuple is `[primary, secondary]` summing to ~100. Updated by split.js's
-    // `onDragEnd` and picked up by the existing autosave effect via
-    // `buildWorkspaceState`.
+    // split.js percentages, `[primary, secondary]` summing to ~100; updated on `onDragEnd`.
     const [layoutSizes, setLayoutSizes] = useState<DashboardLayoutSizes>(
         initialState?.layoutSizes ?? DEFAULT_LAYOUT_SIZES
     );
 
-    // Refs that split.js will manage. Attached to the slot wrappers below.
-    // Split.js stays mounted across renders and only re-mounts when a panel
-    // collapse/expand changes whether the split should exist at all.
+    // Managed by split.js; re-mounted only when a collapse changes whether the split exists.
     const leftColumnRef = useRef<HTMLDivElement>(null);
     const rightColumnRef = useRef<HTMLDivElement>(null);
     const slotLTRef = useRef<HTMLDivElement>(null);
@@ -1244,27 +947,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         'right-top': slotRTRef,
     };
 
-    // Read-only ref mirror of `layoutSizes` so the useEffects can pull the
-    // freshest sizes when they re-initialize (e.g. after a panel un-collapses)
-    // without listing layoutSizes itself in the deps and causing a re-init on
-    // every drag.
+    // Ref mirror so effects read fresh sizes without listing `layoutSizes` in deps (that would re-init on every drag).
     const layoutSizesRef = useRef(layoutSizes);
     useEffect(() => { layoutSizesRef.current = layoutSizes; }, [layoutSizes]);
 
-    // Slot-aware collapse flags. Each one looks up which panel is in the
-    // slot via SLOT_LAYOUT, then checks if that panel is collapsed. Drives
-    // the split.js effects below (tear down when a slot's panel hides).
+    // Looks up the panel in each slot via SLOT_LAYOUT; drives the split.js teardown effects.
     const ltCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-top']);
     const lbCollapsed = collapsedPanels.has(SLOT_LAYOUT['left-bottom']);
     const rtCollapsed = collapsedPanels.has(SLOT_LAYOUT['right-top']);
     const allLeftCollapsed = ltCollapsed && lbCollapsed;
-    // Right column is a single slot (Sensors) now that Filter moved into a
-    // data-panel tab, so "all collapsed" just mirrors that one slot.
     const allRightCollapsed = rtCollapsed;
 
-    // ── split.js: horizontal split between left and right columns ──
-    // Tears down when an entire column has no visible panels so the surviving
-    // column can take 100% width (CSS class on the grid hides the empty side).
+    // Tears down when a column has no visible panels so the other takes 100% width.
     useEffect(() => {
         if (allLeftCollapsed || allRightCollapsed) return;
         const left = leftColumnRef.current;
@@ -1285,9 +979,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { try { inst.destroy(); } catch { /* split.js may already be torn down */ } };
     }, [allLeftCollapsed, allRightCollapsed]);
 
-    // ── split.js: vertical split inside left column (LT ↔ LB) ──
-    // Refs point to slot wrappers which stay STABLE across panel swaps, so
-    // swapping panels does NOT re-init split.js — only collapse toggles do.
+    // Slot refs are stable across panel swaps; only collapse toggles re-init split.js.
     useEffect(() => {
         if (ltCollapsed || lbCollapsed) return;
         const lt = slotLTRef.current;
@@ -1308,9 +1000,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => { try { inst.destroy(); } catch { /* ignore */ } };
     }, [ltCollapsed, lbCollapsed]);
 
-    // Right column is a single slot (Sensors) — no split.js instance needed
-    // there anymore; it fills 100% of the column via CSS flex, same as any
-    // lone surviving panel elsewhere in this layout.
 
     const togglePanel = (panelId: PanelId) => {
         setCollapsedPanels(prev => {
@@ -1332,29 +1021,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         });
     };
 
-    // Event handling for Add Sensor Window communication
-    // Use ref to keep track of latest state without re-binding listeners
-    //
-    // Tracks `allSensorTags` (not `sensorHeaders` directly) so
-    // AddSensorWindow's own "pick a source sensor" list has the same
-    // guaranteed-complete picture Dashboard's own Sensor tab does. Also
-    // carries `specialSensorRecipes` and `fgModels` — the add-sensor window's
-    // "Manage" tab needs both to work out what still depends on a special
-    // sensor before offering to delete it (see `buildSpecialSensorUsage`).
-    // They travel on the same request-sensors/sensors-data handshake rather
-    // than a second one.
+    // Ref gives listeners the latest state without re-binding; recipes and models feed the Manage tab's dependency check.
     const stateRef = useRef({ allSensorTags, selectedSensors, sensorMetadata, metadata, specialSensorRecipes, fgModels, fgGroups, fgExtra });
-    // Every event from the Add Sensor window is a GLOBAL broadcast, so with a
-    // second project loaded a leftover window from the previous one could push
-    // ITS sensors/metadata/recipes into this workspace. Each payload names its
-    // workspace and is dropped here unless it matches.
+    // Add Sensor events are global broadcasts: drop any payload whose workspaceId is not this one.
     const workspaceIdRef = useRef(initialState?.id);
     workspaceIdRef.current = initialState?.id;
-    // Same for the DATASET: the Rust session generation this Dashboard was
-    // opened on (`metadata.generation`, from `load_csv`). A window bound to an
-    // earlier load of the SAME workspace (A -> Back -> A again) carries the
-    // same workspace id but an older generation -- its events are dropped too.
-    // A payload without a generation (older senders) is judged by id alone.
+    // Also match dataset `generation` (A -> Back -> A reuses the id); a payload without generation is judged by id alone.
     const forThisWorkspace = (payload: unknown) => {
         const p = payload as { workspaceId?: string; generation?: unknown } | null | undefined;
         if (p?.workspaceId !== workspaceIdRef.current) return false;
@@ -1375,14 +1047,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
         const setupListeners = () => {
             debugLog("Setting up Dashboard listeners");
-            // Listen for request from child window
             unlistenRequest = subscribe('request-sensors', () => {
                 debugLog("Dashboard received 'request-sensors', emitting data...");
                 const { allSensorTags, selectedSensors, sensorMetadata, specialSensorRecipes, fgModels, fgExtra } = stateRef.current;
                 emit('sensors-data', {
                     workspaceId: workspaceIdRef.current,
-                    // The Rust dataset this Dashboard sits on: the window pins
-                    // it on every special-sensor command (`expectedGeneration`).
+                    // Rust dataset generation; the window pins it on special-sensor commands (`expectedGeneration`).
                     generation: stateRef.current.metadata.generation,
                     sensors: allSensorTags,
                     selectedSensors: selectedSensors,
@@ -1393,11 +1063,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 });
             });
 
-            // A sensor was created (or raw sensors were "added as-is") in the
-            // add-sensor window. `sensors` is a DELTA: what to ADD to the plot,
-            // not a replacement for it — the window only learns the plotted list
-            // once, when it opens, so its copy is not the truth. Merge into the
-            // CURRENT selection.
+            // `sensors` is a delta to ADD to the plot: merge into the CURRENT selection, the window's copy may be stale.
             unlistenAdd = subscribe<AddSensorSelectionPayload>('add-sensor-selection', async (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 debugLog("Dashboard received 'add-sensor-selection'", event.payload);
@@ -1417,11 +1083,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     newRecipes = event.payload.newRecipes ?? [];
                 }
 
-                // Pair Plot can't draw more than MAX_PAIR_PLOT_SENSORS (WebGL
-                // contexts) -- the sensor list blocks picking a 5th there
-                // (`maxSelectable`), so adding past it here must not slip
-                // through. Anything that doesn't fit is reported, not dropped
-                // silently: the sensor still exists, it just isn't plotted.
+                // Respect the Pair Plot cap (WebGL contexts); sensors that don't fit are reported, not dropped silently.
                 const cap = chartTypeRef.current === 'pair' ? MAX_PAIR_PLOT_SENSORS : undefined;
                 const { next, blocked } = mergeIntoPlot(stateRef.current.selectedSensors, toPlot, cap);
                 // Eagerly, so a second event arriving before the next render
@@ -1429,9 +1091,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 stateRef.current = { ...stateRef.current, selectedSensors: next };
                 setSelectedSensors(prev => mergeIntoPlot(prev, toPlot, cap).next);
                 setOperationConfig(newOperationConfig);
-                // Tell the window what is REALLY plotted now (the cap may have
-                // kept the new sensor off): its Manage tab's "on chart" badge
-                // is a mirror of this, never a guess from what it asked for.
+                // Report what is really plotted (the cap may have kept it off) so the window's 'on chart' badge isn't a guess.
                 emit('add-sensor-plot-result', { workspaceId: workspaceIdRef.current, selectedSensors: next })
                     .catch(e => console.warn('Failed to report the plotted sensors:', e));
 
@@ -1456,29 +1116,21 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 }
 
                 if (newRecipes.length > 0) {
-                    // Append-or-replace by tag, but otherwise preserve
-                    // existing array order -- replay order matters (a
-                    // later formula sensor can reference an earlier one).
+                    // Replace by tag but keep array order: replay order matters (formula sensors can reference earlier ones).
                     setSpecialSensorRecipes(prev => {
                         const byTag = new Map(prev.map(r => [r.tag.toLowerCase(), r]));
                         for (const r of newRecipes) byTag.set(r.tag.toLowerCase(), r);
                         return Array.from(byTag.values());
                     });
-                    // A column was just (re)created in the Rust session. A name
-                    // reused after a delete would otherwise be served from
-                    // whatever the chart/scatter queries last fetched for it.
+                    // A column was recreated: refetch, so a reused name isn't served from old query results.
                     setDataRevision(n => n + 1);
                 }
 
-                // Manually update sensor headers to include any new sensors,
-                // so the Sensor list shows them immediately without waiting
-                // for a backend fetch (a created sensor is listed even when the
-                // plot cap kept it off the chart).
+                // List new sensors at once, even those the plot cap kept off the chart.
                 setSensorHeaders(prevHeaders => {
                     const newHeaders = [...prevHeaders];
                     let changed = false;
                     [...toPlot, ...newMetadata.map(m => m.tag)].forEach(s => {
-                        // Check case-insensitive existence
                         const exists = newHeaders.some(h => h.toLowerCase() === s.toLowerCase());
                         if (!exists) {
                             newHeaders.push(s);
@@ -1489,24 +1141,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 });
             });
 
-            // Sensors deleted from the add-sensor window's "Manage" tab.
-            //
-            // The window has already checked that nothing depends on them
-            // (`buildSpecialSensorUsage`) and has already run its own undo
-            // window, so this side just applies the removal — dropping the
-            // recipe is what actually makes it stick, since the recipes are
-            // what DataUploadPage replays to rebuild these columns on the
-            // next workspace open.
-            //
-            // The window drops the computed column from the Rust session
-            // (`remove_sensor_columns`) BEFORE sending this, so nothing here
-            // needs to touch the data -- and a sensor created later under the
-            // same name gets a fresh column rather than the deleted one's
-            // numbers. Removing the tag from the lists below is what takes it
-            // out of every list, picker and chart.
-            //
-            // No explicit save call — every setter here feeds
-            // `buildWorkspaceState`, so the debounced autosave writes it.
+            // The window already dropped the column; dropping the recipe makes it stick (recipes are replayed on open).
+            // No explicit save: the setters feed `buildWorkspaceState` and the autosave.
             unlistenDelete = subscribe<{ tags: string[]; workspaceId?: string }>('delete-special-sensors', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 const drop = new Set((event.payload?.tags ?? []).map(t => t.trim().toLowerCase()));
@@ -1517,33 +1153,19 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 setSpecialSensorRecipes(prev => kept(prev, r => r.tag));
                 setExtraSensorMetadata(prev => kept(prev, m => m.tag));
-                // The Filter tab's conditions (applied AND the open panel's
-                // draft). A condition on a column that is gone is silently
-                // ignored by Rust -- the chart would show every row while the
-                // tab still listed the condition as applied.
+                // Filter conditions (applied and draft) on a deleted column would be ignored by Rust while still shown as applied.
                 const removedTags = event.payload?.tags ?? [];
                 setFilters(prev => {
                     const next = removeTagsFromFilters(prev.sensorFilters, removedTags);
                     return next === prev.sensorFilters ? prev : { ...prev, sensorFilters: next };
                 });
                 setFilterSensorChange(prev => ({ id: prev.id + 1, removed: removedTags }));
-                // visibleSensors, sensorColors, sensorAxisRange and
-                // alarmLinesEnabled all follow selectedSensors through
-                // existing effects, so deselecting is enough to clear them.
+                // Deselecting clears visibleSensors, colours, axis ranges and alarm lines through existing effects.
                 setSelectedSensors(prev => kept(prev, s => s));
                 setSensorHeaders(prev => kept(prev, h => h));
             });
 
-            // A special sensor's recipe was edited in the "Manage" tab. The
-            // window has already recomputed its column — and every column
-            // built on top of it — in the Rust session, so this side only
-            // records the new recipe and metadata (autosave persists them)
-            // and bumps `dataRevision` so the charts refetch the new values.
-            //
-            // The tag is unchanged here — a rename fires `rename-special-
-            // sensor` instead (below), which is where every tag-keyed piece
-            // of this file's own state gets re-keyed. This listener only
-            // ever sees an edit that keeps the same tag.
+            // Same-tag edit: Rust already recomputed the column; store recipe/metadata, bump `dataRevision` (renames use another event).
             unlistenUpdate = subscribe<Partial<UpdateSpecialSensorPayload>>('update-special-sensor', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 const { recipe, metadata, recipeOrder, repaired, affectedTags } = event.payload ?? {};
@@ -1551,9 +1173,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 debugLog('Dashboard received update-special-sensor', event.payload);
                 const isTarget = (tag: string) => tag.trim().toLowerCase() === recipe.tag.trim().toLowerCase();
 
-                // `recipeOrder` is present only when the edit made the stored
-                // order an invalid build order (the sensor now reads one that
-                // sits further down) -- the reopen replay runs top to bottom.
+                // `recipeOrder` is sent only when the edit made the stored order invalid; replay runs top to bottom.
                 setSpecialSensorRecipes(prev => reorderRecipesByTags(prev.map(r => (isTarget(r.tag) ? recipe : r)), recipeOrder));
                 if (metadata) {
                     setExtraSensorMetadata(prev => (
@@ -1562,15 +1182,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             : [...prev, metadata]
                     ));
                 }
-                // The edit FIXED a sensor that could not be restored. Its
-                // values (and those of everything built on it) are new, and
-                // no train fingerprint covers special-sensor recipes -- so
-                // every model that trains on one of them goes back to
-                // Incomplete and out of date, in ONE write computed against
-                // what is on disk (`demoteModelsTrainedOnSensors`).
-                // Broadcast by `persistFailureGroupStateFrom` like every
-                // other Dashboard FG write. A description-only save never
-                // carries `repaired`.
+                // Repair changes values and the train fingerprint ignores recipes: demote affected models in one disk-derived write.
                 if (repaired === true && Array.isArray(affectedTags) && affectedTags.length > 0) {
                     persistFailureGroupStateFrom(disk => ({
                         groups: disk.groups,
@@ -1584,16 +1196,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 setDataRevision(n => n + 1);
             });
 
-            // A special sensor was RENAMED (in addition to whatever else the
-            // edit changed) in the "Manage" tab. Everything `update-special-
-            // sensor` already does for the recipe/metadata pair itself, PLUS
-            // re-keying every OTHER piece of this file's own state that names
-            // a sensor by tag — selection, per-sensor chart cosmetics, and
-            // every Failure Group model field. `updatedRecipes` carries any
-            // downstream recipe whose formula/sourceSensors were rewritten to
-            // point at the new name (their OWN tags are unchanged, so they're
-            // matched into `specialSensorRecipes` by tag, same as `recipe`
-            // itself is matched by `oldTag`).
+            // Rename: re-key all tag-keyed state. `updatedRecipes` = downstream recipes rewritten to the new name.
             unlistenRename = subscribe<{
                 oldTag: string;
                 newTag: string;
@@ -1634,11 +1237,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     y: prev.y && isOld(prev.y.sensor) ? { ...prev.y, sensor: newTag } : prev.y,
                 }));
                 setValueHighlight(prev => (isOld(prev.sensor) ? { ...prev, sensor: newTag } : prev));
-                // The Filter tab: applied conditions here, the open panel's
-                // draft through `filterSensorChange`. Left on the old tag the
-                // condition names a column that is gone, which Rust ignores
-                // silently (the chart shows every row, the tab still says
-                // filtered).
+                // Re-key Filter conditions (applied and draft): an old tag names a missing column that Rust silently ignores.
                 setFilters(prev => {
                     const next = renameTagInRunningConditionFilters(prev.sensorFilters, oldTag, newTag);
                     return next === prev.sensorFilters ? prev : { ...prev, sensorFilters: next };
@@ -1647,9 +1246,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 const renamedModels = renameTagInModels(stateRef.current.fgModels, oldTag, newTag);
                 setFgModels(renamedModels);
-                // The workspace Running condition names sensors too -- carried
-                // through the same disk-derived write as the models (a hand
-                // built slice would erase fields it does not know).
+                // The Running condition names sensors too; carry it through the disk-derived write, never a hand-built slice.
                 setFgExtra(prev => (prev.runningConditionFilters
                     ? { ...prev, runningConditionFilters: renameTagInRunningConditionFilters(prev.runningConditionFilters, oldTag, newTag) }
                     : prev));
@@ -1662,8 +1259,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 setDataRevision(n => n + 1);
             });
 
-            // Columns were overwritten and then ROLLED BACK by a failed edit:
-            // a chart that fetched in between holds values no recipe produces.
+            // Columns were overwritten then rolled back by a failed edit: refetch charts that fetched in between.
             unlistenDataChanged = subscribe<{ workspaceId?: string }>('special-sensor-data-changed', (event) => {
                 if (!forThisWorkspace(event.payload)) return;
                 setDataRevision(n => n + 1);
@@ -1680,29 +1276,18 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             if (unlistenRename) unlistenRename();
             if (unlistenUpdate) unlistenUpdate();
         };
-        // `persistFailureGroupStateFrom` is a `useCallback` keyed only on
-        // `initialState`, which never changes after this component mounts --
-        // capturing it once here (rather than re-subscribing every Tauri
-        // listener whenever its identity is recomputed) is the same
-        // register-once-use-`stateRef`-for-freshness pattern the rest of this
-        // effect already relies on.
+        // Registered once; listeners read fresh values via `stateRef`.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const [filters, setFilters] = useState<FilterState>(initialState?.filters ?? { timestampStart: '', timestampEnd: '', sensorFilters: [] });
     const [chartType, setChartType] = useState<'line' | 'scatter' | 'pair'>(initialState?.chartType ?? 'line');
-    // The Add Sensor listener (registered once, above) reads the chart type
-    // through this to apply Pair Plot's sensor cap when merging a new sensor in.
+    // Lets the Add Sensor listener (registered once) apply the Pair Plot cap.
     const chartTypeRef = useRef(chartType);
     chartTypeRef.current = chartType;
     const [samplingMethod, setSamplingMethod] = useState<'raw' | 'avg' | 'max' | 'min' | 'first' | 'last'>(initialState?.samplingMethod ?? 'raw');
 
-    // The Selected Sensor tab's pin-Y-axis popover only renders while
-    // `chartType === 'line'` (Scatter/Pair Plot hide that list entirely), but
-    // switching chart type does not unmount Dashboard itself, so
-    // `axisEditorFor` would sit in state while hidden and re-open at a stale
-    // screen position on switching back. Clear it whenever chartType leaves
-    // 'line'.
+    // The pin popover renders only on line charts; clear `axisEditorFor` otherwise or it reopens at a stale position.
     useEffect(() => {
         if (chartType !== 'line') {
             setAxisEditorFor(null);
@@ -1710,17 +1295,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [chartType]);
 
 
-    // ── Build Model — singleton window (label `build-model`) reached from
-    //    the Failure Groups tab's "Build Model" button. The window handles
-    //    its own navigation internally, so there is only ever this one label
-    //    to spawn or focus; the spawn itself is guarded against a
-    //    duplicate-window race.
-    //
-    // Reads the freshest values through `stateRef` and subscribes ONCE instead
-    // of re-subscribing on every change of the values it reads: each
-    // re-subscription would race its own async unlisten and leave stale copies
-    // alive that answer the Build Model window's request with an older
-    // workspace id / older sensor metadata.
+    // Singleton window `build-model`; the spawn is guarded against duplicates.
+    // Subscribe once and read via `stateRef`: re-subscribing races the async unlisten and leaves stale copies answering.
     const emitBuildModelData = useCallback(async () => {
         const wsId = workspaceIdRef.current;
         if (!wsId) return;
@@ -1734,10 +1310,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
     useEffect(() => subscribe('request-build-model-data', () => { emitBuildModelData(); }), [emitBuildModelData]);
 
-    // Guards the gap between the `getByLabel` existence check and the
-    // `new WebviewWindow(...)` call below (both async IPC round-trips) so
-    // two rapid clicks on the "Build Model" button can't both see "no
-    // existing window" and both construct one.
+    // Covers the async gap between the existence check and window creation so two fast clicks can't make two windows.
     const pendingSpawnLabels = useRef<Set<string>>(new Set());
 
     const spawnBuildModel = useCallback(async () => {
@@ -1749,9 +1322,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             const existing = await WebviewWindow.getByLabel(label);
             if (existing) {
                 await bringToFront(existing);
-                // The open window fetched its data once, on its own mount —
-                // re-point it at THIS workspace instead of trusting that it
-                // still is (it may be a leftover from the previous project).
+                // Re-point the open window at THIS workspace; it may be left over from the previous project.
                 try { await emitBuildModelData(); } catch { /* ignore */ }
                 return;
             }
@@ -1775,24 +1346,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     }, [initialState, emitBuildModelData]);
 
-    // Close the (singleton, workspace-scoped) Build Model window when
-    // leaving this workspace: staying open across a switch, the next "Build
-    // Model" click here (now scoped to a different workspace) would just
-    // focus the stale window via `WebviewWindow.getByLabel('build-model')`
-    // above — the user would edit what looks like the right project but
-    // still write to the old one. The Add Special Sensor window is
-    // workspace-scoped in exactly the same way (its events are global
-    // broadcasts and it computes columns in the ONE shared Rust session), so
-    // it is closed too.
-    //
-    // Closing is fire-and-forget IPC (it can be lost or late), so it is not
-    // the ONLY thing standing between a leftover window and the next project.
-    // (1) Every close is awaited with its own catch, so one failing does not
-    // skip the other. (2) A workspace-scoped `workspace-closing` goes out
-    // first: a window that outlives the close drops its state at once instead
-    // of waiting for the close. (3) Special-sensor commands are pinned to this
-    // dataset's generation anyway (`expectedGeneration`), so a window that
-    // survives both still cannot touch the next project's session.
+    // Close the workspace-scoped Build Model and Add Sensor windows on leaving: a stale one would write to the old project.
+    // Best-effort: `workspace-closing` goes first, each close has its own catch; commands are pinned to `expectedGeneration` anyway.
     const closeChildWindows = useCallback(async () => {
         const closing = { workspaceId: workspaceIdRef.current, generation: stateRef.current.metadata.generation };
         try {
@@ -1807,23 +1362,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, []);
     useEffect(() => () => { void closeChildWindows(); }, [closeChildWindows]);
 
-    // Scatter / pair plots are meaningless with fewer than two sensors, so
-    // below that the two buttons are disabled — and if the selection drops
-    // under two WHILE such a chart is active (unticking down to one), we
-    // bounce back to the line chart instead of showing an empty canvas.
-    // Also covers workspace restores that persisted a scatter view whose
-    // sensor selection no longer qualifies.
+    // Scatter/pair need 2+ sensors: below that, bounce to the line chart (also for restored workspaces).
     const canScatter = selectedSensors.length >= 2;
-    // See MAX_PAIR_PLOT_SENSORS (ChartTypes.ts) for why Pair Plot specifically
-    // needs its own, tighter cap than plain Scatter — WebGL context exhaustion.
-    // Unlike the < 2 case below, exceeding this cap does NOT auto-bounce the
-    // chart type: the selection UI blocks picking a 5th sensor while Pair
-    // Plot is already active (see `maxSelectable` on SensorSelection), and
-    // the Pair Plot tab itself blocks entry with an explanatory dialog
-    // instead of switching charts out from under the user (handlePairPlotClick
-    // below). PairPlotChart's own render guard is the last line of defense
-    // for the one path that can still exceed it — a workspace restore that
-    // persisted chartType:'pair' alongside a larger selection.
+    // Too many sensors for Pair Plot does not bounce the chart: the UI blocks it; PairPlotChart's guard covers restores.
     useEffect(() => {
         if (!canScatter && chartType !== 'line') {
             setChartType('line');
@@ -1844,19 +1385,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     }, [selectedSensors.length]);
 
 
-    // ── Bounded data-view queries ────────────────────────────────────
-    // The full pipeline (dashboard filter → operation transform → hourly
-    // aggregation → min/max decimation) runs in Rust. The WebView only
-    // ever receives O(LINE_MAX_POINTS) chart arrays — selecting millions of
-    // rows never copies the dataset into the JS heap or blocks the main thread.
+    // Filter, transform, aggregation and decimation run in Rust; the WebView gets only O(LINE_MAX_POINTS) arrays.
     const handleFiltersChange = useCallback((newFilters: FilterState) => {
         // The query hooks debounce backend calls themselves, so rapid
         // datetime-input edits don't queue full-dataset passes.
         setFilters(newFilters);
     }, []);
 
-    // Wire-format value filters, shared by the chart/table/export/scatter
-    // queries below.
+    // Wire-format value filters, shared by the chart and scatter queries below.
     const wireValueFilters = useMemo(() =>
         filters.sensorFilters
             .filter(sf => sf.value1 !== '')
@@ -1891,15 +1427,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             }
             : null
     );
-    // True dataset extent, independent of the current time filter — the one
-    // source of truth for "what does this dataset span" (see the hook's own
-    // docstring for why `view.ts_min`/`ts_max` can't serve this once any
-    // time filter is applied). Fetched once per Dashboard mount.
+    // True dataset extent regardless of the time filter (`view.ts_min/max` shrink with it); fetched once per mount.
     const { bounds: datasetBounds } = useDatasetTimeBounds();
 
-    // Both data hooks swallow backend failures into state; in a production
-    // build there's no console, so route them to the global reporter
-    // (toast + persistent log file) or they die invisible.
+    // The hooks swallow failures; report them or they are invisible in a production build.
     useEffect(() => {
         if (viewError) reportError('chart-data', viewError);
     }, [viewError]);
@@ -1908,22 +1439,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
     const isMultiOp = operationConfig?.mode === 'multi' && !!operationConfig?.multiOp;
 
-    // Headers actually shown (chart + table). In multi-op mode the backend
-    // collapses everything into one "Result (op)" column; otherwise show
-    // the visible subset of the resolved sensors.
+    // Multi-op collapses to one 'Result (op)' column; otherwise the visible sensors.
     const displayHeaders = useMemo(() => {
         if (!view) return [];
         if (isMultiOp) return view.headers;
         return view.headers.filter(h => visibleSensors.includes(h));
     }, [view, isMultiOp, visibleSensors]);
 
-    // Alarm setpoint lines for the currently-visible sensors. Skipped
-    // entirely in multi-op mode — `displayHeaders` there is a single
-    // synthesized "Result (op)" column, not a real sensor tag, so there's no
-    // metadata to look an alarm value up against. Colored by SEVERITY
-    // (`alarmLevelColor`: amber for L/H, red for LL/HH), not by the sensor's
-    // own line color, so a setpoint line never blends into its own sensor's
-    // trace.
+    // Skipped in multi-op (no real tag to look up). Coloured by severity, not the sensor's line colour.
     const markLines = useMemo<ChartMarkLine[]>(() => {
         if (isMultiOp) return [];
         const lines: ChartMarkLine[] = [];
@@ -1954,7 +1477,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, [view, isMultiOp, displayHeaders]);
 
-    // Build workspace state helper for saving
     const buildWorkspaceState = useCallback((overrides?: Partial<WorkspaceState>): WorkspaceState => ({
         ...withoutLegacyWorkspaceFields(initialState),
         name: localName,
@@ -1967,13 +1489,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         samplingMethod,
         collapsedPanels: Array.from(collapsedPanels),
         layoutSizes,
-        // Carry the LATEST fgGroups/fgModels (kept current by
-        // toggleSensorGroupKind/createGroupForSensor, and by the
-        // 'failure-group-state-changed' listener above whenever
-        // BuildModelWindow persists independently),
-        // not the stale failureGroupState captured in `initialState` at
-        // mount — otherwise this full-overwrite autosave would silently
-        // erase what was just written via read-modify-write elsewhere.
+        // Use the latest fgGroups/fgModels mirror, not the mount-time `initialState`, or this full overwrite erases other writes.
         failureGroupState: { ...fgExtra, groups: fgGroups, models: fgModels },
         alarmLinesEnabled,
         scatterAxes: scatterAxes ?? undefined,
@@ -1984,8 +1500,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         scatterAxisPins,
         timeHighlights,
         valueHighlight,
-        // lineTaggedPoints deliberately excluded — see the state's own
-        // comment above for why (not meant to survive app close/reopen).
+        // `lineTaggedPoints` is deliberately not persisted (see its state).
         relativeTimeRange: { amount: relativeAmount, unit: relativeUnit },
         ...overrides,
     }), [
@@ -1995,12 +1510,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         valueHighlight, relativeAmount, relativeUnit,
     ]);
 
-    // The autosave below is a debounce whose timer its cleanup CLEARS -- on a
-    // dependency change that is right (the next run re-arms it), but on UNMOUNT
-    // ("Back to Import") it would drop whatever was changed in the last
-    // AUTOSAVE_DEBOUNCE_MS. `autosaveDirtyRef` is true while a timer is armed and
-    // has not started its write; the unmount effect flushes it through
-    // `runAutosaveRef`, which is the very same routine the timer runs.
+    // Unmount flushes an armed debounce (the cleanup clears the timer): `autosaveDirtyRef` marks it, `runAutosaveRef` runs it.
     const autosaveDirtyRef = useRef(false);
     const runAutosaveRef = useRef<(() => Promise<void>) | null>(null);
     const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2029,30 +1539,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     // the top of Recents even when nothing changed.
     const autosavedOnceRef = useRef(false);
 
-    // Auto-save state changes — debounced (see AUTOSAVE_DEBOUNCE_MS) so a
-    // burst of rapid edits (typing, dragging a slider, resizing panels)
-    // coalesces into ONE disk write instead of one per intermediate state.
-    // Every relevant state change gives buildWorkspaceState a new identity,
-    // which reruns this effect: the OLD timer is cleared (cleanup below)
-    // and a new one queued, so only the LAST edit in a rapid burst ever
-    // actually reaches disk — same "clear + requeue" shape as the
-    // useChartData/useScatterSample debounce this mirrors.
-    //
-    // The write re-reads `failureGroupState` fresh from disk right before
-    // writing instead of trusting this window's local mirror. The mirror is
-    // kept current only by the `failure-group-state-changed` broadcast above —
-    // best-effort cross-window IPC, not a guaranteed-ordered channel — so
-    // baking it in would let ANY Dashboard-only interaction (panning a chart,
-    // toggling a sensor) overwrite fresher failure-group state written by the
-    // Build Model window (a separate OS window). This narrows the race to a
-    // genuine near-simultaneous cross-window write (a few ms IPC round trip);
-    // a fully race-proof fix needs a Rust-side atomic read-modify-write across
-    // processes.
+    // Debounced autosave coalesces bursts into one write.
+    // Re-reads `failureGroupState` from disk first (the mirror can be stale); narrows, does not close, a cross-window race.
     useEffect(() => {
         if (!initialState) return;
-        // The write itself: also what the unmount flush runs. Always for THIS
-        // Dashboard's own workspace (`initialState.id`), built from this
-        // render's state.
+        // The write itself, also run by the unmount flush; always for this Dashboard's own workspace.
         const runAutosave = async () => {
             const run: { built: WorkspaceState | null; recipesChanged: boolean } = { built: null, recipesChanged: false };
             let next: WorkspaceState | null;
@@ -2060,29 +1551,22 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 // Read and write are one queue step, so a failure-group write
                 // from this window lands before the read or after the write.
                 next = await saveWorkspaceFrom(initialState.id, (onDisk) => {
-                    // The project's name, description, machine and data time zone
-                    // are written ONLY by Project details (`saveProjectDetails`):
-                    // like the failure-group slice, they are carried over from disk.
+                    // Written only by Project details; carried over from disk.
                     const built = buildWorkspaceState({
                         failureGroupState: onDisk?.failureGroupState ?? { ...fgExtra, groups: fgGroups, models: fgModels },
                         ...projectDetailsFromDisk(onDisk),
                     });
-                    // A special-sensor recipe change that reaches disk through this
-                    // autosave sends the models trained on it back to Incomplete in
-                    // the SAME write. Only when the recipes really changed, so an
-                    // ordinary autosave does no fingerprinting at all.
+                    // A recipe change demotes models trained on it in the SAME write; only when recipes really changed, to skip fingerprinting.
                     const recipesChanged = !!onDisk && recipesDiffer(onDisk.specialSensorRecipes, built.specialSensorRecipes);
                     const state = recipesChanged && onDisk ? applyRecipeRule(onDisk, built) : built;
-                    // Compared with the file itself: nothing to write when it already
-                    // holds this state (e.g. after a failure-group write).
+                    // Skip the write when the file already holds this state.
                     if (autosavedOnceRef.current && JSON.stringify(state) === JSON.stringify(onDisk)) return null;
                     run.built = built;
                     run.recipesChanged = recipesChanged;
                     return state;
                 });
             } catch (e) {
-                // Unreadable file or failed write: nothing was overwritten. Keep the
-                // autosave pending so the next change (or leaving) tries again.
+                // A failed read/write overwrote nothing; stay pending so the next change retries.
                 console.warn('Autosave failed, nothing overwritten, adopted or broadcast:', e);
                 autosaveDirtyRef.current = true;
                 autosaveFailedRef.current = true;
@@ -2114,9 +1598,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 setFgModels(models);
                 setFgExtra(rest);
             }
-            // Tell any open Build Model window the recipes on disk changed (it
-            // re-reads them; never sent in the payload) -- scoped to this
-            // workspace, tagged so this window's own listener skips the echo.
+            // Tell open Build Model windows the recipes changed (they re-read them); scoped, tagged to skip our echo.
             const fgNow = next.failureGroupState ?? run.built?.failureGroupState;
             if (fgNow) {
                 const changed: FailureGroupStateChangedPayload = {
@@ -2138,11 +1620,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return () => clearTimeout(timer);
     }, [buildWorkspaceState, initialState, fgGroups, fgModels, fgExtra, trackWrite]);
 
-    // Leaving the Dashboard (Back to Import, closing the workspace, the key
-    // changing for another one): write what the debounce had not written yet.
-    // Runs on UNMOUNT only (empty deps), so a normal re-render never causes an
-    // early write. Still re-reads `failureGroupState` from disk first (inside
-    // `runAutosave`) and writes under this Dashboard's own workspace id.
+    // Flush unwritten changes on unmount only (empty deps); still re-reads failureGroupState from disk first.
     useEffect(() => () => {
         if (!autosaveDirtyRef.current) return;
         autosaveDirtyRef.current = false;
@@ -2150,8 +1628,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (run) void run().catch(e => console.warn('Autosave flush on leaving the Dashboard failed:', e));
     }, []);
 
-    // Everything this window still owes the file, written now instead of waiting
-    // for the debounce. False when something did not land (or a write hung).
+    // Writes everything still owed now. False when something didn't land or a write hung.
     const saveAllBeforeClose = useCallback(async (): Promise<boolean> => {
         fgWriteFailedRef.current = false;
         const drained = (async () => {
@@ -2175,16 +1652,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return finished && !autosaveFailedRef.current && !fgWriteFailedRef.current;
     }, [trackWrite]);
 
-    // `preventDefault()` only BLOCKS the close, so once the saves are done we call
-    // `close()` ourselves. That comes back through this handler: `leavingRef` lets
-    // it pass, so the close can never loop. A save that failed keeps the window once,
-    // with a message; the next close leaves. Build Model is asked next, WITHOUT
-    // `workspace-closing`, so its own questions still come up: it goes, or says
-    // `build-model-close-kept` and everything stays. When Build Model cannot be
-    // checked, the close holds: `workspace-closing` goes only once it is known gone.
-    // Other child windows close after
-    // that and before this one goes (Tauri destroys it only once this handler has
-    // returned): a window destroyed here never unmounts, so the unmount effect would not run.
+    // `preventDefault()` only blocks; `close()` re-enters, so `leavingRef` lets it through. A failed save holds the window once.
+    // Build Model is asked first (unknown = hold); other child windows close before this one, which never unmounts when destroyed.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
@@ -2335,26 +1804,12 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         };
     }, [saveAllBeforeClose, closeChildWindows]);
 
-    // ── Scatter / Pair-plot data path (bounded sample) ───────────────────
-    // A 2 GB CSV is millions of rows; pushing every point to WebGL exhausts
-    // GPU memory and blanks the canvas, and holding them all as JS objects
-    // can OOM the renderer. So the scatter & pair-plot charts render a bounded
-    // reservoir sample fetched from Rust — the payload, heap, and GPU buffers
-    // stay constant regardless of dataset size. (The line chart uses
-    // the equally-bounded `get_chart_data` path above.)
+    // Scatter/pair render a bounded reservoir sample from Rust, so payload, heap and GPU buffers stay constant.
     const scatterActive = chartType === 'scatter' || chartType === 'pair';
-    // Pair plot redraws the sample once PER cell across many WebGL contexts,
-    // so it gets a tighter point budget than the single-canvas scatter.
+    // Pair plot redraws per cell across many WebGL contexts, so its point budget is tighter.
     const scatterMaxPoints = chartType === 'pair' ? PAIR_MAX_POINTS : SCATTER_MAX_POINTS;
 
-    // Deliberately `selectedSensors`, not `visibleSensors`: the "hide from
-    // chart" toggle in the Selected Sensor tab is a line-chart-only display
-    // tweak. Scatter/Pair Plot have no per-sensor visibility concept of
-    // their own, so they should always see the full selection — otherwise
-    // hiding one line silently drops that sensor from the scatter/pair
-    // sample too, and (worse) the Pair Plot tab can stay enabled on
-    // selectedSensors.length >= 2 while the actual fetch below 2 sensors,
-    // landing the user on a "Select at least 2 sensors" dead end.
+    // Use `selectedSensors`, not `visibleSensors`: hiding is line-only and could starve scatter/pair below 2 sensors.
     const scatterFilter = useMemo<ScatterSampleFilter | null>(() => {
         if (!scatterActive || selectedSensors.length === 0) return null;
         return {
@@ -2375,9 +1830,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (scatterSample.error) reportError('scatter-sample', scatterSample.error);
     }, [scatterSample.error]);
 
-    // Keep the sample consistent with the line/table path by applying the same
-    // single-op transform. (Multi-op collapses to one column → scatter needs
-    // ≥2, so it's left untransformed and the chart shows its own guard.)
+    // Same single-op transform as the line path; multi-op is left untransformed (the chart shows its guard).
     const scatterFeed = useMemo<CsvRecord[]>(() => {
         const rows = scatterSample.rows;
         if (operationConfig?.mode === 'single' && operationConfig.singleOp) {
@@ -2400,21 +1853,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return rows;
     }, [scatterSample.rows, operationConfig]);
 
-    // The dashboard does not hold the full dataset, so there is no
-    // full-data fallback: the scatter / pair charts render the bounded
-    // sample (empty while the first fetch is in flight — the Loading badge
-    // covers that window).
+    // No full-data fallback: the charts show the bounded sample (empty until the first fetch).
     const scatterReady = scatterSample.rows.length > 0;
     const scatterChartData = scatterFeed;
     // Matches scatterFilter above — falls back to the full selection, not
     // the line-chart-only visible subset.
     const scatterChartHeaders = scatterSample.headers.length > 0 ? scatterSample.headers : selectedSensors;
 
-    // Data range for auto-filling the time inputs — the TRUE dataset extent
-    // (see useDatasetTimeBounds), not `view.ts_min`/`ts_max`: those reflect
-    // only the currently-filtered population, so once any time filter is
-    // applied they'd shrink to the filtered window instead of staying the
-    // full range "Reset Period" and this fallback need.
+    // True dataset extent (not `view.ts_min/max`, which shrink with the filter), for Reset Period and defaults.
     const dataRange = useMemo(() => {
         if (datasetBounds?.min && datasetBounds?.max) {
             return { min: datasetBounds.min, max: datasetBounds.max };
@@ -2422,7 +1868,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         return undefined;
     }, [datasetBounds]);
 
-    // Format timestamp for a date field
     const formatForInput = useCallback((dateStr: string) => {
         try {
             const date = new Date(dateStr);
@@ -2443,12 +1888,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const applyRelativeRange = useCallback(() => {
         const n = parseFloat(relativeAmount);
         if (!n || n <= 0) return;
-        // Anchored to the dataset's OWN last timestamp, not the machine's
-        // clock — this data is historical and its end can sit anywhere
-        // relative to today, so "today minus 6 months" routinely landed
-        // outside the dataset entirely and silently produced 0 points.
-        // Falls back to now only in the brief window before the dataset's
-        // bounds have loaded.
+        // Anchored to the dataset's last timestamp, not the clock (data is historical); falls back to now until bounds load.
         const end = datasetBounds?.max ? new Date(datasetBounds.max) : new Date();
         if (isNaN(end.getTime())) return;
         const start = subtractRelativeAmount(end, relativeUnit, n);
@@ -2460,13 +1900,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         setRelativeRangeApplied(true);
     }, [relativeAmount, relativeUnit, filters, handleFiltersChange, formatForInput, datasetBounds]);
 
-    // First-open default: a genuinely fresh workspace (`initialState.filters`
-    // was never saved — see `WorkspaceState.filters`'s docstring) starts
-    // showing the dataset's last 6 months instead of everything, once its
-    // real end timestamp is known. Fires at most once, ever, per workspace
-    // — a workspace reopened with ANY previously-saved filters (including an
-    // explicitly empty one from "Reset Period", which is meant to keep
-    // showing everything) is left exactly as it was.
+    // One-shot: a fresh workspace (no saved `filters`) shows the last 6 months; any saved filters, even empty, are kept.
     const appliedInitialDefaultRangeRef = useRef(false);
     useEffect(() => {
         if (appliedInitialDefaultRangeRef.current) return;
@@ -2484,18 +1918,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             timestampStart: formatForInput(start.toISOString()),
             timestampEnd: formatForInput(end.toISOString()),
         });
-        // `appliedInitialDefaultRangeRef` makes this a true one-shot no
-        // matter how many times the effect re-runs — `initialState` never
-        // changes post-mount, so in practice only `datasetBounds` arriving
-        // triggers the run that actually does anything.
+        // The ref keeps this one-shot however often the effect re-runs.
     }, [datasetBounds, initialState, filters, handleFiltersChange, formatForInput]);
 
-    // ── Panel content renderers ──
-    // Each returns the inner panel wrapper (.chart-section-large or
-    // .widget-section) WITHOUT the outer .dashboard-slot — the slot wrapper
-    // is added by the render loop in the JSX. This way the slot ref stays
-    // stable across swaps and only the inner content changes, so split.js
-    // doesn't have to tear down and re-init on every panel swap.
+    // Inner wrapper only; the render loop adds the slot wrapper so refs stay stable and split.js isn't re-initialised on swaps.
     const renderChartContent = () => (
         <div className="chart-section-large">
             <div className="section-header collapsible-header">
@@ -2597,13 +2023,9 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     />
                 )}
             </div>
-            {/* Unified `.timebar` row: a single flex row of pill-shaped
-                sub-controls; the `.timebar-datarange` text on the right states
-                the loaded data's own range. */}
+            {/* Pill-shaped controls in one row; `.timebar-datarange` states the loaded data's range. */}
             <div className="timebar">
-                {/* Each side has its OWN calendar button. An unfinished date changes
-                    nothing: clearing the filter here would put the full data range
-                    over what is being typed. Leaving the field blank clears it. */}
+                {/* Each side has its own calendar button. An unfinished date changes nothing (clearing would show the full range over the typing); blank clears it. */}
                 <div className="timebar-range">
                     <DateTime24Input
                         ariaLabel="Start date"
@@ -2647,9 +2069,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <input
                         type="number"
                         min="0"
-                        // Y/M are calendar units, not a fixed duration — the spinner
-                        // (and applyRelativeRange's truncation) only make sense on
-                        // whole units for those two; W/D/H stay fractional-friendly.
+                        // Y/M are calendar units: whole numbers only; W/D/H may be fractional.
                         step={relativeUnit === 'Y' || relativeUnit === 'M' ? '1' : 'any'}
                         value={relativeAmount}
                         onChange={(e) => { setRelativeAmount(e.target.value); setRelativeRangeApplied(false); }}
@@ -2662,19 +2082,8 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 <div className="timebar-unit-seg">
                     {RANGE_UNITS.map(u => {
-                        // Two DIFFERENT things, deliberately shown differently:
-                        //   isSelected — this unit is what's currently picked
-                        //     in the widget. Must update on every click, on its
-                        //     own, with zero dependency on Apply having ever run
-                        //     — otherwise clicking Y/M/W/D/H gives no visible
-                        //     feedback at all while relativeRangeApplied is
-                        //     false (e.g. right after a manual calendar edit),
-                        //     which reads as "the buttons don't respond" even
-                        //     though relativeUnit IS changing underneath.
-                        //   isActive — the STRONGER claim that relativeRangeApplied
-                        //     is ALSO true, i.e. the dates on screen really are
-                        //     this unit's last-Applied result (see that state's
-                        //     own docstring for why it can go false again).
+                        // isSelected = unit picked in the widget, updates on every click.
+                        // isActive = also relativeRangeApplied, i.e. the dates on screen are this unit's last Apply result.
                         const isSelected = relativeUnit === u;
                         const isActive = relativeRangeApplied && isSelected;
                         const unitLabel = { Y: 'Years', M: 'Months', W: 'Weeks', D: 'Days', H: 'Hours' }[u];
@@ -2713,8 +2122,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <option value="last">Last</option>
                 </select>
 
-                {/* Sits right after Aggregation — it never touches Aggregation
-                    itself, only clears timestampStart/End back to the full data range. */}
+                {/* Clears only timestampStart/End to the full range, not Aggregation. */}
                 {dataRange && filters.timestampStart && (
                     <button
                         className="timebar-reset"
@@ -2725,11 +2133,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 timestampStart: '',
                                 timestampEnd: ''
                             });
-                            // Same reasoning as the manual Start/End edit
-                            // handlers above: the dates just changed out
-                            // from under whatever relative-range preset
-                            // was last applied, so its unit button must
-                            // stop claiming to still be "active".
+                            // The dates changed, so the relative-range unit must stop showing as active.
                             setRelativeRangeApplied(false);
                         }}
                     >
@@ -2740,11 +2144,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
                 <span className="timebar-spacer" />
 
-                {/* Always visible once the dataset's real bounds are known
-                    (not gated on a filter being applied, unlike Reset period
-                    above) — tells the user up front what time period the
-                    loaded data actually covers, since the chart does not
-                    default to showing all of it. */}
+                {/* Always shown once bounds load: the chart does not default to the whole range. */}
                 {dataRange && (
                     <span
                         className="timebar-datarange"
@@ -2757,9 +2157,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         </div>
     );
 
-    // Which tab the panel shows — Filter, Highlights, Tagged points, or the "Selected
-    // Sensor" list (per-sensor show/hide + remove controls). (`activeDataTab` is declared
-    // next to the tag state above, which opens the Tagged points tab.)
 
     const renderDataContent = () => (
         <div className="widget-section data-widget">
@@ -2860,18 +2257,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 No sensors plotted yet — pick some from the Sensor panel.
                             </div>
                         )}
-                        {/* Line's per-sensor visibility/color/Y-axis-pin only ever reach
-                            LineChart (Chart.tsx forwards sensorColors/sensorAxisRange to
-                            'line' only, and scatterChartHeaders always uses the FULL
-                            selectedSensors regardless of visibleSensors) — showing those
-                            controls for Scatter/Pair Plot let the user "edit" something
-                            with zero effect. Scatter's X/Y picker stays inside the chart
-                            canvas itself; its value/time colouring lives in the Highlights
-                            tab. Pair Plot's lasso-cluster is its own self-contained
-                            mechanism and deliberately does NOT read the Highlights tab at
-                            all (see ChartTypes.ts's timeHighlights docstring) — mixing two
-                            differently-scoped highlighting systems on the same matrix read
-                            as more confusing than useful. */}
+                        {/* Visibility/colour/Y-pin reach only LineChart, so Scatter/Pair hide them. Pair Plot's lasso-cluster ignores the Highlights tab (see ChartTypes.ts `timeHighlights`). */}
                         {chartType !== 'line' && selectedSensors.length > 0 && (
                             <div style={{
                                 margin: '8px 10px', padding: '8px 10px',
@@ -2888,12 +2274,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             const visible = visibleSensors.includes(sensor);
                             const isPinned = !!sensorAxisRange[sensor];
                             const isLine = chartType === 'line';
-                            // Tag-keyed, not index-keyed — must match LineChart's own
-                            // default exactly so the swatch always agrees with the
-                            // sensor's actual on-chart color, even after another
-                            // sensor is hidden/shown and shifts positional indices.
-                            // Only meaningful for Line — Scatter/Pair Plot have no
-                            // per-sensor color concept, so they always show neutral text.
+                            // Must match LineChart's own tag-keyed default so the swatch agrees with the on-chart colour; Line only.
                             const currentColor = isLine ? (resolvedSensorColors[sensor] ?? defaultSensorColor(sensor)) : 'var(--text-primary)';
                             return (
                                 <div key={sensor} style={{ borderBottom: '1px solid var(--border)' }}>
@@ -2912,8 +2293,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                                 title={visible ? 'Hide from chart' : 'Show on chart'}
                                             />
                                         )}
-                                        {/* The swatch IS the colour button. The row text stays neutral — the
-                                            series colour lives only on the swatch and on tooltip / tag-box values. */}
+                                        {/* The swatch is the colour button; the series colour lives only on the swatch and tooltip/tag-box values. */}
                                         {isLine && (
                                             <ColourPicker
                                                 color={currentColor}
@@ -2925,8 +2305,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                             />
                                         )}
                                         <SensorLabel tag={sensor} />
-                                        {/* Action cluster — kept together (not scattered) so the row reads as
-                                            one group of controls on the right, same as the reference layout. */}
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
                                             {isLine && (
                                                 <>
@@ -2958,8 +2336,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                         <AnchoredPopover
                                             anchorRect={axisEditorAnchor}
                                             onRequestClose={closeAxisEditor}
-                                            // Wide enough for the whole row on ONE line (label, two fields,
-                                            // Apply — plus Unpin once pinned).
+                                            // Wide enough for label, two fields and Apply (plus Unpin) on one line.
                                             width={isPinned ? 310 : 270}
                                             style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}
                                         >
@@ -3096,9 +2473,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                         onClick={async () => {
                             const existing = await WebviewWindow.getByLabel('add-sensor');
                             if (existing) {
-                                // Already open — creating another with the
-                                // same label just errors. Focus it and hand
-                                // it this workspace's data afresh.
+                                // Already open (a second create with the same label errors): focus it and send this workspace's data.
                                 await bringToFront(existing);
                                 const cur = stateRef.current;
                                 emit('sensors-data', {
@@ -3118,11 +2493,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 title: 'Add Special Sensor',
                                 width: 1000,
                                 height: 800,
-                                // The Add Sensor window's fixed 320px | minmax(0,1fr)
-                                // body grid has no floor of its own on the right
-                                // (Tooling) track — nothing stops the window shrinking
-                                // it to 0. A window minWidth is the guard: 320px left
-                                // track + 150px floor for the right one.
+                                // The body grid's right track has no floor of its own: minWidth = 320px left track + 150px floor.
                                 minWidth: 470,
                                 minHeight: 400,
                                 center: true,
@@ -3149,9 +2520,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         }
     };
 
-    // Renders a single slot wrapper IF its current panel isn't collapsed.
-    // Returns null when collapsed so the surviving sibling slot (with its
-    // .dashboard-slot flex:1) takes the full column.
+    // Null when collapsed so the sibling slot takes the whole column.
     const renderSlot = (slot: DashboardSlot) => {
         if (collapsedPanels.has(SLOT_LAYOUT[slot])) return null;
         return (
@@ -3197,7 +2566,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     />
                 </Portal>
             )}
-            {/* Collapsed Tabs Sidebar */}
             {collapsedPanels.size > 0 && (
                 <div className="collapsed-tabs-sidebar">
                     {Array.from(collapsedPanels).map(panelId => {
@@ -3221,9 +2589,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
 
 
             <div className={`dashboard-grid-2x2 ${allLeftCollapsed ? 'left-fully-collapsed' : ''} ${allRightCollapsed ? 'right-fully-collapsed' : ''} ${collapsedPanels.size > 0 ? 'has-collapsed-sidebar' : ''}`}>
-                {/* Left column — slots LT (chart) and LB (data table) per
-                    SLOT_LAYOUT. Slot wrappers exist so split.js has stable
-                    refs to manage vertical resize. */}
+                {/* Slot wrappers give split.js stable refs for vertical resize. */}
                 <div className="left-column" ref={leftColumnRef}>
                     {LEFT_SLOTS.map(slot => renderSlot(slot))}
                 </div>
@@ -3233,7 +2599,6 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <div className="right-column-splits">
                         {RIGHT_SLOTS.map(slot => renderSlot(slot))}
                     </div>
-                    {/* end .right-column-splits */}
                 </div>
             </div>
         </div>

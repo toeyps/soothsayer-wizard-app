@@ -1,30 +1,9 @@
 #!/usr/bin/env bash
-# ──────────────────────────────────────────────────────────────────────────
-# Build Soothsayer-Wizard installer for macOS Apple Silicon (arm64).
-#
-# Run on a Mac with an M-series chip (M1/M2/M3/M4). The script is idempotent
-# — re-running skips work that is already done (npm deps, sidecar binary).
-#
-# Prerequisites (the script verifies each and bails with instructions if
-# missing):
-#   - macOS on arm64 (Apple Silicon)
-#   - Xcode Command Line Tools
-#   - Rust toolchain (rustup) with aarch64-apple-darwin target
-#   - Node.js 18+ / npm
-#   - Python 3.11+
-#
-# Output:
-#   src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/
-#     Soothsayer-Wizard_<version>_aarch64.dmg
-#   src-tauri/target/aarch64-apple-darwin/release/bundle/macos/
-#     Soothsayer-Wizard.app
-#
-# Expected runtime: 10–15 min cold (mostly Nuitka), <2 min warm (cached).
-# ──────────────────────────────────────────────────────────────────────────
+# Build the macOS Apple Silicon (arm64) installer. Run on an M-series Mac; idempotent.
+# Output: src-tauri/target/aarch64-apple-darwin/release/bundle/{dmg,macos}/
 
 set -euo pipefail
 
-# ─── Pretty output ────────────────────────────────────────────────────────
 BOLD=$'\033[1m'
 DIM=$'\033[2m'
 GREEN=$'\033[32m'
@@ -38,7 +17,6 @@ ok()    { printf "  ${GREEN}✓${RESET} %s\n" "$*"; }
 warn()  { printf "  ${YELLOW}⚠${RESET} %s\n" "$*"; }
 fail()  { printf "\n${BOLD}${RED}✗ %s${RESET}\n" "$*" >&2; exit 1; }
 
-# ─── Resolve repo root regardless of cwd ──────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_ROOT"
@@ -46,7 +24,6 @@ cd "$REPO_ROOT"
 TARGET="aarch64-apple-darwin"
 START_TS=$(date +%s)
 
-# ─── 1. Prerequisites ─────────────────────────────────────────────────────
 step "1/5  Checking prerequisites"
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "This script must run on macOS. Detected: $(uname -s)"
@@ -87,7 +64,6 @@ done
 [[ -n "$PYTHON_BIN" ]] || fail "Python 3.11+ missing. Install via: brew install python@3.11"
 ok "Python $($PYTHON_BIN --version | awk '{print $2}') ($PYTHON_BIN)"
 
-# ─── 2. npm install (only if needed) ──────────────────────────────────────
 step "2/5  Installing npm dependencies"
 if [[ -d node_modules && -f node_modules/.package-lock.json ]] \
    && [[ node_modules/.package-lock.json -nt package-lock.json ]]; then
@@ -97,7 +73,6 @@ else
     ok "npm ci complete"
 fi
 
-# ─── 3. Python sidecar (only if missing) ──────────────────────────────────
 step "3/5  Building Python sidecar (Nuitka)"
 SIDECAR="src-tauri/bin/backend-${TARGET}"
 if [[ -f "$SIDECAR" ]]; then
@@ -127,15 +102,11 @@ else
     ok "Sidecar built ($(du -h "$SIDECAR" | awk '{print $1}'))"
 fi
 
-# ─── 4. Tauri build ───────────────────────────────────────────────────────
 step "4/5  Building Tauri app + DMG installer"
-# --remap-path-prefix keeps this machine's paths (user name, repo folder,
-# cargo registry) out of the shipped binary; computed here because the
-# paths differ per build machine. Scoped to this one command.
+# Remap paths so this machine's user/repo/cargo paths stay out of the binary.
 REMAP_FLAGS="--remap-path-prefix=${REPO_ROOT}=wizard --remap-path-prefix=${HOME}=~"
 RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${REMAP_FLAGS}" npm run tauri -- build --target "${TARGET}"
 
-# ─── 5. Locate + report installer ─────────────────────────────────────────
 step "5/5  Locating installer"
 DMG_DIR="src-tauri/target/${TARGET}/release/bundle/dmg"
 APP_DIR="src-tauri/target/${TARGET}/release/bundle/macos"

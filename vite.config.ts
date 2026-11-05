@@ -11,14 +11,7 @@ export default defineConfig(async () => ({
   build: {
     rollupOptions: {
       output: {
-        // Split the app's heaviest dependencies into their own vendor
-        // chunks instead of one monolithic bundle.
-        //
-        // Function form (not the `{ chunk: [pkgs] }` object form), with React in its
-        // own chunk: left to the default, Rollup put React (and the CJS interop helper)
-        // INSIDE the echarts chunk because echarts-for-react imports it — so the main
-        // window's entry statically imported, and index.html modulepreloaded, all 1.1 MB
-        // of echarts even though echarts is only needed once a chart mounts.
+        // React gets its own chunk: by default Rollup put it inside the echarts chunk, so the main entry preloaded all of echarts.
         manualChunks(id: string) {
           if (id.includes("commonjsHelpers") || /node_modules[\/](react|react-dom|scheduler)[\/]/.test(id)) return "react";
           if (!id.includes("node_modules")) return undefined;
@@ -30,11 +23,9 @@ export default defineConfig(async () => ({
     },
   },
 
-  // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
-  //
-  // 1. prevent Vite from obscuring rust errors
+  // Tauri dev: don't clear the screen, so Rust errors stay visible.
   clearScreen: false,
-  // 2. tauri expects a fixed port, fail if that port is not available
+  // Tauri expects a fixed port; fail if it is not available.
   server: {
     port: 1420,
     strictPort: true,
@@ -47,14 +38,7 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching everything the app does not import.
-      //    Vite full-reloads the page for a change to ANY watched file that is
-      //    not in its module graph — verified 2026-10-04: even `touch CLAUDE.md`
-      //    logs `page reload`, which throws away the Dashboard's React state and
-      //    lands the user back on the Import page (there is no auto-resume). So
-      //    editing docs, tests, scripts or the Rust/Python side while `tauri dev`
-      //    has a workspace open must not touch the webview. (`src-tauri` is also
-      //    watched by the Tauri CLI itself, which rebuilds/restarts on Rust edits.)
+      // Ignore files the app doesn't import: Vite full-reloads on any watched file outside its module graph, losing Dashboard state.
       ignored: [
         "**/src-tauri/**",
         "**/docs/**",

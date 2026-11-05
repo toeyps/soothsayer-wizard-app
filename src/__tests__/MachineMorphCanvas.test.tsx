@@ -44,7 +44,6 @@ import {
 import { HOLD_STOP_BEFORE, RESUME_MS } from '../components/upload/machineOrbit';
 
 /* ------------------------------------------------------------------ */
-/* Pure helpers                                                        */
 /* ------------------------------------------------------------------ */
 
 describe('C6 sampler primitives', () => {
@@ -196,8 +195,7 @@ describe('buildShapes (C6)', () => {
     }
   });
 
-  // group = colour (group & 3) + 4 × part (group >> 2); part 0 is fixed, part k moves with parts[k − 1]
-  // (every machine's rotor train turns since 2026-10-12 — the details are in machineParts.test.ts).
+  // group = colour (group & 3) + 4 × part (group >> 2); part 0 is fixed, part k moves with parts[k − 1].
   it('every machine has moving parts; only the reciprocating pump has sliding ones (its three plungers, colour 3)', () => {
     for (const sh of shapes) {
       expect(sh.parts.length).toBeGreaterThanOrEqual(1);
@@ -328,10 +326,7 @@ describe('simulated sensors', () => {
 });
 
 describe('callout card fit', () => {
-  // Measured in Chromium (canvas measureText), worst of the
-  // loaded web font (Inter 600 11px) and the Windows fallback the installed
-  // app uses under its CSP (Segoe UI 600 11px). Add a row when you add a
-  // trending sensor — the test below fails until you do.
+  // Widths measured in Chromium (measureText), worst of Inter and Segoe UI 600 11px. Add a row for each new trending sensor.
   const NAME_PX: Record<string, number> = {
     'Exhaust gas temperature': 132.8,
     'Axial displacement': 100.9,
@@ -395,15 +390,11 @@ describe('placeLabels', () => {
 });
 
 /* ------------------------------------------------------------------ */
-/* Component                                                           */
 /* ------------------------------------------------------------------ */
 
 type Recorder = Record<string, ReturnType<typeof vi.fn>>;
 
-/**
- * Minimal recording 2D context: every method is a vi.fn, properties are plain
- * assignments. `imageData: false` leaves out createImageData, like jsdom.
- */
+/** Recording 2D context: methods are vi.fn, properties plain. `imageData: false` omits createImageData, like jsdom. */
 function makeCtx(imageData = true): { ctx: CanvasRenderingContext2D; rec: Recorder } {
   const rec: Recorder = {};
   const store: Record<string, unknown> = {};
@@ -588,7 +579,7 @@ describe('MachineMorphCanvas', () => {
     expect(rec.createImageData).toHaveBeenCalledTimes(1);
     expect(rec.putImageData).toHaveBeenCalledTimes(1);
     expect(rec.drawImage).toHaveBeenCalledTimes(1);
-    expect(rec.fillRect.mock.calls.length).toBeLessThan(5); // no per-dot squares any more
+    expect(rec.fillRect.mock.calls.length).toBeLessThan(5); // no per-dot squares
     expect(texts()).toContain('Exhaust gas temperature');
     expect(texts()).toContain('Active power');
     expect(rafSpy).toHaveBeenCalledTimes(2); // loop keeps running
@@ -665,7 +656,6 @@ describe('MachineMorphCanvas', () => {
     expect(canvas.style.cursor).toBe('grab');
   });
 
-  /* ---------- pointer capture and lost releases ---------- */
 
   /** Stub pointer capture (jsdom has none); `held` is what the canvas currently captures. */
   const stubCapture = () => {
@@ -734,7 +724,7 @@ describe('MachineMorphCanvas', () => {
       // Reduced motion: the redraw loop stops once the view has caught up.
       drain();
       expect(rafCallbacks.size).toBe(0);
-      // Without the fix the single-pointer guard locked every later drag out.
+      // A lost capture must not leave the single-pointer guard locking out later drags.
       fireEvent.pointerDown(canvas, { pointerId: 6, pointerType: 'touch', button: 0, clientX: 100, clientY: 100 });
       expect(canvas.style.cursor).toBe('grabbing');
       expect(cap.set).toHaveBeenLastCalledWith(6);
@@ -800,7 +790,7 @@ describe('MachineMorphCanvas', () => {
     drain();
     const settled = sensorDots().slice(-2);
     expect(settled[0][0]).not.toBeCloseTo(home[0][0], 0); // the 40 px that was dragged counts...
-    // ...but plain hover no longer turns the machine, and the reduced-motion loop stays stopped.
+    // ...but plain hover does not turn the machine; the reduced-motion loop stays stopped.
     const frames = rafSpy.mock.calls.length;
     rec.arc.mockClear();
     fireEvent.pointerMove(canvas, { pointerId: 1, pointerType: 'mouse', buttons: 0, clientX: 700, clientY: 100 });
@@ -808,7 +798,6 @@ describe('MachineMorphCanvas', () => {
     expect(rec.arc).not.toHaveBeenCalled();
   });
 
-  /* ---------- the animated loop under a controlled clock ---------- */
 
   let clockMs = 0;
   const useFakeClock = () => {
@@ -855,7 +844,6 @@ describe('MachineMorphCanvas', () => {
     expect(screen.getByText(MACHINE_NAMES[1])).toBeTruthy();
   });
 
-  /* ---------- ‹ › buttons and dots: pick a machine ---------- */
 
   const nameShown = () => screen.getByTestId('machine-name').textContent;
 
@@ -1034,7 +1022,6 @@ describe('MachineMorphCanvas', () => {
     expect(run(400)).toBeLessThan(0.05); // held still > 80 ms: no glide, and no sway during the resume pause
   });
 
-  /* ---------- reduced motion: pixel-ratio changes ---------- */
 
   it('reduced motion: refits and redraws the still frame when the pixel ratio changes', () => {
     const listeners = new Map<string, Set<() => void>>();

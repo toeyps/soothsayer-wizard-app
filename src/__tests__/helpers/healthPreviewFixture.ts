@@ -4,25 +4,7 @@ import type {
     HealthPreviewRequest,
 } from '../../types/health';
 
-/**
- * A realistic `compute_health_preview` answer for tests (health score phase
- * 3b-1). `makeHealthPreview(request)` builds the payload for whatever the
- * component asked for — kind, predictors, the chosen X predictor, cluster
- * count — so a test that mocks the `invoke` of the Build Model window only has
- * to route the command here. Small, hand-checkable numbers; the series are
- * 5 points long.
- *
- * Two series, as Rust sends them (the health score is computed on 1-hour
- * averages):
- *  - `series`  — RAW rows for the Model fit page: CSV timestamp text (`TS`),
- *    `score` ALWAYS `null`.
- *  - `hourly`  — one point per clock hour for the Health score page: hour-start
- *    timestamps (`HOURLY_TS`, Rust's `2026-01-01T00:00:00` form), values that
- *    are the hour's MEAN, and the scores (`makeSetPointAwarePreview`).
- * The hourly values are deliberately NOT the raw values (the 5 raw points
- * stand for a sample of sub-hourly rows), so a test can tell which of the two
- * a chart or a read-out actually used.
- */
+/** Realistic `compute_health_preview` answer: `makeHealthPreview(request)` follows the request's kind, predictors, X predictor and cluster count. 5-point series. `series` = raw rows (CSV text `TS`, `score` always null); `hourly` = per-hour means with scores (`HOURLY_TS`), deliberately different so tests can tell which one a chart used. */
 
 /** CSV timestamp text of the 5 raw rows of `series`. */
 const TS = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
@@ -139,8 +121,7 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
                 kind: 'clustering',
                 rows: [0, 1, 2, 3, 4],
                 timestamps: HOURLY_TS,
-                // Hour means of X / Y; the cluster every row of the hour shares (null = the
-                // hour's rows do not all share one cluster, so the hour has no score).
+                // Hour means of X/Y; `cluster` null = the hour's rows don't share one cluster, so no score.
                 x: [10.5, 11.5, 20.5, 21.5, 12.5],
                 y: [20.5, 21.5, 40.5, 41.5, 22.5],
                 cluster: [1, 1, 2, 2, null],
@@ -204,9 +185,6 @@ export function makeHealthPreview(req: HealthPreviewRequest | Record<string, any
     };
 }
 
-// ---------------------------------------------------------------------------
-// Set-point-aware answers
-// ---------------------------------------------------------------------------
 
 const REQUIRED_MSG: Record<string, string> = {
     lower: 'Enter the lower set point (L): the value where health reaches 0 on the low side.',
@@ -220,17 +198,7 @@ const REQUIRED_MSG: Record<string, string> = {
 
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
-/**
- * A `compute_health_preview` answer that FOLLOWS the request's `set_points`, the
- * way Rust does it (a tiny stand-in for `validate_*`, not a copy of the rules):
- * empty field -> a `required` issue naming it; Individual L/H that is not beyond
- * the 3SD boundary (2 / 8 in this fixture) -> `lower_inside_3sd` / `upper_inside_3sd`;
- * Clustering N <= 3 -> `outer_sd_not_above_3`; everything else valid, with a
- * 5-point HOURLY score series (100, 90, 80, 60, 30) on `hourly.score` and a
- * summary that counts hours (`share_basis: 'hour_count'`; the minimum is located
- * by its hour start). `series.score` stays `null` — the raw rows are never
- * scored. A test that wants something else passes `over`.
- */
+/** Answer that follows the request's `set_points`, a tiny stand-in for Rust's validation: empty field -> `required`; Individual L/H not beyond 3SD (2 / 8) -> `lower_inside_3sd`/`upper_inside_3sd`; Clustering N <= 3 -> `outer_sd_not_above_3`; else valid with hourly scores (100, 90, 80, 60, 30). `series.score` stays null; `over` overrides the rest. */
 export function makeSetPointAwarePreview(req: HealthPreviewRequest | Record<string, any> | undefined, over: Partial<HealthPreview> = {}): HealthPreview {
     const r = (req ?? {}) as HealthPreviewRequest;
     const base = makeHealthPreview(r);

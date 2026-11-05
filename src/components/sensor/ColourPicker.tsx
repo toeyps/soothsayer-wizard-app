@@ -4,21 +4,9 @@ import AnchoredPopover, { type PopoverAnchorRect } from '../AnchoredPopover';
 import { usePopoverDismiss } from './SensorPicker';
 import ColorPlatePicker from '../dashboard/ColorPlatePicker';
 
-/**
- * The ONE colour picker (DESIGN_SYSTEM §4 "Colour picking — ONE picker"):
- * sensor line colours, time highlights, value-highlight ranges and pair-plot clusters.
- * The 16 px swatch IS the button (inside a 24 px hit area). The popover: 12 palette swatches in
- * the §4 chart order (6 × 2), a ring + check on the current colour (box-shadow, so `outline`
- * stays free for :focus-visible), a dot on colours another item on the same chart uses, then
- * "Custom colour" (HSV square + hue = `ColorPlatePicker`). Picks apply immediately; Esc closes
- * and returns focus; Tab past the last control closes.
- *
- * No colour code is shown anywhere (user decision 2026-10-11: a user never needs the code) — no
- * hex in the heading, no hex field, and a swatch's tooltip is its colour NAME.
- */
+/** The one colour picker: 12 palette swatches plus a custom colour (`ColorPlatePicker`); picks apply at once, Esc closes. */
 
-/** DESIGN_SYSTEM §4 multi-sensor palette order: blue, emerald, rose, violet, cyan, lime, fuchsia,
- *  orange, then amber, teal, indigo, pink (amber/red late — they mean alarms). */
+/** Palette swatches, in the order multiple sensors take them. */
 export const COLOUR_PALETTE = [
     '#3b82f6', '#10b981', '#f43f5e', '#8b5cf6', '#06b6d4', '#84cc16',
     '#d946ef', '#f97316', '#f59e0b', '#14b8a6', '#6366f1', '#ec4899',
@@ -30,8 +18,7 @@ export const COLOUR_NAMES = [
     'Magenta', 'Orange', 'Amber', 'Teal', 'Indigo', 'Pink',
 ] as const;
 
-/** '#rrggbb' (lower case) from a stored colour — with or without '#', surrounding spaces
- *  ignored; null when it is not exactly 6 hex digits. */
+/** '#rrggbb' (lower case) from a stored colour, with or without '#' and spaces; null unless exactly 6 hex digits. */
 export function parseHexColour(text: string): string | null {
     const t = text.trim().replace(/^#/, '');
     return /^[0-9a-f]{6}$/i.test(t) ? `#${t.toLowerCase()}` : null;
@@ -92,8 +79,7 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
     const onPopKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); return; }
         if (e.key === 'Tab') {
-            // Tabbing out either way closes it: past the last control, or Shift+Tab from the
-            // first one (the palette — one tab stop), back to the swatch button.
+            // Tab out of either end closes: past the last control, or Shift+Tab from the palette back to the swatch button.
             const f = [...e.currentTarget.querySelectorAll<HTMLElement>('button:not([tabindex="-1"])')];
             const at = document.activeElement as HTMLElement | null;
             const first = e.shiftKey && (at === f[0] || (!!at && !!gridRef.current?.contains(at)));
@@ -120,8 +106,7 @@ export default function ColourPicker({ color, onChange, used = [], label, title 
                 <AnchoredPopover
                     anchorRect={rect}
                     onRequestClose={() => close(false)}
-                    // Not `autoFocus` (WebView2's focus-scroll could dismiss the popover before it
-                    // is placed): focus the current swatch once positioned, without scrolling.
+                    // Not `autoFocus`: WebView2's focus-scroll could dismiss the popover; focus the current swatch once placed.
                     onPlaced={() => gridRef.current?.querySelector<HTMLElement>('[tabindex="0"]')?.focus({ preventScroll: true })}
                     style={{ width: 228, padding: 0, maxHeight: 'none', overflow: 'visible' }}
                 >

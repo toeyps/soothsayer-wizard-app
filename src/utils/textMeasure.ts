@@ -1,9 +1,4 @@
-/**
- * Text measurement for the long-sensor-name rules (DESIGN_SYSTEM §4 "Long sensor names"). Fit is measured
- * in the font actually rendered, never counted in characters: mono for a tag printed as the name, the UI
- * font for a description. Everything that measures takes a `MeasureText` so tests can inject widths
- * (jsdom has no layout and no canvas).
- */
+/** Measures text in the font actually rendered, not by character count; takes a `MeasureText` so tests can inject widths (jsdom has no canvas). */
 export type MeasureText = (text: string, font: string) => number;
 
 let ctx: CanvasRenderingContext2D | null = null;

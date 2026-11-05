@@ -15,8 +15,7 @@ import {
 interface HomeStepProps {
   T: Tokens;
   workspaces: WorkspaceMetadata[];
-  /** False until the first recent-projects fetch settled -- avoids flashing the
-   *  first-run "No projects yet" guide at returning users. */
+  /** False until the first recent-projects fetch settled; avoids flashing the first-run guide at returning users. */
   loaded: boolean;
   activeWorkspaceId: string | null;
   /** A project is being opened: ignore the Ctrl+N shortcut. */
@@ -35,8 +34,6 @@ const FIRST_STEPS = [
   { n: '03', label: 'Explore in Dashboard' },
 ] as const;
 
-/** Step 0 of the Import page ("Get started"): brand + hero copy + New project +
- *  Recent projects on the left, the machine illustration on the right. */
 export default function HomeStep({
   T, workspaces, loaded, activeWorkspaceId, busy, error,
   onNewProject, onOpenWorkspace, onEditWorkspace, onDeleteWorkspace,
@@ -59,19 +56,12 @@ export default function HomeStep({
     return () => { cancelled = true; };
   }, []);
 
-  // Ctrl/Cmd+N starts a new project. This component only exists on step 0, so
-  // the shortcut is automatically scoped to it; it is ignored while typing in a
-  // field and while a project is loading. Idempotent with the native
-  // File > New Workspace accelerator (see DataUploadPage's `newProjectSignal`).
+  // Ctrl/Cmd+N starts a new project; ignored while typing or loading. Idempotent with File > New Workspace.
   const onNewRef = useRef(onNewProject);
   onNewRef.current = onNewProject;
   const mountedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : 0);
   useEffect(() => {
-    // A key press that began BEFORE this screen existed (File > New Workspace
-    // from the Dashboard brings us here, and its own Ctrl+N keydown may be
-    // delivered just after) must not also start a project. `timeStamp` is a
-    // performance.now() value in browsers; jsdom reports epoch ms, which is
-    // always larger, so tests are unaffected.
+    // Ignore a keydown that began before this screen existed; jsdom timestamps are epoch ms, so tests are unaffected.
     const onKey = (e: KeyboardEvent) => {
       if (busy || !isNewProjectShortcut(e) || isTypingTarget(e.target)) return;
       if (e.timeStamp > 0 && e.timeStamp < mountedAtRef.current) return;
@@ -94,7 +84,6 @@ export default function HomeStep({
         gridTemplateColumns: 'minmax(460px, 42%) minmax(0, 1fr)', background: T.bg,
       }}
     >
-      {/* ---------------- Left: copy + projects ---------------- */}
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, padding: '44px 36px 22px 56px', overflowY: 'auto' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
           <span
@@ -228,8 +217,7 @@ export default function HomeStep({
                   />
                 </label>
               </div>
-              {/* `.fg-recent-list` is the size container the cards' failure-group
-                  chip reads (it moves under the description when the list is narrow). */}
+              {/* `.fg-recent-list` is the size container the cards' failure-group chip reads. */}
               <div className="fg-recent-list" style={{ display: 'flex', flexDirection: 'column', gap: 6, overflowY: 'auto', flex: 1, minHeight: 0, paddingRight: 4 }}>
                 {shown.map((w) => (
                   <RecentProjectCard
@@ -255,7 +243,6 @@ export default function HomeStep({
         )}
       </div>
 
-      {/* ---------------- Right: illustration ---------------- */}
       <div
         style={{
           position: 'relative', minWidth: 0, minHeight: 0, padding: '28px 28px 0 0',

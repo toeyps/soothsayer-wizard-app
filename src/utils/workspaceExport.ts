@@ -6,23 +6,14 @@ import type {
     WorkspaceExportResult,
 } from '../types/export';
 
-/*
- * Export results — the Tauri bindings (Rust: `workspace_export.rs`, every
- * command `rename_all = "snake_case"`, so the keys below are snake_case) and
- * the pure helpers around them.
- */
+/* Export results Tauri bindings (`workspace_export.rs`; every command is `rename_all = "snake_case"`) and pure helpers. */
 
 /** Dry run: what the export would write, and every issue that blocks it. Writes nothing. */
 export function planWorkspaceExport(request: WorkspaceExportRequest): Promise<WorkspaceExportPlan> {
     return invoke<WorkspaceExportPlan>('plan_workspace_export', { request });
 }
 
-/**
- * Write the export into `<destDir>/<folderName>` (Rust picks `_2` … `_99` when
- * the name is taken). Rust re-runs the plan first: any error issue rejects
- * with `NOT_READY:` and nothing is written. `exportId` tags the progress
- * events and is what `cancelWorkspaceExport` takes.
- */
+/** Writes into `<destDir>/<folderName>` (Rust picks `_2`..`_99` if taken). Rust re-plans first: any error issue rejects with `NOT_READY:` and nothing is written. `exportId` tags progress events and cancel. */
 export function exportWorkspaceResults(
     request: WorkspaceExportRequest,
     destDir: string,
@@ -76,12 +67,7 @@ export function parseExportError(err: unknown): ParsedExportError {
 const MAX_FOLDER_NAME = 120;
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
-/**
- * `s` reduced to the characters a folder name may hold: accents dropped
- * (NFKD), anything else that is not ASCII removed, runs of other characters
- * turned into one `_`, and it starts with a letter or digit. `''` when nothing
- * usable is left (e.g. a Thai-only name).
- */
+/** Reduces `s` to folder-name characters (accents dropped, other non-ASCII removed, other runs become one `_`, starts with a letter or digit); `''` if nothing is left. */
 export function asciiFolderPart(s: string): string {
     const out = (s ?? '')
         .normalize('NFKD')
@@ -98,11 +84,7 @@ export function exportStamp(date: Date): string {
     return `_${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}_${pad2(date.getHours())}${pad2(date.getMinutes())}`;
 }
 
-/**
- * The export's folder name: the ASCII form of the project name, then
- * `_YYYY-MM-DD_HHMM`. A name with nothing ASCII left falls back to the machine
- * tag, then to "Workspace". Always matches Rust's folder-name rule.
- */
+/** Export folder name: ASCII project name + `_YYYY-MM-DD_HHMM`; falls back to the machine tag, then 'Workspace'. Matches Rust's folder-name rule. */
 export function exportFolderName(workspaceName: string, machineTag: string, date: Date): string {
     const stamp = exportStamp(date);
     const base = asciiFolderPart(workspaceName) || asciiFolderPart(machineTag) || 'Workspace';

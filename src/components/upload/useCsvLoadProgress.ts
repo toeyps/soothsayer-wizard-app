@@ -3,20 +3,7 @@ import { subscribe } from '../../utils/tauriEvents';
 import type { CsvLoadProgress } from '../../types/dataUpload';
 import { isCsvLoadProgress, progressRank } from './setupHelpers';
 
-/**
- * Latest `csv-load-progress` event of THIS page's own parse.
- *
- * The event is a global broadcast and `load_csv` also runs for other reasons
- * (opening a recent project), so events are only taken while `active` is true
- * (the Parse button's own load is running); anything arriving otherwise is
- * ignored. The state is cleared every time `active` flips, so a finished parse
- * never leaves a stale bar behind, and an older event that arrives after a
- * newer one (the IPC channel does not guarantee order) never moves the bar
- * backwards.
- *
- * Subscribes once through `subscribe()` (synchronous, leak-proof cleanup) and
- * reads `active` through a ref instead of re-subscribing.
- */
+/** Latest `csv-load-progress` event of this page's own parse; counted only while `active` (the event is a global broadcast), cleared when `active` flips. An older event arriving after a newer one never moves the bar backwards. Subscribes once via `subscribe()`, reads `active` through a ref. */
 export function useCsvLoadProgress(active: boolean): CsvLoadProgress | null {
   const [progress, setProgress] = useState<CsvLoadProgress | null>(null);
   const activeRef = useRef(active);

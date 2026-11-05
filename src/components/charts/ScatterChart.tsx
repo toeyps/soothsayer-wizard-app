@@ -20,15 +20,10 @@ import { useCoalescedDraw } from '../../hooks/useCoalescedDraw';
 import { firstFreeColorIndex, sortTagsByTime } from './TaggedPointList';
 import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
-// Re-exported so callers (Dashboard.tsx, charts/index.ts) can import
-// RANGE_PALETTE from this module — the array itself lives in
-// pairPlotColors.ts (dependency-free), so LineChart.tsx can use it
-// without pulling in regl-scatterplot. See that file for why.
+// Re-exported for callers; the array lives in pairPlotColors.ts so LineChart avoids importing regl-scatterplot.
 export { RANGE_PALETTE };
 
-// WebGL can't read CSS custom properties, so the canvas clear color is a
-// plain constant here, computed from `--card-bg`: #101012 ->
-// (16, 16, 18) / 255.
+// WebGL can't read CSS variables: constant equals --card-bg #101012 as (16, 16, 18) / 255.
 const CANVAS_BG: [number, number, number, number] = [0.0627, 0.0627, 0.0706, 1.0];
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
@@ -36,21 +31,12 @@ const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 
  *  (density emerges via WebGL alpha blending). */
 const BASE_POINT_COLOR: [number, number, number, number] = [0.39, 0.58, 0.98, 0.55];
 
-/** Colour for a point that falls outside every enabled "by value" range —
- *  very low alpha so it fades into the background instead of competing
- *  with the highlighted bands, while still giving the overall data shape
- *  as context. */
+/** Colour for points outside every enabled range: low alpha so they fade but keep the data shape. */
 const VALUE_UNMATCHED_COLOR: [number, number, number, number] = [0.55, 0.6, 0.68, 0.12];
 
-/**
- * Pixel padding around the WebGL canvas for the SVG axis overlay.
- * regl-scatterplot draws points only — ticks/labels/axis titles
- * are rendered by our own SVG layer on top of the canvas.
- */
+/** Padding around the WebGL canvas for the SVG axis overlay (ticks, labels, titles). */
 const AXIS_PADDING = { left: 88, right: 20, top: 50, bottom: 56 };
-/** Room the two-line axis titles take: the Y title's column (30 px, 2 px from the edge) leaves
- *  the widest tick label ("7850.82", ~44 px + the 8 px tick) clear of it inside the 88 px
- *  gutter; the X title's 28 px sit under the tick labels inside the 56 px bottom band. */
+/** Y title column (30 px) clears the widest tick label in the 88 px gutter; X title (28 px) sits in the 56 px bottom band. */
 const Y_TITLE = { left: 2, width: 30 };
 const X_TITLE = { height: 28, bottom: 3 };
 /** The one line a title may add: its name's second line, when its tag line prints as well (rule 1b). */
@@ -70,11 +56,7 @@ function makeTicks(min: number, max: number, count: number = AXIS_TICKS): number
     return Array.from({ length: count }, (_, i) => min + (max - min) * i / (count - 1));
 }
 
-/** A Scatter axis title on two lines: line 1 the description (with the special-sensor badge),
- *  line 2 the tag + unit. No description → the tag + unit line alone (never the tag twice).
- *  The full name stays in `title`.
- *  `fit` (rule 1b): a name that does not fit the plot is printed on one or two lines with the unit attached;
- *  a tag that really differs keeps its line. A name that fits has the markup above. */
+/** Axis title: description, then tag + unit; `fit.wrapped` prints a long name on one or two lines with the unit attached. */
 function AxisTitle({ axis, info, style, fit }: { axis: 'x' | 'y'; info: SensorInfo; style: CSSProperties; fit?: ScatterAxisTitle }) {
     if (fit?.wrapped) {
         const unitTail = info.unit ? ` · ${info.unit}` : '';
@@ -148,82 +130,45 @@ function ScatterChart({
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const wrapperRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    /** Scatter-point index → original CSV row index. `pointover` gives us a
-     *  point index into the array we passed to `.draw()`; this maps back to
-     *  the row inside `data[]` for the hover tooltip. */
+    /** Scatter-point index to original row index (for the hover tooltip). */
     const origIndicesRef = useRef<number[]>([]);
-    /** Last `sc` instance the data-push effect ran against. Lets that effect
-     *  tell "sensors/pins changed on an existing instance" (should reset the
-     *  camera) apart from "this instance was JUST created" (already at its
-     *  default camera state — resetting it again is redundant, and was
-     *  observed to crash: regl-scatterplot's internal camera setup isn't
-     *  always synchronously ready right after construction, which rapid
-     *  resize-driven recreates — e.g. dragging the window across monitors
-     *  with different DPI — can hit). */
+    /** Last instance the draw effect ran on: reset the camera only on an existing instance (right after creation it can crash). */
     const prevScForResetRef = useRef<any>(null);
     /** What the camera was last fitted to. A highlight change re-runs the draw effect without changing it. */
     const fittedRef = useRef<{ data: unknown; x: string; y: string; xLo: number; xHi: number; yLo: number; yHi: number } | null>(null);
-    /** The instance that is alive right now; `sc` state is the one of the last commit. The size effect below
-     *  destroys and replaces the instance BEFORE the draw effect of the same commit runs, so a draw effect that
-     *  also re-runs in that commit (a new sensor or any other dep) would hand a destroyed instance to `sc.set()`,
-     *  and regl-scatterplot throws. The draw effect skips such a stale `sc`; the new one re-runs it. */
+    /** Instance alive now; the draw effect skips a stale `sc` because sc.set() on a destroyed instance throws. */
     const liveScRef = useRef<any>(null);
     const liveHaloScRef = useRef<any>(null);
-    // Seeded from the persisted prop on mount — this component is fully
-    // unmounted/remounted by Chart.tsx whenever chartType leaves 'scatter'
-    // (LineChart/PairPlotChart/ScatterChart are mutually exclusive
-    // branches), so without this the X/Y pair reset to the first two
-    // sensors every time the user switched chart type and back.
+    // Seeded from the persisted prop: this component remounts on every chart-type switch.
     const [scatterX, setScatterX] = useState<string>(() => persistedX ?? '');
     const [scatterY, setScatterY] = useState<string>(() => persistedY ?? '');
     const [wrapperDims, setWrapperDims] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
-    /** Full data extent — never changes while the chart is on a given (x, y).
-     *  Stored in a ref so the `view` event subscriber (registered once when the
-     *  instance is built) can read the LATEST bounds without becoming stale. */
+    /** Full data extent, in a ref so the `view` subscriber reads the latest bounds. */
     const dataBoundsRef = useRef<{ xLo: number; xHi: number; yLo: number; yHi: number }>({
         xLo: 0, xHi: 1, yLo: 0, yHi: 1,
     });
-    /** Currently visible window in REAL data coordinates. Equals full extent
-     *  at rest; shrinks/shifts as the user zooms or pans. Drives the SVG
-     *  axis ticks so labels stay in sync with the canvas. */
+    /** Visible window in real data coordinates; drives the SVG axis ticks. */
     const [visibleBounds, setVisibleBounds] = useState<{ xMin: number; xMax: number; yMin: number; yMax: number }>({
         xMin: 0, xMax: 1, yMin: 0, yMax: 1,
     });
     /** Point index currently under the cursor — drives the floating tooltip.
      *  Cleared on `pointout`. */
     const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
-    /** Mirrors hoveredIdx for the click listener attached inside the canvas
-     *  creation effect (below) — that effect only re-runs on resize, so it
-     *  needs a ref to read the CURRENT hover target rather than whatever
-     *  was hovered when the listener was attached. */
+    /** Ref mirror of hoveredIdx for the click listener, which is attached only on resize. */
     const hoveredIdxRef = useRef<number | null>(null);
     useEffect(() => { hoveredIdxRef.current = hoveredIdx; }, [hoveredIdx]);
 
-    /** Tag Point — click a point to pin it and compare its value against
-     *  others. Deliberately LOCAL, ephemeral state (not lifted to Dashboard
-     *  / WorkspaceState like scatterAxisPins or timeHighlights): a tagged
-     *  point is identified by its position in the CURRENTLY drawn buffer
-     *  (`pointIdx`, the same index `pointover`/`getScreenPosition` use),
-     *  which has no stable meaning across a refetch — Scatter's sample
-     *  comes from backend reservoir sampling (`get_scatter_sample`), so the
-     *  same row isn't guaranteed to even be in the next sample, let alone
-     *  at the same index. Reset below whenever the point SET can change. */
+    /** Tagged points are local state: pointIdx has no meaning across a refetch (the sample is re-drawn). */
     const [scatterTagMode, setScatterTagMode] = useState(false);
     const scatterTagModeRef = useRef(false);
     useEffect(() => { scatterTagModeRef.current = scatterTagMode; }, [scatterTagMode]);
     const [scatterTags, setScatterTags] = useState<{ id: string; pointIdx: number; colorIdx: number }[]>([]);
-    // Clear tags whenever the drawn point SET can change — a new query
-    // result (`data`) or a different sensor pair (either can change which
-    // rows survive the NaN filter in the draw effect below) both shift what
-    // `pointIdx` values actually mean. Resize/pan/zoom/axis-pin changes are
-    // NOT in this list on purpose — none of them touch which points are
-    // drawn or their order, only how they're scaled/positioned.
+    // Clear tags when the drawn point set can change (new data or sensor pair); pan, zoom and pins don't change it.
     useEffect(() => {
         setScatterTags([]);
     }, [data, scatterX, scatterY]);
 
-    // Tell the parent how many points are tagged (the "Tagged points" tab shows the count and
-    // opens when one is added); 0 again when this chart goes away.
+    // Report the tag count to the parent; 0 when the chart goes away.
     const tagCountRef = useRef(scatterTags.length);
     const onTagCountChangeRef = useRef(onTagCountChange);
     onTagCountChangeRef.current = onTagCountChange;
@@ -233,60 +178,28 @@ function ScatterChart({
         tagCountRef.current = n;
     }, [scatterTags.length]);
     useEffect(() => () => { onTagCountChangeRef.current?.(0, false); }, []);
-    /** The regl-scatterplot instance kept in component state so the draw
-     *  effect can react to its lifecycle (recreate on resize → redraw). */
+    /** Instance kept in state so the draw effect reacts to its recreation. */
     const [sc, setSc] = useState<any>(null);
-    /** WebGL context-loss guard. If the GPU drops the context (e.g. too many
-     *  points on a weak integrated GPU) the canvas goes black with NO error;
-     *  we catch the event, show a recoverable overlay, and let the user
-     *  rebuild via Retry (bumps `rebuildNonce` → the create effect re-runs). */
+    /** WebGL context-loss guard: show a Retry overlay; `rebuildNonce` re-runs the create effect. */
     const [contextLost, setContextLost] = useState(false);
     const [rebuildNonce, setRebuildNonce] = useState(0);
-    /** WebGL init failure (context creation refused — GPU blocklist, remote
-     *  desktop, CSP blocking regl's codegen, …). Unlike a mid-session context
-     *  loss this happens synchronously inside createScatterplot(); without
-     *  the guard the throw escapes the effect and unmounts the WHOLE app
-     *  (the production black-screen). */
+    /** WebGL init failure throws synchronously; guard it or the whole app unmounts. */
     const [initError, setInitError] = useState<string | null>(null);
-    /** Serialized draw queue — regl-scatterplot silently drops a draw()
-     *  issued while one is in flight, so back-to-back data/axis updates
-     *  could leave the canvas showing stale points. */
+    /** Serialized draw queue: regl-scatterplot drops a draw() issued while one is in flight. */
     const { requestDraw, resetDraw } = useCoalescedDraw();
 
-    /** Highlight halo layer — see the canvas JSX comment for what this is.
-     *  A second, independent regl-scatterplot instance needs its own
-     *  coalesced-draw queue (the hook's busy flag is per-instance-of-the-hook,
-     *  not per-`sc` — sharing one with the main canvas would let a draw meant
-     *  for one instance block/coalesce a draw meant for the other). */
+    /** Halo layer needs its own draw queue; the hook's busy flag is per hook instance. */
     const haloCanvasRef = useRef<HTMLCanvasElement>(null);
     const [haloSc, setHaloSc] = useState<any>(null);
-    /** Main creation effect's `view` subscriber reads this to relay camera
-     *  moves to the halo instance — a ref because that subscriber is set up
-     *  once (inside the main instance's own creation effect) and must always
-     *  see the CURRENT halo instance, not whatever existed at subscribe time. */
+    /** Ref so the one-time `view` subscriber always sees the current halo instance. */
     const haloScRef = useRef<any>(null);
     useEffect(() => { haloScRef.current = haloSc; }, [haloSc]);
     const { requestDraw: requestHaloDraw, resetDraw: resetHaloDraw } = useCoalescedDraw();
 
-    /** Pinned X/Y axis bounds — like Line Plot's per-sensor Y-axis pin, but
-     *  scoped to the axis ROLE (X vs Y) since Scatter only ever plots one
-     *  X/Y pair at a time, not one series per selected sensor. Each pin
-     *  records WHICH sensor it was set against; swapping the X (or Y)
-     *  dropdown to a different sensor makes it inapplicable automatically
-     *  (see effectiveXRange/effectiveYRange below) rather than via a
-     *  follow-up effect, so there's no render where a stale scale from an
-     *  unrelated sensor (e.g. a 0–100 pin from a temperature reused for a
-     *  0–5000 pressure reading) briefly applies to the new one. Either side
-     *  of either axis may be left unset to keep auto-fitting to the data.
-     *
-     *  Seeded from the persisted prop on mount — same reasoning as
-     *  scatterX/scatterY above: this component unmounts/remounts on every
-     *  chart-type switch, so without this the pin was lost the moment the
-     *  user looked at Line or Pair Plot and came back. */
+    /** Pinned X/Y bounds; a pin records its sensor and stops applying when the axis sensor changes. Seeded from props. */
     const [xPin, setXPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.x ?? null);
     const [yPin, setYPin] = useState<{ sensor: string; min?: number; max?: number } | null>(() => persistedPins?.y ?? null);
-    // A rename in the Dashboard renames these props: follow them, or the effect below would see
-    // an unknown sensor and move the axis to the first one (and the pin would stop applying).
+    // Follow renamed props, or the effect below sees an unknown sensor and resets the axis.
     const [seenProps, setSeenProps] = useState({ x: persistedX, y: persistedY, pinX: persistedPins?.x, pinY: persistedPins?.y });
     if (seenProps.x !== persistedX || seenProps.y !== persistedY || seenProps.pinX !== persistedPins?.x || seenProps.pinY !== persistedPins?.y) {
         setSeenProps({ x: persistedX, y: persistedY, pinX: persistedPins?.x, pinY: persistedPins?.y });
@@ -302,31 +215,19 @@ function ScatterChart({
     const [draftYMax, setDraftYMax] = useState('');
     const [axisEditorError, setAxisEditorError] = useState<string | null>(null);
 
-    // Derived, not stateful — a pin only counts while its sensor is still
-    // the one plotted on that axis. Computed inline during render (not a
-    // useEffect reacting to scatterX/scatterY changes) so there is never a
-    // frame where a stale pin from the previous sensor is still in effect.
+    // Derived in render so a stale pin never applies for a frame after a sensor change.
     const effectiveXRange = xPin && xPin.sensor === scatterX ? xPin : undefined;
     const effectiveYRange = yPin && yPin.sensor === scatterY ? yPin : undefined;
     const isAxisPinned = !!effectiveXRange || !!effectiveYRange;
 
-    // Keeps the draft fields in sync with whichever sensor is CURRENTLY on
-    // each axis — both on open, and if the X/Y dropdown is swapped while the
-    // editor is already open. Without the latter, Apply would pin the newly
-    // selected sensor using text left over from the sensor that was showing
-    // when the panel opened (e.g. silently overwriting an existing pin on
-    // the new sensor with stale numbers that belonged to the old one).
+    // Re-sync drafts when X/Y sensors change while open, or Apply would pin the new sensor with the old sensor's numbers.
     useEffect(() => {
         if (!axisEditorOpen) return;
         setDraftXMin(effectiveXRange?.min !== undefined ? String(effectiveXRange.min) : '');
         setDraftXMax(effectiveXRange?.max !== undefined ? String(effectiveXRange.max) : '');
         setDraftYMin(effectiveYRange?.min !== undefined ? String(effectiveYRange.min) : '');
         setDraftYMax(effectiveYRange?.max !== undefined ? String(effectiveYRange.max) : '');
-        // effectiveXRange/effectiveYRange deliberately excluded: they only
-        // change via applyAxisRange/clearAxisRange, which already close the
-        // editor themselves, so re-deriving off scatterX/scatterY alone is
-        // sufficient and avoids re-syncing (and clobbering active typing)
-        // on every keystroke-driven state change elsewhere in the app.
+        // effectiveXRange/YRange omitted: they change only on apply/clear (editor closes); including them would clobber typing.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [scatterX, scatterY, axisEditorOpen]);
 
@@ -339,9 +240,7 @@ function ScatterChart({
         const parse = (s: string) => s.trim() === '' ? undefined : parseFloat(s.trim());
         const xMin = parse(draftXMin), xMax = parse(draftXMax);
         const yMin = parse(draftYMin), yMax = parse(draftYMax);
-        // isFinite (not isNaN) — parseFloat("1e400") overflows to Infinity,
-        // which passes isNaN but would corrupt every normalised point into
-        // NaN once it reaches the (x - lo) / range math below.
+        // Use isFinite: parseFloat('1e400') is Infinity and would turn normalised points into NaN.
         for (const v of [xMin, xMax, yMin, yMax]) {
             if (v !== undefined && !isFinite(v)) { setAxisEditorError('Enter valid numbers'); return; }
         }
@@ -364,7 +263,7 @@ function ScatterChart({
         setAxisEditorError(null);
     };
 
-    // Default X/Y to the first two sensors, like the previous ECharts version.
+    // Default X/Y to the first two sensors.
     useEffect(() => {
         if (sensors.length >= 2) {
             const x = sensors.includes(scatterX) ? scatterX : sensors[0];
@@ -376,31 +275,22 @@ function ScatterChart({
             }
         } else if (sensors.length === 1) {
             setScatterX(sensors[0]);
-            // Reset Y instead of pinning it to the only sensor: pinning left
-            // Y === X after a 1 → 2 sensor transition (`includes` saw it as
-            // valid), so the chart plotted the first column against itself
-            // instead of using the newly added sensor. The <2-sensor guard
-            // hides the chart while Y is unset, so '' is never visible.
+            // Reset Y so going from 1 to 2 sensors cannot leave Y === X; '' is never shown (the <2-sensor guard hides the chart).
             setScatterY('');
         }
     }, [sensors, scatterX, scatterY]);
 
-    // Push the settled X/Y pair up to the parent (Dashboard) so it survives
-    // this component being unmounted — see the seeding comment above.
+    // Push the settled X/Y pair to the parent so it survives unmount.
     useEffect(() => {
         if (scatterX && scatterY) onScatterAxesChange?.(scatterX, scatterY);
     }, [scatterX, scatterY, onScatterAxesChange]);
 
-    // Push axis-pin changes up too, for the same unmount-survival reason.
-    // Fires on every xPin/yPin change (apply or clear), including the
-    // initial mount if a pin was seeded from `persistedPins` — that
-    // re-send is a no-op for Dashboard (same value it already has).
+    // Push pin changes up for the same reason; the re-send on mount is a no-op.
     useEffect(() => {
         onScatterAxisPinsChange?.({ x: xPin ?? undefined, y: yPin ?? undefined });
     }, [xPin, yPin, onScatterAxisPinsChange]);
 
-    // Rule 1b: the titles are fitted to the plot; a title that needs a third line (2 name lines + its tag) takes
-    // that one line from the plot, only then. A name that fits leaves everything at AXIS_PADDING.
+    // Titles fit the plot; only a title needing a third line takes one line from the plot.
     const [fontsTick, setFontsTick] = useState(0);
     useEffect(() => {
         let gone = false;
@@ -427,8 +317,7 @@ function ScatterChart({
         // fontsTick: the widths change once the web fonts have loaded.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [wrapperDims.width, wrapperDims.height, scatterX, scatterY, sensorLookup, fontsTick]);
-    // The gutter is applied in its OWN commit, like a resize. The plot size re-creates the scatterplot, and a
-    // commit that also changed the picked sensor would hand the draw effect the instance just destroyed.
+    // Apply the gutter in its own commit: a same-commit size and sensor change would hand the draw effect a destroyed instance.
     const [pad, setPad] = useState(AXIS_PADDING);
     useEffect(() => {
         setPad(p => (p.left === titleFit.pad.left && p.bottom === titleFit.pad.bottom ? p : titleFit.pad));
@@ -448,12 +337,7 @@ function ScatterChart({
             setWrapperDims({ width: w, height: h });
         };
         update(); // immediate on mount — no debounce delay for the initial layout
-        // Debounced for every resize AFTER that: a split-pane drag fires many
-        // rapid ResizeObserver callbacks, and each width/height change drives
-        // a full WebGL context destroy+recreate below (shader compile + a
-        // full point-buffer re-upload — real cost on a large scatter sample).
-        // Waiting for the resize to pause briefly means that cost is paid
-        // once at the end of a drag, not on every intermediate tick.
+        // Debounce: each size change destroys and recreates the WebGL context; wait for a drag to pause.
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         const ro = new ResizeObserver(() => {
             if (debounceTimer) clearTimeout(debounceTimer);
@@ -466,9 +350,7 @@ function ScatterChart({
         };
     }, []);
 
-    // Create / destroy the regl-scatterplot instance whenever the canvas
-    // size changes. Stored in state so the draw effect can react to its
-    // lifecycle (recreate on resize → redraw).
+    // Create/destroy the instance when the canvas size changes.
     useEffect(() => {
         if (!canvasRef.current || innerDims.width === 0 || innerDims.height === 0) return;
 
@@ -478,13 +360,7 @@ function ScatterChart({
                 canvas: canvasRef.current,
                 width: innerDims.width,
                 height: innerDims.height,
-                // regl-scatterplot defaults aspectRatio to 1 (assumes a
-                // square DATA domain) and letterboxes to preserve it when the
-                // canvas itself isn't square. Our x/y domains are both
-                // normalized to [-1, 1] (equal ranges, genuinely square
-                // data), so there's no meaningful shape to preserve; setting
-                // this to the canvas's own ratio makes the plot fill the
-                // whole chart area instead of leaving black bars on the sides.
+                // Match aspectRatio to the canvas: domains are normalised to [-1, 1], so the default 1 would letterbox.
                 aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 3,
                 pointColor: BASE_POINT_COLOR,
@@ -499,14 +375,7 @@ function ScatterChart({
         }
         setInitError(null);
 
-        // Hover → tooltip. The library emits `pointover`/`pointout` with the
-        // point index (= position inside the array we passed to draw(), i.e.
-        // an index into `origIndicesRef.current`).
-        //
-        // ts-expect-error explanation: regl-scatterplot's d.ts declares the
-        // event names as camelCase (`pointOver` / `pointOut`) but the runtime
-        // publishes lowercase (`pointover` / `pointout`). The lowercase form
-        // is the one that actually fires — confirmed in the lib's source.
+        // ts-expect-error: typings say pointOver/pointOut but the runtime fires lowercase pointover/pointout.
         // @ts-expect-error – lib type/runtime mismatch on event name
         inst.subscribe('pointover', (pointIdx: number) => {
             setHoveredIdx(pointIdx);
@@ -515,28 +384,17 @@ function ScatterChart({
         inst.subscribe('pointout', () => {
             setHoveredIdx(null);
         });
-        // Zoom/pan sync: regl-scatterplot fires `view` every time the camera
-        // changes. Because we pass xScale/yScale (built when data arrives)
-        // with `.domain([xLo, xHi]).range([-1, 1])`, the lib mutates each
-        // scale's domain to reflect the currently-visible region — so
-        // `xScale.domain()` here is already in REAL data values, no manual
-        // inversion needed.
+        // The lib mutates xScale/yScale domains on camera moves, so `domain()` is already in real data values.
         inst.subscribe('view', ({ xScale, yScale, view }: any) => {
             if (!xScale || !yScale) return;
             const [vxMin, vxMax] = xScale.domain();
             const [vyMin, vyMax] = yScale.domain();
             setVisibleBounds({ xMin: vxMin, xMax: vxMax, yMin: vyMin, yMax: vyMax });
-            // Relay pan/zoom to the halo layer, if mounted — it never
-            // receives its own mouse input (pointer-events:none), so this
-            // programmatic sync is the only way its camera ever moves. Both
-            // instances share the exact same xLo/xHi/yLo/yHi → [-1,1]
-            // mapping (built from the same data effect below), so applying
-            // the identical view matrix keeps them visually aligned.
+            // Relay camera to the halo: it gets no mouse input (pointer-events: none) and shares the same data-to-[-1,1] mapping.
             if (view) haloScRef.current?.set({ cameraView: view });
         });
 
-        // WebGL context-loss recovery. regl-scatterplot draws on its own hidden WebGL canvas and copies
-        // to `canvasRef` (a 2D canvas), so the context events fire only on the hidden one.
+        // Context events fire on regl's hidden WebGL canvas, not on `canvasRef` (2D).
         const canvas = canvasRef.current;
         // A rebuild after a resize is a healthy context: no overlay over it.
         setContextLost(false);
@@ -547,10 +405,7 @@ function ScatterChart({
         glCanvas?.addEventListener('webglcontextlost', onContextLost);
         glCanvas?.addEventListener('webglcontextrestored', onContextRestored);
 
-        // Tag Point click — tied to this same canvas lifecycle (recreated
-        // alongside the instance on resize) rather than a separate effect,
-        // reading current mode/hover target via refs so it never needs to
-        // be re-attached on every tagMode toggle or hover change.
+        // Tag click lives with the canvas lifecycle; mode and hover are read via refs to avoid re-attaching.
         const onCanvasClick = () => {
             if (!scatterTagModeRef.current) return;
             const idx = hoveredIdxRef.current;
@@ -581,18 +436,10 @@ function ScatterChart({
         };
     }, [innerDims.width, innerDims.height, rebuildNonce]);
 
-    /** Whether the halo layer has anything to show — recomputed each render
-     *  from the (small) `timeHighlights` list rather than memoized; used
-     *  both as the halo creation effect's mount/unmount gate and as a
-     *  dependency so toggling a highlight on/off (with no data or resize
-     *  change) actually creates or tears down the second WebGL context. */
+    /** Whether the halo has anything to show; gates the halo effect and is its dependency. */
     const hasEnabledHighlights = (timeHighlights ?? []).some(h => h.enabled);
 
-    // Create / destroy the halo instance. Deliberately NOT tied to the main
-    // instance's lifecycle — it only exists while `hasEnabledHighlights` is
-    // true, so the extra WebGL context is never held when the feature isn't
-    // in use (this chart already carries one context; a second is cheap,
-    // but there's no reason to pay it for nothing).
+    // Halo exists only while a highlight is enabled, so the extra WebGL context isn't held otherwise.
     useEffect(() => {
         if (!haloCanvasRef.current || innerDims.width === 0 || innerDims.height === 0 || !hasEnabledHighlights) return;
 
@@ -604,15 +451,11 @@ function ScatterChart({
                 height: innerDims.height,
                 aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 7,
-                // Fully transparent clear colour — this canvas contributes
-                // nothing to the page except the highlighted points
-                // themselves, painted underneath the main canvas.
+                // Transparent clear colour: this canvas paints only the highlighted points.
                 backgroundColor: [0, 0, 0, 0],
             });
         } catch (err) {
-            // Decorative layer only — if a second WebGL context genuinely
-            // can't be created, skip the halo silently rather than layering
-            // another error overlay on top of the main chart's own.
+            // Decorative layer: skip silently if a second WebGL context can't be created.
             reportError('scatter-halo-init', err);
             return;
         }
@@ -622,31 +465,12 @@ function ScatterChart({
 
         return () => {
             resetHaloDraw();
-            // Null the ref synchronously, BEFORE destroy() — not just via
-            // `setHaloSc(null)` below. The main instance's `view` subscriber
-            // (registered once, in the OTHER creation effect) reads
-            // `haloScRef.current` directly and can fire from a pan/zoom in
-            // the gap between this cleanup and the next render's `haloSc ->
-            // haloScRef` sync effect. If that happens it calls `.set()` on
-            // an instance destroy() is tearing down (or has just torn down),
-            // throwing "The instance was already destroyed" from
-            // regl-scatterplot. Setting the ref here closes that gap.
+            // Null the refs before destroy(): a `view` event in between would call .set() on a destroyed instance and throw.
             haloScRef.current = null;
             liveHaloScRef.current = null;
             destroyReleasingContext(inst);
             setHaloSc(null);
-            // `destroy()` tears down the WebGL context but does NOT clear
-            // the canvas's own pixel buffer — the browser keeps showing
-            // whatever was last rendered to it, frozen, since nothing else
-            // ever paints over a canvas element on its own. Without this,
-            // turning off the last enabled highlight (or removing it) would
-            // leave a stale halo image behind that no longer tracks
-            // pan/zoom. Resetting `width` (even to its own value) is a
-            // standard trick that forces the browser to reinitialize — and
-            // thus fully clear — a canvas's backing bitmap regardless of
-            // which API drew to it.
-            // (ESLint reads the line below as a self-assign bug; it is the
-            // documented canvas-clearing idiom described just above.)
+            // destroy() leaves the canvas bitmap frozen; resetting width clears it (the self-assign is intentional).
             // eslint-disable-next-line no-self-assign
             if (haloCanvas) haloCanvas.width = haloCanvas.width;
         };
@@ -664,18 +488,10 @@ function ScatterChart({
         const xs: number[] = [];
         const ys: number[] = [];
         const orig: number[] = [];
-        // "By value" highlighting's criteria-sensor column, gathered
-        // alongside x/y on the SAME filtered row set (so point count / orig-
-        // index mapping never depends on whether a sensor is picked) — a row
-        // missing/invalid on the criteria sensor still plots, just
-        // uncoloured (matches no range) rather than being dropped.
+        // Criteria-sensor column gathered on the same filtered rows; a row missing it still plots, uncoloured.
         const valueSensorIdx = valueHighlight?.sensor ? headers.indexOf(valueHighlight.sensor) : -1;
         const zs: (number | null)[] = [];
-        // Defensive cap: the Dashboard already feeds a bounded sample, but if
-        // this chart is ever handed raw data, stride it down so we never push
-        // a GPU-unsafe point count (which would lose the WebGL context and
-        // black the canvas). `orig` still records the true row index, so
-        // the tooltip keeps mapping back correctly.
+        // Defensive cap: stride raw data over 500k points to avoid losing the WebGL context; `orig` keeps true row indices.
         const RENDER_CAP = 500_000;
         const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
@@ -696,28 +512,18 @@ function ScatterChart({
             if (y > yMax) yMax = y;
         }
 
-        // Pinned bounds win over the auto-computed data extent on whichever
-        // side is set; the unset side keeps auto-fitting — same "partial
-        // pin" semantics as Line Plot's per-sensor Y-axis pin.
+        // Pinned bounds override the data extent per side; the unset side auto-fits.
         let xLo = effectiveXRange?.min !== undefined ? effectiveXRange.min : (isFinite(xMin) ? xMin : 0);
         let xHi = effectiveXRange?.max !== undefined ? effectiveXRange.max : (isFinite(xMax) ? xMax : 1);
         let yLo = effectiveYRange?.min !== undefined ? effectiveYRange.min : (isFinite(yMin) ? yMin : 0);
         let yHi = effectiveYRange?.max !== undefined ? effectiveYRange.max : (isFinite(yMax) ? yMax : 1);
-        // A partial pin (only min or only max) can cross the auto-fitted
-        // value on the OTHER side — e.g. pinning X min above the actual data
-        // max — which would otherwise render a mirrored/inverted axis with
-        // no warning. Canonicalize instead of validating at input time,
-        // since the auto side isn't known until this render.
+        // A partial pin can cross the auto-fitted side; swap so the axis isn't inverted.
         if (xLo > xHi) { const t = xLo; xLo = xHi; xHi = t; }
         if (yLo > yHi) { const t = yLo; yLo = yHi; yHi = t; }
         const xRange = (xHi - xLo) || 1;
         const yRange = (yHi - yLo) || 1;
 
-        // regl-scatterplot v1.16's `Points` type is `number[][] | PointsObject`.
-        // A flat Float32Array is NOT accepted (it'd be read as 1D scalars), so
-        // we use the columnar PointsObject form — two Float32Arrays for x and
-        // y. ArrayLike<number> satisfies the type AND is the fastest layout
-        // for the library's internal vertex buffer upload.
+        // Points must be a PointsObject of two Float32Arrays; a flat Float32Array is read as 1D scalars.
         const len = xs.length;
         const xArr = new Float32Array(len);
         const yArr = new Float32Array(len);
@@ -726,9 +532,7 @@ function ScatterChart({
             yArr[i] = ((ys[i] - yLo) / yRange) * 2 - 1;
         }
 
-        // Halo layer's categorical colour channel (same one PairPlotCell
-        // uses for lasso clusters) — 0 = not in any enabled highlight;
-        // 1..N = the Nth enabled highlight, first-match-wins.
+        // Halo colour channel: 0 = no enabled highlight; 1..N = Nth enabled highlight, first match wins.
         if (haloSc && liveHaloScRef.current === haloSc) {
             const enabledHighlights: TimeHighlight[] = (timeHighlights ?? []).filter(h => h.enabled);
             if (enabledHighlights.length > 0) {
@@ -743,9 +547,7 @@ function ScatterChart({
                     xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
                     yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
                     colorBy: 'valueA',
-                    // Category 0 (no match) is fully transparent — the halo
-                    // canvas is otherwise empty, so an unmatched point simply
-                    // doesn't paint anything there.
+                    // Category 0 is transparent so unmatched points paint nothing on the halo.
                     pointColor: [[0, 0, 0, 0], ...enabledHighlights.map(h => hexToRgba(h.color, 0.85))],
                     // A halo created while the chart is zoomed starts at the default camera.
                     cameraView: sc.get?.('cameraView'),
@@ -754,14 +556,7 @@ function ScatterChart({
             }
         }
 
-        // Main canvas's own colour channel — "by value" highlighting. Same
-        // valueA/pointColor-palette mechanism the halo layer uses above (and
-        // PairPlotCell uses for lasso clusters), just on the main canvas
-        // instead of a second transparent one: 0 = "no enabled range
-        // matched" (or no sensor picked at all); 1..N = the Nth enabled
-        // range, in the order the user added them. Only the FIRST matching
-        // range wins for a point whose value falls in more than one
-        // (overlapping ranges are the user's call, not an error).
+        // Main canvas colour channel for by-value ranges: 0 = unmatched; 1..N = Nth enabled range, first match wins.
         const enabledRanges: ValueHighlightRange[] = valueSensorIdx >= 0 ? (valueHighlight?.ranges ?? []).filter(r => r.enabled) : [];
         const hasActiveRanges = enabledRanges.length > 0;
         let valueAArr: Float32Array | undefined;
@@ -786,38 +581,17 @@ function ScatterChart({
         // Fresh data → reset the visible window to the full extent. The next
         // `view` event (after a zoom or pan) will narrow it again.
         if (!sameFit) setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
-        // Register d3 scales so the `view` event payload's xScale/yScale
-        // expose the CURRENT visible domain in real data values. Without
-        // this they stay `null` and the axis sync silently no-ops.
-        // domain = real range; range = the normalised [-1, 1] coords we
-        // actually pushed via draw(). The library mutates the scales as
-        // the camera moves. set() is synchronous config, so it's safe to
-        // apply before the (possibly queued) draw.
+        // Register d3 scales so `view` payloads expose the visible domain in real values; otherwise axis sync no-ops.
         sc.set({
             xScale: scaleLinear().domain([xLo, xHi]).range([-1, 1]),
             yScale: scaleLinear().domain([yLo, yHi]).range([-1, 1]),
-            // Toggle "by value" colouring on/off. pointColor doubles as both
-            // "the flat colour" (colorBy: null) and "the category palette,
-            // index 0 = unmatched" (colorBy: 'valueA') depending on which
-            // mode is active — same dual-purpose option regl-scatterplot
-            // itself specifies (and the same pattern the halo layer above,
-            // and PairPlotCell's lasso clusters, both use).
+            // pointColor is the flat colour when colorBy is null, and the palette (index 0 = unmatched) for 'valueA'.
             colorBy: hasActiveRanges ? 'valueA' : null,
             pointColor: hasActiveRanges
                 ? [VALUE_UNMATCHED_COLOR, ...enabledRanges.map(r => hexToRgba(r.color))]
                 : BASE_POINT_COLOR,
         });
-        // Without this, changing sensors or applying/editing a pin while
-        // zoomed/panned left the camera showing whatever fraction of the
-        // OLD [-1,1] mapping it was on — a region that means something
-        // different under the NEW xScale/yScale — while visibleBounds below
-        // claims the full (new) range is in view. Resetting the camera here
-        // keeps what's actually on screen honest with the axis ticks — but
-        // only when `sc` is the SAME instance as last run. A freshly
-        // (re)created instance (this run triggered by `sc` itself changing,
-        // e.g. after a resize) is already at its default camera state, so
-        // resetting it again is both unnecessary and, per the crash this
-        // guards against, unsafe.
+        // Reset the camera on sensor/pin changes so the view matches the ticks; skip a fresh instance (unsafe to reset).
         if (sameInstance && !sameFit) {
             sc.reset();
         }
@@ -827,17 +601,12 @@ function ScatterChart({
 
     const handleResetView = () => {
         sc?.reset();
-        // `reset` snaps the camera back to the initial view, so the visible
-        // window once again equals the full data extent. Update state right
-        // away so the axes don't lag behind the `view` event.
+        // reset restores the full extent; update state now so axes don't lag the `view` event.
         const { xLo, xHi, yLo, yHi } = dataBoundsRef.current;
         setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
     };
 
-    // Compute tooltip payload from the hovered point. Recomputes whenever
-    // hover state, instance, data, or chosen sensors change. `getScreenPosition`
-    // returns canvas-local CSS pixels; we clamp to inside the canvas so the
-    // tooltip never falls off the right/bottom edge.
+    // Tooltip payload from the hovered point; getScreenPosition is canvas-local, clamped inside the canvas.
     const tooltip = useMemo(() => {
         if (hoveredIdx === null || !sc) return null;
         const origIdx = origIndicesRef.current[hoveredIdx];
@@ -856,14 +625,11 @@ function ScatterChart({
         const xVal = xIdx >= 0 ? row.values[xIdx] : null;
         const yVal = yIdx >= 0 ? row.values[yIdx] : null;
 
-        // Edge clamping — flip the tooltip to the other side of the cursor
-        // when it would overflow the inner canvas area.
-        // (A row that wraps makes the box wider and taller than the usual one.)
+        // Flip the tooltip to the other side of the cursor when it would overflow; a wrapping row makes the box larger.
         const wraps = [scatterX, scatterY].some(t => ttRowClass(sensorLookup(t)) !== 'tt-row');
         const W = wraps ? 440 : 200;
         const H = wraps ? 112 : 76;
-        // Flipped, the box hangs from its RIGHT edge: W is only an estimate of its width, and whatever the real box
-        // measures it must end 12 px from the point.
+        // Flipped, the box hangs from its right edge: W is only an estimate, so it must end 12 px from the point.
         let tx = pos[0] + 12;
         let tr: number | undefined;
         let ty = pos[1] + 12;
@@ -880,8 +646,7 @@ function ScatterChart({
         return {
             x: tr === undefined ? tx : undefined,
             right: tr,
-            // Hanging from the right, the box's room is what lies left of the point: a name that fits must not get
-            // cut by that. Only a box that wraps gives way to it.
+            // Hanging right, the room is what lies left of the point; only a wrapping box gives way.
             hug: tr !== undefined && !wraps,
             y: ty,
             xVal,
@@ -895,11 +660,7 @@ function ScatterChart({
         hasTooltip ? tooltipDistinctEnds([sensorLookup(scatterX), sensorLookup(scatterY)]) : new Map<string, string>()
     ), [hasTooltip, scatterX, scatterY, sensorLookup]);
 
-    // Screen positions of every tagged point's ring. Recomputes
-    // on every pan/zoom (visibleBounds changes on each `view` event) so they
-    // track the camera exactly the way the tooltip does
-    // above — `getScreenPosition` always reflects the CURRENT camera, not
-    // whatever it was when the point was tagged.
+    // Ring positions recompute on each view change so they track the camera.
     const tagOverlays = useMemo(() => {
         if (!sc || scatterTags.length === 0) return [];
         return scatterTags
@@ -925,10 +686,8 @@ function ScatterChart({
             .filter((v): v is NonNullable<typeof v> => v !== null);
     }, [sc, scatterTags, data, visibleBounds]);
 
-    // Columns of the table under the chart (one × per tag). Built from
-    // `scatterTags` itself, not `tagOverlays`, so a tag whose point can't be
-    // placed on screen right now can still be removed on its own.
-    // Focus target when the last tag's × is pressed (the list empties).
+    // Table columns come from scatterTags, not tagOverlays, so an unplaceable tag can still be removed.
+    // Focus target when the last tag's × empties the list.
     const tagButtonRef = useRef<HTMLButtonElement>(null);
     const removeScatterTag = useCallback((id: string) => {
         setScatterTags(prev => prev.filter(t => t.id !== id));
@@ -1009,9 +768,6 @@ function ScatterChart({
                 </span>
             </div>
 
-            {/* ECharts-style toolbox (click to activate). Pan/zoom is always
-                on (the library's own default mouseMode) — no lasso-select
-                tool anymore, so there's nothing to toggle it against. */}
             <div className="scatter-regl-toolbox">
                 <button
                     onClick={handleResetView}
@@ -1059,9 +815,7 @@ function ScatterChart({
                 </div>
             )}
 
-            {/* Axis-scale editor — pins X and/or Y to a fixed range instead of
-                auto-fitting to the data extent. Toggled by the same Ruler icon,
-                mirroring the Selected Sensor tab's pin-editor UX. */}
+            {/* Axis-scale editor: pins X and/or Y to a fixed range. */}
             {axisEditorOpen && (
                 <div className="scatter-regl-axis-editor">
                     <div className="scatter-regl-axis-editor-row">
@@ -1120,18 +874,7 @@ function ScatterChart({
                 width: innerDims.width,
                 height: innerDims.height,
             }}>
-                {/* Highlight halo — a second, transparent WebGL layer behind
-                    the main canvas, rendering only points inside an enabled
-                    time highlight, larger and in that highlight's own
-                    colour, so the visible sliver peeking out around each
-                    normal dot on top reads as a ring.
-                    pointerEvents:none keeps ALL mouse interaction on the
-                    main canvas — this layer's camera is driven
-                    programmatically from the main instance's `view` events,
-                    never by its own drag/zoom. Only mounted while at least
-                    one highlight is enabled (see the halo creation effect)
-                    so it costs nothing — not even a WebGL context — the rest
-                    of the time. */}
+                {/* Highlight halo: non-interactive layer behind the main canvas; mounted only while a highlight is enabled. */}
                 <canvas
                     ref={haloCanvasRef}
                     data-testid="scatter-halo-canvas"
@@ -1146,9 +889,7 @@ function ScatterChart({
                     data-testid="scatter-main-canvas"
                     style={{ display: 'block', position: 'absolute', inset: 0, width: innerDims.width, height: innerDims.height, zIndex: 1 }}
                 />
-                {/* Hover tooltip — positioned in canvas-local coordinates so it
-                    tracks the highlighted point. pointerEvents:none prevents it
-                    from stealing hover from neighbouring points. */}
+                {/* Tooltip in canvas-local coordinates; pointerEvents none so it doesn't steal hover. */}
                 {tooltip && (
                     <div className="scatter-regl-tooltip" style={{ left: tooltip.x, right: tooltip.right, top: tooltip.y, width: tooltip.hug ? 'max-content' : undefined }}>
                         {/* Inline label + value + unit. */}
@@ -1160,10 +901,7 @@ function ScatterChart({
                         )}
                     </div>
                 )}
-                {/* Tagged points — a ring in the tag's colour (it doesn't touch
-                    the dot's own fill colour, so it layers over criteria-range
-                    coloring without a conflict). No number and no value box:
-                    the colour ties the ring to its column of the tag table. */}
+                {/* Tag ring in the tag's colour, layered over range colouring; the colour ties it to its table column. */}
                 {tagOverlays.map(t => (
                     <div key={t.id} className="scatter-tag-ring" style={{ left: t.x, top: t.y, borderColor: t.color }} />
                 ))}
@@ -1227,7 +965,6 @@ function ScatterChart({
                 height: wrapperDims.height,
                 pointerEvents: 'none',
             }}>
-                {/* Y axis line */}
                 <line x1={pad.left} y1={pad.top}
                       x2={pad.left} y2={pad.top + innerDims.height}
                       stroke="var(--border-strong, #475569)" />
@@ -1242,7 +979,6 @@ function ScatterChart({
                     );
                 })}
 
-                {/* X axis line */}
                 <line x1={pad.left} y1={pad.top + innerDims.height}
                       x2={pad.left + innerDims.width} y2={pad.top + innerDims.height}
                       stroke="var(--border-strong, #475569)" />
@@ -1260,10 +996,7 @@ function ScatterChart({
 
             </svg>
 
-            {/* Axis titles — HTML overlays, each on TWO lines (user decision 2026-10-11): the
-                description on its own line, tag + unit on the other, so a long name is no longer
-                cut by the tag sharing its line. The Y title is `writing-mode: vertical-rl` capped at the plot
-                height; a name that does not fit it (rule 1b) may use the whole free column instead. */}
+            {/* HTML overlay titles on two lines; Y is vertical-rl capped at plot height, a longer name may use the free column. */}
             <AxisTitle
                 axis="x"
                 fit={titleFit.x}

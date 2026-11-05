@@ -1,35 +1,4 @@
-/**
- * Special sensors across a WORKSPACE SWITCH.
- *
- * User report:
- * "special sensors of workspace A show up when I open workspace B".
- *
- * Mounts the REAL App (so the real DataUploadPage -> Dashboard hand-off, the
- * `key={workspace id}` remount and "Back to Import" are exercised), the REAL
- * Dashboard, and the REAL Add Special Sensor window -- spawned by the
- * Dashboard's own "Add special sensor" button through a fake `WebviewWindow`
- * and mounted in its own React root, the way Tauri gives it its own webview.
- * Everything talks over one shared fake Tauri event bus (payloads are
- * structured-cloned, events can be held and delivered late) and one fake Rust
- * session (`helpers/fakeRustSession.ts`) whose `load_csv` behaves like lib.rs:
- * a NEW session per load (raw columns of THAT dataset only, empty derived set,
- * new generation), a failed load keeps the old session, and a computation
- * that was running when the session was replaced is refused (`commit_derived`
- * generation check).
- *
- * Windows that should have been closed when the Dashboard unmounted can be
- * kept alive (`h.closeMode = 'ignore'`) to model a close that failed or came
- * late -- the CLAUDE.md "multi-project isolation" note calls closing them the
- * mitigation, not a structural fix, and this is what it has to cover.
- *
- * What keeps the windows apart
- * (dataset generation pinned on every guarded Rust command, STALE_SESSION
- * handling, window epoch, `workspace-closing`, latest-click-wins on load, autosave
- * flush on Back) is what these tests pin -- the comment above each one is
- * the scenario it guards against. Section `2b-guard` covers the case where BOTH the
- * window close and the `workspace-closing` broadcast are lost, i.e. only the Rust
- * generation guard is left.
- */
+/** Special sensors must not cross a workspace switch: real App, Dashboard and Add Sensor window, fake bus and Rust session. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act, cleanup, within } from '@testing-library/react';
 import type { SensorMetadata, WorkspaceState, SpecialSensorRecipe } from '../types';
@@ -37,7 +6,6 @@ import { createFakeRust, STALE_SESSION_ERROR, type FakeRust, type RawCsv } from 
 import { mk } from './helpers/failureModelFixture';
 import { showSensorTab } from './helpers/dashboardLanding';
 
-// ── Shared fake Tauri: event bus, windows, workspace disk, dialogs ───────
 
 const h = vi.hoisted(() => {
     type Cb = (e: { event: string; payload: unknown }) => void;
@@ -159,8 +127,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     },
 }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.0.0') }));
-// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
-// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+// jsdom has no 2D canvas context; stub the animation.
 vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -239,7 +206,6 @@ import AddSensorWindow from '../components/windows/AddSensorWindow';
 import '../components/dashboard';
 import { getErrors, dismissAllErrors } from '../errorReporter';
 
-// ── Fixtures ────────────────────────────────────────────────────────────
 
 const HEADERS = ['timestamp', 'TAG1', 'TAG2', 'TAG3', 'TAG4'];
 const RAW_A: RawCsv = {
@@ -297,7 +263,6 @@ async function valuesOf(raw: RawCsv, recipes: SpecialSensorRecipe[], tag: string
 
 let rust: FakeRust;
 
-// ── Async helpers (fake timers throughout) ─────────────────────────────
 
 async function flush(n = 15) {
     for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
@@ -307,7 +272,6 @@ async function tick(ms: number) {
     await flush();
 }
 
-// ── App / Dashboard / import page ───────────────────────────────────────
 
 let app: ReturnType<typeof render> | null = null;
 const A = () => within(app!.container);
@@ -362,7 +326,6 @@ function chartSeriesFor(tag: string): (number | null)[] | undefined {
 const ws = (id: string) => h.disk.get(id) as WorkspaceState;
 const k = (s: string) => s.trim().toLowerCase();
 
-// ── The Add Special Sensor window (its own React root) ───────────────────
 
 let win: ReturnType<typeof render> | null = null;
 const W = () => within(win!.container);
@@ -378,9 +341,7 @@ function unmountWindow(label: string) {
     }
 }
 
-/** Click the Dashboard's "Add special sensor" button. A new window is
- *  mounted like Tauri would create it; an existing one is re-pointed (the
- *  Dashboard re-sends `sensors-data`). */
+/** Click Add special sensor: mounts a new window, or re-points an existing one. */
 async function clickAddSpecialSensor() {
     const btn = app!.container.querySelector('.add-sensor-btn') as HTMLButtonElement;
     if (!btn) throw new Error('no Add special sensor button');
@@ -488,7 +449,6 @@ async function clickSaveEditor(opts: { settle?: boolean } = {}) {
     if (opts.settle !== false) await tick(300);
 }
 
-// ── Composite flows ─────────────────────────────────────────────────────
 
 /** Both workspaces on disk; the App on the import page. */
 async function start(b: WorkspaceState | null = wsB(), a: WorkspaceState = wsA()) {
@@ -497,9 +457,7 @@ async function start(b: WorkspaceState | null = wsB(), a: WorkspaceState = wsA()
     await renderApp();
 }
 
-/** The Rust session's invariant for the workspace on screen: its derived
- *  columns are exactly its recipes' tags, each holding what ITS recipe
- *  produces from ITS dataset. */
+/** Session invariant: derived columns are exactly the recipes' tags, each holding its own recipe's values. */
 async function expectSessionIs(raw: RawCsv, recipes: SpecialSensorRecipe[]) {
     expect(rust.derivedNames().map(k).sort(), 'derived columns in the session').toEqual(recipes.map(r => k(r.tag)).sort());
     for (const r of recipes) {
@@ -545,9 +503,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 1. A clean switch A -> Import -> B
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('1. A -> Back to Import -> B: nothing of A reaches B', () => {
     it.each([
@@ -667,9 +622,6 @@ describe('1. A -> Back to Import -> B: nothing of A reaches B', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 2. Windows left OPEN across the switch (close lost / late)
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('2a. late events from A\'s still-alive windows are ignored by B\'s Dashboard', () => {
     it('Dashboard A\'s unmount asks BOTH the add-sensor and build-model windows to close', async () => {
@@ -716,26 +668,18 @@ describe('2a. late events from A\'s still-alive windows are ignored by B\'s Dash
 });
 
 describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded', () => {
-    // BUG: the window still serves A (its sensors-data never changed) but every
-    // Rust command it sends runs against the ONE shared session -- now B's.
-    // Its delete commit fires 8 s after the click, reads A's file (nothing uses
-    // S2 in A), then `remove_sensor_columns(['S2'])` drops B's OWN S2 column.
-    // Its emit carries A's id, so B's Dashboard keeps listing and plotting S2
-    // with no data behind it.
+    // A stale window's delayed delete must not drop B's own S2 column from the shared session.
     it('A\'s window: delete S2 (undo window) -> Back (close lost) -> open B (own S2) -> 8 s later the commit drops B\'s S2 column from the session while B still lists/plots S2', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => { await deleteSensor('S2'); });
         const from = rust.calls.length; // B is loaded and replayed
         await tick(9000);
         expect(dashListed()).toContain('S2'); // B still lists it ...
         expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
-        expect(rust.calls.slice(from).filter(c => c.cmd === 'remove_sensor_columns')).toEqual([]); // ... but its column was dropped
+        expect(rust.calls.slice(from).filter(c => c.cmd === 'remove_sensor_columns')).toEqual([]); // and no column was removed
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // BUG: same channel -- an edit in the stale window recomputes S2 with
-    // `replace: true` in B's session, overwriting B's S2 with A's formula
-    // (computed from B's S1 and B's raw data). B's recipe still says
-    // `$TAG4 - 1`; its chart and every model trained on S2 now read A's.
+    // A stale window's edit must not recompute B's S2 with A's formula.
     it('A\'s window left open -> open B (own S2 = $TAG4 - 1) -> in A\'s window edit S2 to $TAG1 * 9 -> B\'s S2 column now holds A\'s formula values while B\'s recipe is unchanged', async () => {
         await switchWithWindowsLeftOpen();
         await openEditor('S2');
@@ -745,10 +689,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // Guards against: a create in the stale window adds an orphan derived
-    // column to B's session (B's Dashboard drops the A-scoped event). The name
-    // is then taken in B's session: B creating its own "S9" fails with
-    // "already exists" for a sensor B never had.
+    // A create in a stale window must not leave an orphan derived column in B's session.
     it('A\'s window left open -> open B -> create S9 in A\'s window -> B\'s session gains an orphan derived column S9 that B does not list', async () => {
         await switchWithWindowsLeftOpen();
         await createFormula('S9', '$TAG1 + 9');
@@ -756,8 +697,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
         expect(rust.has('S9')).toBe(false);
     });
 
-    // BUG: rename in the stale window: recompute under the new name in B's
-    // session, then remove the OLD name -- B's own S2.
+    // A rename in a stale window must not touch B's own S2 column or add an orphan S3.
     it('A\'s window left open -> open B (own S2) -> rename S2 -> S3 in A\'s window -> B\'s S2 column is removed and an orphan S3 appears in B\'s session', async () => {
         await switchWithWindowsLeftOpen();
         await openEditor('S2');
@@ -768,10 +708,7 @@ describe('2b. A\'s still-alive window, NOT re-pointed, acting after B is loaded'
 });
 
 describe('2b-guard. A\'s window AND its `workspace-closing` both lost: only the Rust generation guard stands between it and B\'s session', () => {
-    // The Dashboard's close of the window is lost (closeMode 'ignore') and so is
-    // the `workspace-closing` broadcast (held, never released). The window still
-    // thinks it serves A -- but every guarded command it sends is pinned to A's
-    // generation, which Rust refuses once `load_csv` installed B's session.
+    // Window close and workspace-closing are both lost: only the Rust generation guard remains.
     const loseClosing = () => h.hold(event => event === 'workspace-closing');
     const guarded = () => rust.calls.filter(c => ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns'].includes(c.cmd) && c.args.expectedGeneration !== undefined);
     const refused = () => guarded().filter(c => c.error?.startsWith('STALE_SESSION'));
@@ -841,11 +778,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
     });
 
-    // Guards against: the `sensors-data` handler resets only the deletions. The
-    // Create form keeps A's picked sources, the "+" chain, Name, Description,
-    // Unit and Component (both this window's copy and SensorTooling's own
-    // state -- `formKey` is not bumped), so the next "Add sensor" click builds
-    // A's draft into B.
+    // The Create form must reset on re-point, not keep A's draft.
     it('A\'s window: pick TAG1+TAG2, name "Draft", description "Alpha draft" (not added) -> switch to B, re-point the window -> the Create form still shows A\'s sources, name and description', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await pick('TAG1', 'TAG2');
@@ -859,10 +792,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(Array.from(createBody().querySelectorAll('input')).map(i => (i as HTMLInputElement).value)).not.toContain('Draft');
     });
 
-    // Guards against: `editingTag` and the open editor's
-    // draft survive the re-point. B has its own S2, so the row still exists
-    // and the editor stays open on A's draft; Save writes it into B's S2 --
-    // recomputing B's column and B's recipe with A's formula.
+    // An open editor draft must not survive the re-point into B's S2.
     it('A\'s window: open the editor on S2 and type $TAG1 * 9 (not saved) -> switch to B (own S2), re-point the window -> the editor is still open with A\'s draft and Save writes it into B\'s S2', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await openEditor('S2');
@@ -878,11 +808,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(stillOpen).toBe(false);
     });
 
-    // Guards against: the serial queue is not drained/cancelled on re-point and
-    // every task reads `workspaceIdRef.current` at EMIT time. A create queued
-    // in A runs after the re-point against B's session and is announced with
-    // B's id -- B's Dashboard adopts A's sensor (recipe + metadata) into B's
-    // file.
+    // Queued work must be cancelled on re-point, not run against B's session.
     it('A\'s window: a create of "N" is computing (held in Rust) and an edit of S2 is queued behind it -> switch to B, re-point the window, the create finishes -> neither lands in B: the create is refused as stale, the queued edit never runs', async () => {
         let g!: ReturnType<FakeRust['gate']>;
         await switchWithWindowsLeftOpen(wsB(), async () => {
@@ -896,8 +822,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         g.release();
         await flush(40);
         await tick(400);
-        // The held computation itself is refused: it was pinned to A's generation
-        // (`expectedGeneration`) and `load_csv` replaced the session.
+        // The held computation is refused: it was pinned to A's generation.
         expect(rust.cmds('evaluate_formula').some(c => c.error === STALE_SESSION_ERROR)).toBe(true);
         expect(rust.cmds('evaluate_formula').filter(c => c.args.formula === '$TAG1 * 7')).toHaveLength(0);
         expect((ws(B_ID).specialSensorRecipes ?? []).map(r => r.tag)).toEqual(['S1', 'S2']);
@@ -906,10 +831,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(rust.has('N')).toBe(false);
     });
 
-    // Guards against: a delete commit that has STARTED (re-reading the workspace
-    // file) when the window is re-pointed carries on with B's recipes, drops
-    // B's same-named column and emits `delete-special-sensors` with B's id --
-    // B's Dashboard deletes its own S2 recipe and metadata.
+    // A delete commit already re-reading A's file must not apply to B after the re-point.
     it('A\'s window: delete S2 -> after 8 s its commit is re-reading A\'s file (slow) -> switch to B, re-point the window, the read completes -> B\'s own S2 is deleted from B\'s session AND from B\'s file', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await deleteSensor('S2');
@@ -925,10 +847,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // Guards against: same for an edit already past the click: its first await
-    // (re-reading the models from A's file) resolves after the re-point, so it
-    // runs `runSpecialSensorEdit` over B's recipes with A's draft, overwrites
-    // B's S2 column and emits `update-special-sensor` with B's id.
+    // An edit already past the click must not apply to B after the re-point.
     it('A\'s window: save an edit of S2 to $TAG1 * 9 while the model re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s S2 recipe AND column become A\'s draft', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             await openEditor('S2');
@@ -961,9 +880,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // Guards against: 
-    // a models re-read for A that started before the re-point (A's Build Model
-    // window broadcast) applies after it, so B's Manage tab shows A's model.
+    // A models re-read started for A must not apply after the re-point.
     it('A\'s window: A\'s Build Model broadcasts a change, the window\'s re-read of A\'s file is slow -> switch to B, re-point, the read completes -> B\'s Manage tab shows B\'s S1 as locked by A\'s "Alpha model"', async () => {
         await switchWithWindowsLeftOpen(wsB(), async () => {
             h.gateDisk(A_ID);
@@ -979,9 +896,7 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
         expect(W().queryByTestId('edit-lock-banner')).toBeNull();
     });
 
-    // Guards against: `sensors-data`
-    // is accepted from ANY workspace, so a late copy of A's re-points the
-    // window back to A while B is on screen.
+    // A late sensors-data for A must not re-point the window back to A.
     it('a `sensors-data` for A delivered late (after the window was re-pointed to B) re-points the window back to A -- it lists A\'s "Alpha" recipes while B is open', async () => {
         await start(wsB());
         await openRecent('Alpha');
@@ -1003,9 +918,6 @@ describe('2c. A\'s still-alive window RE-POINTED to B (B\'s "Add special sensor"
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 3. Delete / rename / edit in A, then switch (window closed promptly)
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('3. pending work in A, then a normal switch (the window IS closed)', () => {
     it('documents current behaviour: delete S2 in A (inside the 8 s undo window) -> Back -> B: the delete is DROPPED (A keeps S2 on reopen), and nothing reaches B', async () => {
@@ -1022,8 +934,7 @@ describe('3. pending work in A, then a normal switch (the window IS closed)', ()
         expect(ws(B_ID).specialSensorRecipes).toEqual(B_RECIPES);
         // The deletion never left A's window: A's file still has S2.
         expect(ws(A_ID).specialSensorRecipes).toEqual(A_RECIPES);
-        // (Closing the window with its own X/Cancel button COMMITS a pending
-        // delete -- `handleClose`; a workspace switch silently undoes it.)
+        // Closing with X/Cancel commits a pending delete; a workspace switch silently undoes it.
     });
 
     it('a rename S2 -> S3 in A whose recompute Rust is still running when the user goes Back -> B: Rust refuses to attach it to B (generation changed), the window is gone, B and A\'s file are untouched', async () => {
@@ -1038,8 +949,7 @@ describe('3. pending work in A, then a normal switch (the window IS closed)', ()
         await backToImport();
         expect(win).toBeNull();
         await openRecent('Beta');
-        // The window's webview is gone: Rust finishes the command, nobody hears
-        // the reply. (jsdom would keep running its JS -- that part is not real.)
+        // The webview is gone: Rust finishes the command and nobody hears the reply.
         g.release();
         await flush(10);
         expect(rust.cmds('evaluate_formula').find(c => c.args.customName === 'S3')!.error).toBe(STALE_SESSION_ERROR);
@@ -1049,9 +959,6 @@ describe('3. pending work in A, then a normal switch (the window IS closed)', ()
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 4. Reopen the same workspace / A -> B -> A
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('4. reopening: specials restored exactly once each', () => {
     it('A -> Back -> A again: S1/S2 restored once each (no duplicate columns, list entries, metadata or recipes), same values', async () => {
@@ -1100,9 +1007,6 @@ describe('4. reopening: specials restored exactly once each', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 5. New workspace right after A
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('5. "New project" right after working in A', () => {
     it('A with specials (one created live) -> Back -> New project on the SAME CSV -> the new workspace has no specials, no A metadata, and no leftover derived columns', async () => {
@@ -1155,9 +1059,6 @@ describe('5. "New project" right after working in A', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 6. Failed / slow load of B
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('6. B\'s load_csv fails or is slow', () => {
     it('B\'s load_csv rejects: error shown, still on the import page (no Dashboard showing A\'s data as B), files untouched; a retry loads B cleanly', async () => {
@@ -1201,13 +1102,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
         await expectSessionIs(RAW_B, B_RECIPES);
     });
 
-    // Guards against: `handleLoadWorkspace` has no "latest click wins" guard.
-    // Its focus fallback clears the loading overlay when the window regains
-    // focus > 2 s into a load (meant for the sub-window hand-off), so during a
-    // slow load a second workspace can be clicked. The two loads then
-    // interleave on the ONE Rust session: here A's `load_csv` lands while B is
-    // replaying its recipes, B's replay builds B's S1/S2 on top of A's raw
-    // CSV, and B (the last `onDataReady`) is shown on A's data.
+    // A slow load plus a second click must not interleave two loads on the one Rust session: the last click wins.
     it('import page: click Alpha (load_csv slow, > 2 s) -> window regains focus (overlay cleared) -> click Beta -> A\'s load_csv completes while B replays -> B\'s Dashboard is shown on A\'s raw data (S2 = $TAG4 - 1 computed from A\'s TAG4)', async () => {
         await start(wsB());
         const gA = rust.gate('load_csv', a => a.paths?.[0] === PATH_A);
@@ -1215,9 +1110,7 @@ describe('6. B\'s load_csv fails or is slow', () => {
         await tick(2100);
         for (const cb of [...h.focusHandlers]) await act(async () => { cb({ payload: true }); });
         await flush();
-        // The load is genuinely in flight (load_csv is running): the focus event
-        // is NOT a sign of a stuck spinner, so the overlay stays (before the fix
-        // it was cleared here, which is what let a second workspace be clicked).
+        // A load is genuinely in flight, so the focus event must not clear the overlay.
         expect(app!.container.querySelector('[aria-busy="true"]')).toBeTruthy();
         const gB = rust.gate('extract_formula_refs', a => (a.formulas as string[]).includes('$TAG4 - 1'));
         await openRecent('Beta', { settle: false });
@@ -1238,16 +1131,9 @@ describe('6. B\'s load_csv fails or is slow', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 7. Other state that crosses a switch
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('7. other state carried across a switch', () => {
-    // Guards against: the Dashboard's
-    // autosave is a 250 ms debounce whose timer is CLEARED on unmount, and
-    // "Back to Import" just unmounts it (the flush-before-close path only
-    // covers closing the OS window). A special sensor created right before
-    // Back is gone on the next open: no recipe, no metadata.
+    // A sensor created just before Back to Import is still saved.
     it('A: create special sensor "Late" -> click Back to Import within 250 ms -> reopen A -> "Late" is gone (recipe and metadata never saved)', async () => {
         await start(wsB());
         await openRecent('Alpha');

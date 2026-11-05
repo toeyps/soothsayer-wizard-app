@@ -3,36 +3,7 @@ import { tokenizeFormula } from './formulaTokens';
 import type { RunningConditionFg } from './runningCondition';
 import { demoteModelsTrainedOnSensors, trainingSensorsOf, type SensorRepairDemotion } from './specialSensorRepair';
 
-/**
- * Special-sensor formulas in the train record (editing a special sensor's
- * formula makes the models trained on it stale).
- *
- * `computeTrainFingerprint` names a model's sensors, not how a special sensor
- * is computed, so on its own a changed recipe would leave a trained / Complete
- * model reading as fresh. The edit lock (`specialSensorDeps`) prevents most
- * such edits; this is
- * the detection behind it, for the roads that do change a used recipe (Repair,
- * the legacy `round(x, n)` conversion on open, anything a lock misses):
- *
- *   - `recipeSignatures` -- one signature per special sensor: its recipe with
- *     every special sensor it reads replaced by THAT sensor's signature
- *     (recursively), raw columns by their lower-cased name. Deep (editing a
- *     source changes every sensor built on it) and rename-proof (renaming a
- *     source rewrites the dependants' text, not their signatures).
- *   - `snapshotTrainedFormulas` -- what a model's `trainedFormulas` holds:
- *     the signatures of the special sensors it trains on.
- *   - `trainedFormulasChanged` -- the read side, used by `isModelStale` when
- *     the caller passes the recipes.
- *   - `stampTrainedFormulas` -- the write side: in the write that records a
- *     train (`lastTrainedAt` changes), stamp the snapshot from the recipes on
- *     DISK in that write. Run by `applyIncompleteRule`, so every workspace
- *     write (`updateWorkspaceData`) does it; nothing for a caller to remember.
- *   - `demoteModelsForRecipeChange` -- the models a recipe change sends back
- *     to Incomplete and out of date, in the same write.
- *
- * Backward compatible: a model with no snapshot is never judged by it, so an
- * upgrade does not turn trained models stale.
- */
+/** Special-sensor formulas in the train record: `computeTrainFingerprint` names sensors, not recipes, so a changed recipe needs this to mark models stale. Signatures are deep and rename-proof; a model with no snapshot is never judged by it. */
 
 const key = (tag: string) => tag.trim().toLowerCase();
 
@@ -64,11 +35,7 @@ function canonicalJson(value: unknown): string {
 
 const cache = new WeakMap<SpecialSensorRecipe[], Map<string, string>>();
 
-/**
- * Signature of every special sensor, keyed by its tag trimmed + lower-cased.
- * Memoised per recipes array (a workspace write reads a fresh array, so the
- * cache never goes stale; a render that passes the same array is free).
- */
+/** Signature of every special sensor, keyed by trimmed lower-cased tag; memoised per recipes array. */
 export function recipeSignatures(recipes: SpecialSensorRecipe[] | null | undefined): Map<string, string> {
     if (!Array.isArray(recipes) || recipes.length === 0) return new Map();
     const hit = cache.get(recipes);
@@ -112,8 +79,7 @@ export function recipeSignatures(recipes: SpecialSensorRecipe[] | null | undefin
     return out;
 }
 
-/** The special sensors `model` trains on (target, predictors, X / Y /
- *  criteria and its effective running condition's sensors), as keys. */
+/** Keys of the special sensors `model` trains on (target, predictors, X/Y/criteria, effective running condition sensors). */
 export function specialSensorsTrainedOn(model: FailureModel, fg: RunningConditionFg, recipes: SpecialSensorRecipe[] | null | undefined): string[] {
     const sigs = recipeSignatures(recipes);
     if (sigs.size === 0) return [];
@@ -140,13 +106,7 @@ export function snapshotTrainedFormulas(
     return snap;
 }
 
-/**
- * Has a special sensor this model was trained on changed its recipe since?
- * False without a snapshot (trained before this existed -- backward
- * compatible), and for a snapshot entry whose sensor no longer exists (a
- * deleted / not-yet-loaded sensor is not a recipe CHANGE; the model's gate
- * already reports a missing sensor).
- */
+/** True if a special sensor this model trained on changed its recipe. False without a snapshot or for a sensor that no longer exists. */
 export function trainedFormulasChanged(model: FailureModel, recipes: SpecialSensorRecipe[] | null | undefined): boolean {
     const snap = model.trainedFormulas;
     if (!snap || typeof snap !== 'object') return false;
@@ -165,13 +125,7 @@ function sameSnapshot(a: Record<string, string> | undefined, b: Record<string, s
     return ka.length === Object.keys(b).length && ka.every(k => a[k] === b[k]);
 }
 
-/**
- * `next`, with `trainedFormulas` (re)stamped on every model whose train record
- * this write changed (`lastTrainedAt` / `trainedFingerprint` differ from
- * `prev`), from `next`'s own recipes -- what is on disk in this write, never a
- * window's possibly stale copy. A re-train that uses no special sensor drops
- * an old snapshot. Returns `next` itself when nothing changes. Idempotent.
- */
+/** `next` with `trainedFormulas` restamped on models whose train record changed, from `next`'s own recipes; returns `next` itself if nothing changes. */
 export function stampTrainedFormulas(prev: WorkspaceState, next: WorkspaceState): WorkspaceState {
     const fg = next.failureGroupState;
     if (!fg || !Array.isArray(fg.models) || fg.models.length === 0) return next;
@@ -193,9 +147,7 @@ export function stampTrainedFormulas(prev: WorkspaceState, next: WorkspaceState)
     return changed ? { ...next, failureGroupState: { ...fg, models } } : next;
 }
 
-/** Keys of the special sensors whose (deep) signature differs between two
- *  recipe lists -- present in both (a removed / added sensor is not a change
- *  of recipe; renames keep their dependants' signatures). */
+/** Keys of special sensors in both lists whose deep signature differs (added/removed is not a change). */
 export function changedRecipeKeys(
     prevRecipes: SpecialSensorRecipe[] | null | undefined,
     nextRecipes: SpecialSensorRecipe[] | null | undefined,
@@ -211,15 +163,7 @@ export function changedRecipeKeys(
     return out;
 }
 
-/**
- * The models a recipe change sends back to Incomplete and out of date, in the
- * SAME write (`demoteModelsTrainedOnSensors`: `status: false`, the train
- * fingerprint / verdict / tests stamp dropped, set points and `lastTrainedAt`
- * kept). A model is affected when it trains on a special sensor whose
- * signature changed between `prevRecipes` and `nextRecipes` (the edited one or
- * anything built on it), or when its own `trainedFormulas` snapshot no longer
- * matches `nextRecipes`. Pure; run it against what is on DISK. Idempotent.
- */
+/** Sends models back to Incomplete and out of date in the SAME write: those trained on a sensor whose signature changed, or whose `trainedFormulas` no longer matches `nextRecipes`. Set points and `lastTrainedAt` are kept. Pure and idempotent. */
 export function demoteModelsForRecipeChange(
     models: FailureModel[],
     fg: RunningConditionFg,

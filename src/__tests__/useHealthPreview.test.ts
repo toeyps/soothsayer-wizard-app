@@ -24,8 +24,7 @@ const preview = (tag: string): HealthPreview => ({
     kind: 'individual',
     stats: { kind: 'individual', rows: 3, mean: 1, sd: 1, boundary_1sd: [0, 2], boundary_3sd: [-2, 4], min: 0, max: 2 },
     validation: [], valid: true,
-    // The payload shape Rust sends since the score is computed on 1-hour averages:
-    // the raw rows never carry a score, the hourly points do. The hook passes both through.
+    // Rust payload shape: raw rows carry no score, hourly points do; the hook passes both through.
     series: { kind: 'individual', rows: [0], timestamps: [tag], value: [1], in_scope: [true], score: null, total_points: 1 },
     hourly: { kind: 'individual', rows: [0], timestamps: [`hour:${tag}`], value: [1], in_scope: [true], score: [100], total_points: 1 },
     scoring_interval_secs: 3600,
@@ -59,8 +58,7 @@ describe('useHealthPreview', () => {
         expect(cmd).toBe('compute_health_preview');
         expect(args).toEqual({ request: expect.objectContaining({ kind: 'individual', target: 'T', set_points: { lower: 1, upper: 9 }, max_points: 4000 }) });
         expect((result.current.data?.series as { timestamps: string[] }).timestamps).toEqual(['a']);
-        // ONE answer feeds both pages: the raw rows (no score) and the hourly points
-        // (scored) arrive together, untouched, with the scoring interval.
+        // One answer feeds both pages: raw rows (no score) and scored hourly points arrive untouched with the interval.
         expect(result.current.data?.series.score).toBeNull();
         expect(result.current.data?.hourly).toMatchObject({ timestamps: ['hour:a'], score: [100] });
         expect(result.current.data?.scoring_interval_secs).toBe(3600);
@@ -181,8 +179,7 @@ describe('useHealthPreview', () => {
                 const { result } = renderHook(() => useHealthPreview(opts()));
                 await settle();
                 expect(result.current.errorCode).toBe(code);
-                // NOT_FITTED is worded by the UI ("Fit no longer in memory — load it again."),
-                // never by Rust's "this Relation model …"; the other codes keep Rust's text.
+                // `NOT_FITTED` uses the UI's wording, never Rust's; other codes keep Rust's text.
                 expect(result.current.error).toBe(code === 'NOT_FITTED' ? HEALTH_ERROR_TEXT.NOT_FITTED : text.slice(code.length + 2));
                 expect(result.current.data).toBeNull();
                 expect(result.current.loading).toBe(false);

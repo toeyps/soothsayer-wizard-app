@@ -7,22 +7,14 @@ import type {
 } from '../types';
 import { sameTag } from './specialSensorNaming';
 
-/*
- * Health score set points.
- *
- * Everything here is PURE (no Tauri, no React) so Dashboard, BuildModelWindow,
- * the migration and tests can all share it. See `HealthSetPoints` in
- * `types.ts` for the field shapes and the `undefined` vs `null` meaning of the
- * Individual master snapshot.
- */
+/* Pure (no Tauri, no React) set-point helpers shared by Dashboard, BuildModelWindow, the migration and tests. */
 
 export type SetPointSide = 'lower' | 'upper';
 
 /** Where an Individual set point's CURRENT value came from. Derived, never stored. */
 export type SetPointSource = 'master' | 'model' | 'not-in-master';
 
-/** The right EMPTY shape for a model kind. Individual's snapshot is left
- *  `undefined` ("not taken yet"); use `seedHealthSetPoints` at creation. */
+/** Empty shape for a kind; Individual's master snapshot stays `undefined` (not taken), so use `seedHealthSetPoints` at creation. */
 export function emptyHealthSetPoints(kind: ModelKind): HealthSetPoints {
     switch (kind) {
         case 'individual':
@@ -43,26 +35,14 @@ export function emptyHealthSetPoints(kind: ModelKind): HealthSetPoints {
 const finiteOrNull = (v: number | undefined | null): number | null =>
     typeof v === 'number' && Number.isFinite(v) ? v : null;
 
-/** Master-data L/H of a sensor, as the snapshot pair. A missing entry (special
- *  sensor, sensor absent from the mapping CSV) and a missing level both give
- *  `null` -- "master has none". */
+/** Master L/H of a sensor as the snapshot pair; a missing entry or level gives `null` (master has none). */
 export function masterSnapshotOf(
     meta: Pick<SensorMetadata, 'alarmL' | 'alarmH'> | null | undefined,
 ): { masterLower: number | null; masterUpper: number | null } {
     return { masterLower: finiteOrNull(meta?.alarmL), masterUpper: finiteOrNull(meta?.alarmH) };
 }
 
-/**
- * Set points for a model that is being CREATED now.
- *
- * Individual: takes the master snapshot and prefills `lower`/`upper` from it
- * (each possibly null -- a one-sided master leaves the other side for the user).
- * `meta === null` means "looked it up, the sensor has no master entry" (special
- * sensor) and still takes the snapshot (null/null); `meta === undefined` means
- * "metadata not available" and leaves the snapshot untaken so
- * `ensureHealthSetPoints` can fill it later.
- * Relationship / Clustering: always empty.
- */
+/** Individual takes the master snapshot and prefills lower/upper; `meta === null` = no master entry (null/null), `undefined` = not loaded (snapshot left untaken). Relationship / Clustering: always empty. */
 export function seedHealthSetPoints(
     kind: ModelKind,
     meta?: Pick<SensorMetadata, 'alarmL' | 'alarmH'> | null,
@@ -72,10 +52,7 @@ export function seedHealthSetPoints(
     return { kind: 'individual', lower: masterLower, upper: masterUpper, masterLower, masterUpper };
 }
 
-/** `'master'` = the value equals the master snapshot; `'not-in-master'` = no
- *  value and master has none; `'model'` = anything else (entered/changed on this
- *  model, or cleared although master has one). An untaken snapshot
- *  (`undefined`) counts as "master has none". */
+/** `'master'` = equals the master snapshot; `'not-in-master'` = no value and master has none; else `'model'`. An untaken snapshot counts as no master value. */
 export function setPointSource(sp: IndividualHealthSetPoints, side: SetPointSide): SetPointSource {
     const value = side === 'lower' ? sp.lower : sp.upper;
     const master = (side === 'lower' ? sp.masterLower : sp.masterUpper) ?? null;
@@ -91,9 +68,7 @@ export function canResetToMaster(sp: IndividualHealthSetPoints, side: SetPointSi
     return (side === 'lower' ? sp.lower : sp.upper) !== master;
 }
 
-/** Puts the value back to the master snapshot -- one side, or both when `side`
- *  is omitted. A side whose snapshot was never taken is left alone. Returns
- *  the SAME object when nothing changes. The snapshot itself is never altered. */
+/** Resets one side (or both) to the master snapshot; a side with no snapshot is left alone. Same object if nothing changes. */
 export function resetToMaster(sp: IndividualHealthSetPoints, side?: SetPointSide): IndividualHealthSetPoints {
     let next = sp;
     if ((side === undefined || side === 'lower') && canResetToMaster(sp, 'lower')) {
@@ -105,21 +80,7 @@ export function resetToMaster(sp: IndividualHealthSetPoints, side?: SetPointSide
     return next;
 }
 
-/**
- * Brings one model's `healthSetPoints` up to date. Returns the SAME model
- * object when nothing changes (idempotent), otherwise a copy -- every other
- * field is kept.
- *
- *  - Missing (or of the wrong kind) -> the empty shape for the model's kind.
- *  - Individual with an untaken snapshot side AND `sensorMetadata` supplied ->
- *    that side is snapshotted from the target sensor's master data (not found ->
- *    null), and a still-null `lower`/`upper` on that side is prefilled from it.
- *    A value the user entered is never overwritten and a snapshot that exists
- *    is never touched.
- *  - `sensorMetadata` omitted (`undefined`) means "not loaded yet": no snapshot
- *    is taken. Pass the full list only once it is really loaded -- an empty
- *    list means "no sensor has alarms".
- */
+/** Brings one model's `healthSetPoints` up to date (same object if unchanged): missing or wrong kind -> empty shape; an untaken Individual side is snapshotted from master and prefilled. Entered values and existing snapshots are never touched. `sensorMetadata` undefined = not loaded (no snapshot); an empty list means no sensor has alarms. */
 export function ensureHealthSetPoints(
     model: FailureModel,
     sensorMetadata?: readonly SensorMetadata[] | null,
@@ -146,10 +107,7 @@ export function ensureHealthSetPoints(
     return changed ? { ...model, healthSetPoints: sp } : model;
 }
 
-/** Replaces ONE model's set points inside a models array (everything else, incl.
- *  every other model, is carried by reference). For a writer that runs against
- *  the models read fresh from disk, so a set-point edit can never revert
- *  another window's change to some other field. Unknown id -> same array. */
+/** Replaces one model's set points, carrying the rest by reference; for writers on models read fresh from disk, so it can't revert another window's change. Unknown id -> same array. */
 export function patchModelHealthSetPoints(
     models: FailureModel[],
     modelId: string,
@@ -171,9 +129,7 @@ function setPointNumbers(sp: HealthSetPoints): (number | null)[] | null {
     }
 }
 
-/** Same kind and the same entered numbers (master snapshots ignored). THE one
- *  definition: the Health page's `sameSetPoints` (`healthChecks.ts`) is a
- *  re-export of this. */
+/** Same kind and same entered numbers (master snapshots ignored); `healthChecks.ts` `sameSetPoints` re-exports this. */
 export function sameHealthSetPoints(a: HealthSetPoints | null | undefined, b: HealthSetPoints | null | undefined): boolean {
     if (!a || !b) return !a && !b;
     if (a.kind !== b.kind) return false;

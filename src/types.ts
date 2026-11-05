@@ -6,11 +6,7 @@ export interface CsvRecord {
 export interface CsvMetadata {
     headers: string[];
     total_rows: number;
-    /** Generation of the Rust session this load created. Strictly
-     *  increases with every `load_csv`. Special-sensor commands are bound to it
-     *  (`expectedGeneration`) so a window left over from another project cannot
-     *  touch this dataset -- see `utils/staleSession.ts`. Optional only for
-     *  hand-built fixtures; the backend always sends it. */
+    /** Rust session generation; special-sensor commands bind to it (`expectedGeneration`) to reject stale windows. Optional only in fixtures. */
     generation?: number;
 }
 
@@ -19,9 +15,7 @@ export interface SensorMetadata {
     description: string;
     unit: string;
     component: string;
-    /** Alarm setpoints from the mapping CSV's ALARM_L/ALARM_LL/ALARM_H/ALARM_HH
-     *  columns. Undefined (not NaN or 0) when the sensor has no value for that
-     *  level — callers must treat "undefined" as "don't show", not "show 0". */
+    /** Alarm setpoints; undefined = sensor has no value for that level (do not show 0). */
     alarmL?: number;
     alarmLL?: number;
     alarmH?: number;
@@ -44,20 +38,13 @@ export interface SensorOperationConfig {
     };
     multiOp?: {
         type: MultiOperationType;
-        /** Round every result row to this many decimal places: a rounded Average /
-         *  Median block keeps its own decimals instead of a `round()` wrap. A whole
-         *  number 0..10 (Rust's `MAX_OPERATION_DECIMALS`); absent = no rounding
-         *  (a recipe saved without this field computes unrounded). Same
-         *  rounding as `round(X * 100) / 100` in a formula (half away from 0). */
+        /** Decimals each result row is rounded to (0..10, Rust `MAX_OPERATION_DECIMALS`, half away from 0); absent = no rounding. */
         decimals?: number;
     };
     customName?: string;
 }
 
-/** What to re-run to rebuild one "Add Special Sensor" column after a
- *  workspace reopen -- see `WorkspaceState.specialSensorRecipes` for the
- *  full story. `tag` is the sensor's persisted name (forced back as the
- *  recomputation's customName on replay, not just a label). */
+/** Recipe to rebuild a special-sensor column on workspace reopen; `tag` is forced as the replay's customName. */
 export type SpecialSensorRecipe =
     | { kind: 'formula'; tag: string; formula: string }
     | { kind: 'operation'; tag: string; sourceSensors: string[]; operationConfig: SensorOperationConfig };
@@ -68,18 +55,9 @@ export interface WorkspaceMetadata {
     description?: string;
     lastModified: number;
     filePath: string;
-    /** Number of the user's Failure Groups ("Not in Group" excluded), for the
-     *  recent-project chip. Refreshed by EVERY
-     *  workspace write from the `failureGroupState.groups` being written (see
-     *  `writeWorkspaceFile` in `workspaceManager.ts`), so it follows the
-     *  Dashboard's and the Build Model window's edits. `undefined` = an entry
-     *  written before this field existed (or a workspace that has never had a
-     *  Failure Group slice): the card shows NO chip. `0` = the neutral
-     *  "No failure groups" chip. */
+    /** Count of Failure Groups (not 'Not in Group') for the recent-project chip, refreshed on every workspace write. undefined = no chip, 0 = 'No failure groups'. */
     failureGroupCount?: number;
-    /** Numbers of the first `FG_CHIP_MAX_SWATCHES` (3) Failure Groups, in
-     *  group-number order — the chip's colour squares (`getFgGroupColor(no)`).
-     *  Set and left undefined together with `failureGroupCount`. */
+    /** Numbers of the first 3 Failure Groups (chip colour squares); set together with `failureGroupCount`. */
     failureGroupNos?: number[];
 }
 
@@ -106,8 +84,7 @@ export interface FailureGroup {
     recommendation?: string;
 }
 
-/** @deprecated Replaced by `FailureModel`. Kept only so the legacy-workspace
- *  migration shim in `workspaceManager.ts` has a type to read old data as. */
+/** @deprecated Replaced by `FailureModel`; kept for the legacy migration. */
 export interface FailureSensorRow {
     id: string;
     groupNo: number;
@@ -122,29 +99,16 @@ export interface FailureSensorRow {
 
 export type ModelKind = 'individual' | 'relationship' | 'clustering';
 
-/** Performance = model predicts throughput/output quality; Condition = model
- *  predicts equipment health/degradation. `null` = not yet classified (e.g.
- *  a model migrated from a pre-redesign workspace, where no source field maps
- *  to this — the user is expected to set it explicitly afterward). */
+/** `null` = not yet classified (e.g. a migrated model). */
 export type ModelCategory = 'performance' | 'condition';
 
-/**
- * A single cluster's criteria range. `null` = unbounded in that
- * direction (matches the Rust `Option<f64>` round-trip). Lives in the
- * persisted slice so multi-cluster configs survive workspace reload.
- */
+/** `null` = unbounded on that side (matches Rust `Option<f64>`). */
 export interface PredictiveClusterRange {
     min: number | null;
     max: number | null;
 }
 
-/**
- * Predictive-model build config. Historically this was a single slot on
- * `WorkspaceState` shared by every model in the workspace (the root cause of
- * "editing one model's config silently discards another's" — see Notion).
- * It is now embedded directly in each `FailureModel` so every model carries
- * its own config and configuring one can never clobber another's.
- */
+/** Per-model predictive build config, embedded in each `FailureModel` so configuring one never overwrites another. */
 export interface PredictiveModelStateSlice {
     targetSensor: string;
     predictorSensors: string[];
@@ -156,94 +120,30 @@ export interface PredictiveModelStateSlice {
     clusterModelName: string;
     numClusters: number;
     criteriaSensor: string;
-    /** One entry per cluster, length === numClusters. Replaces the
-     *  pre-multi-cluster `clusterRangeMin` / `clusterRangeMax` fields. */
+    /** One entry per cluster, length === numClusters. */
     clusterRanges: PredictiveClusterRange[];
-    /** This model's own TRAIN periods — only read when
-     *  `runningConditionMode === 'custom'` (in 'workspace' mode the effective
-     *  periods are `FailureGroupStateSlice.runningConditionTimePeriods`).
-     *  The field keeps its old name for old workspaces. Empty does not mean
-     *  "no time limit": training is blocked until one is added. An old
-     *  workspace's single `filterTimeStart`/`filterTimeEnd` pair is migrated by
-     *  `migratePeriods`. */
+    /** This model's own TRAIN periods; only read when `runningConditionMode === 'custom'`. Empty blocks training (it does not mean no limit). */
     filterTimePeriods: TimePeriod[];
-    /** OLD FILES ONLY: Custom mode's "No condition — use all rows" (removed
-     *  2026-10-26). No longer counts as configured; `migrateSingleRunningCondition`
-     *  sets it back to `false`. */
+    /** OLD FILES ONLY: reset to false by `migrateSingleRunningCondition`; no longer counts as configured. */
     customRunningConditionNoneConfirmed?: boolean;
-    /** Custom mode's "Use all data" (2026-10-28): this model trains and scores on
-     *  every row of its own periods — it needs no condition of its own.
-     *  `undefined` = false. */
+    /** Custom 'Use all data': train and score on every row of its own periods; undefined = false. */
     customRunningConditionAllData?: boolean;
-    /** 'workspace' (default): this model's training window AND running
-     *  condition are the workspace's
-     *  (`FailureGroupStateSlice.runningConditionTimePeriods`/
-     *  `runningConditionFilters`/`runningConditionCombine`). 'custom': this
-     *  model ignores the workspace default entirely and uses its own
-     *  `filterTimePeriods` + `customRunningConditionFilters`/
-     *  `customRunningConditionCombine` instead — set in this model's own
-     *  Model settings. */
+    /** 'workspace': use the workspace's periods and running condition; 'custom': use this model's own. */
     runningConditionMode: 'workspace' | 'custom';
-    /** Only read when `runningConditionMode === 'custom'`. Since 2026-10-26
-     *  it holds ONE "sensor > value" row (the same single line as the
-     *  workspace's; empty = not set, Train blocked). Seeded from the
-     *  workspace's condition at the moment the user switches to Custom, then
-     *  fully independent. */
+    /** Only read in 'custom' mode: ONE 'sensor > value' row; empty = not set (Train blocked). Seeded from the workspace's on switching to Custom. */
     customRunningConditionFilters: WorkspaceSensorFilter[];
-    /** Only read when `runningConditionMode === 'custom'`. With one condition
-     *  it no longer matters; kept `'and'` (old files may say 'or'). */
+    /** Only read in 'custom' mode; always 'and' (old files may say 'or'). */
     customRunningConditionCombine: 'and' | 'or';
-    /** This model's own SCORING periods (the field says "test periods" so
-     *  older workspaces load unchanged) — only read when
-     *  `runningConditionMode === 'custom'` (in
-     *  'workspace' mode the effective list is
-     *  `FailureGroupStateSlice.runningConditionTestPeriods`). Copied ONCE from
-     *  the workspace list when the model switches to Custom
-     *  (`seedCustomFromWorkspace`), then independent. Optional: an older
-     *  workspace without it reads as "no scoring period" (`?? []`). NOT part of
-     *  `computeTrainFingerprint` — scoring periods never change the fit. */
+    /** Own SCORING periods; only read in 'custom' mode, copied once from the workspace list. Not in `computeTrainFingerprint`; absent = none. */
     customTestPeriods?: TestPeriod[];
-    /** ISO time the model's EFFECTIVE scoring periods last changed while it was
-     *  Complete (`applyIncompleteRule` sets it in the same write that puts the
-     *  model back to `status: false`; the model stays trained). Cleared by
-     *  Mark complete (`persistModelComplete`). Drives the "Scoring periods
-     *  changed — Mark complete again" banners (`testsChangedNotice`). */
+    /** ISO time the effective scoring periods changed while Complete (model goes to `status: false`, stays trained). Cleared by Mark complete. */
     testsChangedAt?: string;
 }
 
-/**
- * One model inside 1+ Failure Groups. Sensor requirements depend on `kind`:
- * - individual: `targetSensor` only.
- * - relationship: `targetSensor` (the target) + `predictorSensors` (>=1).
- * - clustering: `xSensor` + `ySensor`; `criteriaSensor` is optional but if
- *   set, `clusterRanges` must be configured (length === numClusters).
- *
- * `component` is intentionally NOT stored here — it's derived at read time
- * from `SensorMetadata.component` of the model's target sensor (`targetSensor`
- * for individual/relationship, `ySensor` for clustering), since sensor
- * metadata is re-derived from the CSV mapping each session rather than
- * persisted per-model. See `getModelTargetSensor` / component lookups at
- * call sites.
- *
- * Extends `PredictiveModelStateSlice` so a model's full PM build config
- * travels with it as one self-contained record.
- */
+/** Required sensors per kind: individual = targetSensor; relationship = targetSensor + >=1 predictor; clustering = xSensor + ySensor. criteriaSensor is optional for clustering (then clusterRanges length === numClusters). Component is derived from the target sensor (ySensor for clustering). */
 export interface FailureModel extends PredictiveModelStateSlice {
     id: string;
-    /** Which Failure Group(s) this model belongs to — a genuine many-to-many
-     *  relationship: a single model can appear under more than one Failure
-     *  Group without being duplicated into a second, independently-editable
-     *  copy. Always has at least one entry. `0` is the permanent "Not in
-     *  Group" sentinel — a model with no real group falls back to `[0]`,
-     *  it's never an empty array. A model with
-     *  both `0` and a real group in this array is not a valid steady
-     *  state (adding a real group drops `0`; losing its last real group
-     *  falls back to `[0]`) but isn't actively guarded against everywhere
-     *  — callers that assign groups follow this convention rather than the
-     *  type enforcing it.
-     *
-     *  An old workspace's singular `groupNo: number` field is migrated by
-     *  `workspaceManager.ts`'s load shim to `groupNos: [that old groupNo]`. */
+    /** Failure Groups this model belongs to (many-to-many); `0` = 'Not in Group', used only when it has no real group (never an empty array). */
     groupNos: number[];
     name: string;
     kind: ModelKind;
@@ -254,73 +154,23 @@ export interface FailureModel extends PredictiveModelStateSlice {
     xSensor: string;
     /** Clustering only: the Y-axis sensor (acts as this model's "target"). */
     ySensor: string;
-    /** ISO timestamp of the last time this model was trained, i.e. its preview
-     *  computation ran (`compute_sensor_stats` / `preview_relationship_model` /
-     *  `compute_clustering_preview`). Training writes no `*_INFO_*.json` file —
-     *  Mark complete does. `undefined` = never trained.
-     *
-     *  Both fields are optional and read together: a model is trained-and-fresh
-     *  when `lastTrainedAt` is set AND
-     *  `trainedFingerprint === computeTrainFingerprint(model, fg)` (not stale).
-     *  See `src/utils/trainFingerprint.ts` and `src/utils/modelStatus.ts`. */
+    /** ISO time of the last Train; undefined = never trained. Trained-and-fresh = set AND `trainedFingerprint === computeTrainFingerprint(model, fg)`. */
     lastTrainedAt?: string;
-    /** Fingerprint of every input that would change the last preview run's
-     *  result — compare with a fresh `computeTrainFingerprint(model, fg)` call
-     *  to detect staleness (settings changed since the last Train click).
-     *  Produced by `computeTrainFingerprint` in `src/utils/trainFingerprint.ts`
-     *  — treat the string's shape as an implementation detail, never parse it. */
+    /** Fingerprint of the inputs behind the last train; compare with `computeTrainFingerprint` to detect staleness. Opaque, never parse. */
     trainedFingerprint?: string;
-    /** The recipes of the SPECIAL sensors this model was trained on, as they
-     *  were at that train (editing a special sensor's formula makes the models
-     *  trained on it stale). Keyed by the sensor's tag trimmed + lower-cased; the
-     *  value is a deep, rename-proof signature of its recipe (and of every
-     *  special sensor it is built on) -- see `utils/specialSensorSignature.ts`,
-     *  never parse it.
-     *
-     *  Stamped centrally in the write that records a train (`lastTrainedAt`
-     *  changes): `applyIncompleteRule` -> `stampTrainedFormulas`, against the
-     *  recipes on DISK in that write. Absent on a model trained before this
-     *  field existed, or one that uses no special sensor: such a model is
-     *  never judged stale by it (backward compatible -- an upgrade does not
-     *  turn every trained model stale). Not part of `computeTrainFingerprint`. */
+    /** Signatures of the special-sensor recipes at train time (key = tag trimmed, lower-cased); editing a recipe makes the model stale. Absent = never stale by it. */
     trainedFormulas?: Record<string, string>;
-    /** Health score set points the USER enters for this model. Stored ON THE
-     *  MODEL and never written back to master
-     *  data. `undefined` only on a model that has not been through
-     *  `migrateHealthSetPoints`/`ensureHealthSetPoints` yet -- every workspace
-     *  read fills the right EMPTY shape for the model's kind, so consumers may
-     *  treat a missing value as "nothing entered". `kind` always equals the
-     *  model's own `kind` (a model's kind never changes).
-     *
-     *  Deliberately NOT part of `computeTrainFingerprint`: changing a set point
-     *  neither invalidates a training run nor makes the model stale. All helpers
-     *  live in `src/utils/healthSetPoints.ts`. */
+    /** User-entered health score set points, stored on the model only (never written to master data). Not in `computeTrainFingerprint`. */
     healthSetPoints?: HealthSetPoints;
-    /** @deprecated Since 2026-10-20 Mark complete writes no files and nothing
-     *  writes or reads this record (Export results is the only writer of the
-     *  model files). Old values stay in saved workspaces untouched -- kept in the
-     *  type only so those files still type-check. Never read it for a status or a hint. */
+    /** @deprecated Nothing reads or writes it; kept so old files type-check. */
     healthExport?: HealthExportRecord;
-    /** The last validation verdict Rust gave on this model's SAVED set points:
-     *  `'valid'` = the score can be calculated,
-     *  `'incomplete'` = only empty points ("Set points needed"), `'invalid'` =
-     *  a point is rejected ("Fix set point"). Persisted so the Dashboard's
-     *  Failure Groups dot can show the same "Fix set point" the Build Model list
-     *  does. ONE source of truth: `modelSetPointFlag` in
-     *  `utils/modelStatus.ts` is what every surface reads. Written by
-     *  `commitHealthVerdict` (utils/healthPersist.ts) once the preview of the
-     *  SAVED set points lands; dropped when the set point numbers change
-     *  (`commitSetPoints`), when a re-train starts a new run, and when a training
-     *  input changes (`applyIncompleteRule`) -- so it never describes numbers or a
-     *  fit it was not computed from. Optional, spread-safe, NOT part of
-     *  `computeTrainFingerprint`. */
+    /** Last Rust verdict on the SAVED set points: valid / incomplete / invalid. Read through `modelSetPointFlag`; dropped when set points, re-train or training inputs change. */
     healthVerdict?: HealthVerdictValue;
 }
 
 export type HealthVerdictValue = 'valid' | 'incomplete' | 'invalid';
 
-/** @deprecated The shape of the old `FailureModel.healthExport` record
- *  (written by Mark complete before 2026-10-20). Nothing writes or reads it now. */
+/** @deprecated Old `healthExport` record; nothing reads or writes it. */
 export interface HealthExportRecord {
     /** ISO timestamp of the export. */
     at: string;
@@ -328,23 +178,11 @@ export interface HealthExportRecord {
     outputDir: string;
     /** The set points the exported files carry. */
     setPoints: HealthSetPoints;
-    /** The scoring interval (seconds) the old files were computed with;
-     *  absent on records written before 2026-10-11. */
+    /** Scoring interval (seconds) the old files used; may be absent. */
     scoringIntervalSecs?: number;
 }
 
-/** Individual model: health is 0 at `lower`/`upper` (the sensor's L/H alarm
- *  set points). 100 inside +-1SD and 80 at +-3SD are computed by the program,
- *  not stored here. `null` = not set (the user must fill it before the model
- *  can be marked complete).
- *
- *  `masterLower`/`masterUpper` are a SNAPSHOT of the sensor's master-data
- *  `alarmL`/`alarmH` taken when the model was created, so a later master-data
- *  change never silently moves a model's health. Three states, kept apart on
- *  purpose: `undefined` = snapshot NOT taken yet (also what a JSON round trip
- *  of an unset key gives), `null` = taken and master has no such value, a
- *  number = taken. "From master / this model / not in master" labels are
- *  DERIVED (`setPointSource`), never stored. */
+/** Individual: health is 0 at `lower`/`upper` (alarm L/H); 100 within 1SD and 80 at 3SD are computed. `null` = not set. `masterLower`/`masterUpper` snapshot master `alarmL`/`alarmH` at creation: `undefined` = not taken, `null` = master has none. */
 export interface IndividualHealthSetPoints {
     kind: 'individual';
     lower: number | null;
@@ -353,11 +191,7 @@ export interface IndividualHealthSetPoints {
     masterUpper?: number | null;
 }
 
-/** Relationship model: residual = actual - predicted (signed, so the lower
- *  side is negative). Names mirror the legacy keys
- *  `residual_at_health_80_lower/upper` and `residual_at_health_0_lower/upper`.
- *  All start `null` -- there are no defaults, the user reads them off the
- *  residual chart. */
+/** Relationship: residual = actual - predicted (lower side negative). All start `null`; no defaults. */
 export interface RelationshipHealthSetPoints {
     kind: 'relationship';
     residualAt80Lower: number | null;
@@ -381,63 +215,26 @@ export type HealthSetPoints =
 export interface FailureGroupStateSlice {
     groups: FailureGroup[];
     models: FailureModel[];
-    /**
-     * Workspace-wide "is the machine actually running" filter: since
-     * 2026-10-26 exactly ONE `greater_than` row ("Machine is running when
-     * GEN_SPEED is above 1200"), also the export's `machine_info.running_status`
-     * (`utils/runningStatus.ts`) — set once here rather than per model, since
-     * every Workspace-mode model needs training data restricted to
-     * the same operating condition. Combined with the training periods
-     * client-side in `utils/trainingScope.ts` before every train / preview
-     * invoke; optional so older workspaces without it
-     * just read as "no filter" (`?? []`).
-     */
+    /** Workspace running condition: ONE `greater_than` row, also the export's `machine_info.running_status`; absent = no filter. Combined with training periods in `utils/trainingScope.ts`. */
     runningConditionFilters?: WorkspaceSensorFilter[];
-    /** How `runningConditionFilters` combine. Since 2026-10-26 there is ONE
-     *  "sensor > value" condition, so this no longer matters and is written
-     *  `'and'`; old files may say 'or' (harmless with one row). */
+    /** Always 'and' (one condition); old files may say 'or'. */
     runningConditionCombine?: 'and' | 'or';
-    /** Workspace-default TRAIN periods (sibling to `runningConditionFilters`;
-     *  the field keeps its old name so older workspaces load unchanged).
-     *  A model in `runningConditionMode: 'workspace'` uses THIS list; 'custom'
-     *  uses its own `filterTimePeriods`. At least one is REQUIRED to train
-     *  (`getBuildBlockReason`); an empty/undefined list does not mean "whole
-     *  dataset". */
+    /** Workspace-default TRAIN periods for 'workspace' mode ('custom' uses `filterTimePeriods`). At least one is required to train; empty is not 'whole dataset'. */
     runningConditionTimePeriods?: TimePeriod[];
-    /** Workspace-default SCORING periods (the field says "test periods" so
-     *  older workspaces load unchanged): the time
-     *  ranges the trained model gives a health score for (never trained on). A
-     *  Workspace-mode model uses THIS list; a Custom one its own
-     *  `customTestPeriods`. At least one is required before Mark complete
-     *  (`markCompleteBlockReason`). Optional — undefined reads as `[]`. */
+    /** Workspace-default SCORING periods (never trained on); 'custom' uses `customTestPeriods`. At least one required before Mark complete; undefined = []. */
     runningConditionTestPeriods?: TestPeriod[];
-    /** OLD FILES ONLY: "No condition — use all rows" (removed 2026-10-26). No
-     *  longer counts as a configured running condition; read once by
-     *  `migrateSingleRunningCondition`, which sets it back to `false`. */
+    /** OLD FILES ONLY: reset to false by `migrateSingleRunningCondition`; no longer counts as configured. */
     runningConditionNoneConfirmed?: boolean;
-    /** "Use all data" (2026-10-28, user decision): Train and the Health score use
-     *  every row of the periods instead of only the running ones. The condition
-     *  stays required — it is still the export's `machine_info.running_status`.
-     *  A new key on purpose: the old `runningConditionNoneConfirmed` is reset by
-     *  the read-path conversion. `undefined` = false. */
+    /** 'Use all data': Train and Health score use every row of the periods. The condition stays required (export `running_status`). undefined = false. */
     runningConditionAllData?: boolean;
     /** Category changes made by the one-time normalisation. `undefined` =
      *  step not run yet; `null` = nothing to show / dismissed. */
     categoryNormalisationNotice?: CategoryChange[] | null;
-    /** OLD FILES ONLY: the pre-2026-10-26 "legacy running condition" notice
-     *  flag. Nothing sets it any more; `migrateSingleRunningCondition` clears a
-     *  leftover `'pending'` to `null`. */
+    /** OLD FILES ONLY: a leftover 'pending' is cleared to null by `migrateSingleRunningCondition`. */
     rcLegacyNotice?: 'pending' | null;
-    /** OLD FILES ONLY: the export-only "Machine is running when … is above …"
-     *  line of before 2026-10-26. Read once by `migrateSingleRunningCondition`
-     *  (a source for the one condition) and cleared there; nothing else reads
-     *  or writes it. */
+    /** OLD FILES ONLY: read once by `migrateSingleRunningCondition` as a source for the condition, then cleared. */
     runningStatus?: { sensor: string; stopAtOrBelow: string } | null;
-    /** The one-time conversion of an old running condition (several conditions,
-     *  AND / OR, Use all rows, the export's own line) into the ONE "Machine is
-     *  running when <sensor> is above <value>" (2026-10-26). `undefined` = step
-     *  not run; `null` = nothing to show, dismissed, or the condition was Applied
-     *  again since. */
+    /** Result of the one-time conversion to the single running condition. undefined = not run; null = nothing to show, dismissed, or condition re-Applied. */
     runningConditionConversion?: RunningConditionConversion | null;
 }
 
@@ -457,30 +254,14 @@ export interface RunningConditionConversion {
     customModels: { id: string; result: 'converted' | 'needs-set' }[];
 }
 
-/** One training period. `''` = open end (only valid on the first period's
- *  start and the last period's end). Times are `datetime-local` strings. */
+/** `''` = open end (only first start / last end). Times are `datetime-local` strings. */
 export interface TimePeriod {
     id: string;
     start: string;
     end: string;
 }
 
-/** A SCORING period ("just score it" — spec
- *  `docs/design/handoff/workbench-redesign/README.md` §2): only start → end.
- *  The trained model gives a health score for that time and the user reads the
- *  chart; there is no Normal / Known problem label, no event time, no lead
- *  time and no verdict. Shown as `S1, S2 …` by list position. Unlike a train
- *  period both `start` and `end` are required (`validateTestPeriods`). It MAY
- *  overlap train periods (information only).
- *
- *  The type and the storage keys (`runningConditionTestPeriods`,
- *  `customTestPeriods`) keep their "test period" names so the workspace format
- *  does not change.
- *
- *  The three optional keys below exist ONLY so an old workspace file still
- *  type-checks when it is read. Nothing reads them for any
- *  decision and nothing writes them: build / copy a period with
- *  `toScoringPeriod` (`utils/timePeriods.ts`), which drops them. */
+/** A SCORING period: start and end only, both required (`validateTestPeriods`); may overlap train periods. Shown as S1, S2 by position. Build or copy through `toScoringPeriod`, which drops the legacy keys below. */
 export interface TestPeriod extends TimePeriod {
     /** @deprecated read-only legacy (the removed Normal / Known problem label), never written. */
     label?: 'normal' | 'problem';
@@ -500,21 +281,15 @@ export interface CategoryChange {
     to: ModelCategory | null;
 }
 
-/** Payload of the cross-window 'failure-group-state-changed' event — the whole
- *  slice plus who sent it. Typed once here so every listener carries every
- *  field instead of re-listing them (a listener that names only some fields
- *  would lose new slice fields — see `withFailureGroupState`). */
+/** Payload of 'failure-group-state-changed': the whole slice plus sender; listeners must not re-list fields (see `withFailureGroupState`). */
 export interface FailureGroupStateChangedPayload extends FailureGroupStateSlice {
     workspaceId?: string;
     origin?: string;
-    /** Set by the Dashboard autosave when the write it just made changed the
-     *  special-sensor recipes: a listener that judges freshness against them
-     *  (Build Model) re-reads them from disk. Never the recipes themselves. */
+    /** Set by Dashboard autosave when special-sensor recipes changed; the listener re-reads them from disk. */
     recipesChanged?: boolean;
 }
 
-/** Payload of the cross-window 'update-special-sensor' event (Add Sensor
- *  window -> Dashboard): an edit of a special sensor that kept its tag. */
+/** Payload of 'update-special-sensor' (Add Sensor window -> Dashboard): an edit that kept the tag. */
 export interface UpdateSpecialSensorPayload {
     recipe: SpecialSensorRecipe;
     metadata: SensorMetadata;
@@ -524,14 +299,7 @@ export interface UpdateSpecialSensorPayload {
     recipeOrder?: string[];
     workspaceId?: string;
     generation?: number;
-    /**
-     * The edit FIXED a sensor that could not be restored this
-     * session (it had no column). Its values -- and those of everything built
-     * on it -- are new, but a model's train fingerprint does not include
-     * special-sensor recipes, so the Dashboard sets every model that trains on
-     * one of `affectedTags` back to Incomplete and out of date in one write
-     * (`demoteModelsTrainedOnSensors`). Never set for a description-only save.
-     */
+    /** The edit fixed a sensor that had no column this session. The train fingerprint ignores recipes, so Dashboard sets models trained on `affectedTags` back to Incomplete and stale (`demoteModelsTrainedOnSensors`). */
     repaired?: boolean;
     /** With `repaired`: the fixed sensor and every special sensor built on it
      *  (recomputed or still broken). */
@@ -540,34 +308,16 @@ export interface UpdateSpecialSensorPayload {
 
 type WorkspaceRoute = 'import' | 'dashboard' | 'failure-group';
 
-/**
- * Fixed positions on the Dashboard that any panel can occupy. Naming is
- * column-major: `left-top` = chart slot by default. The right column is a
- * single slot — Filter now lives as a tab inside the `data` panel instead
- * of its own slot. Resize ratios are tied to slots (not panels), so after
- * a swap the new occupant inherits the previous panel's slot size.
- */
+/** Dashboard slots, column-major. Resize ratios belong to slots, so a swapped panel inherits the slot's size. */
 export type DashboardSlot = 'left-top' | 'left-bottom' | 'right-top';
 
-/**
- * The swappable panels on the Dashboard. Filter is NOT a panel — it's a
- * tab inside the `data` panel.
- */
+/** Filter is a tab inside `data`, not a panel. */
 export type DashboardPanel = 'chart' | 'data' | 'sensors';
 
-/**
- * Which panel is currently rendered in which slot. Mutated by drag-and-drop
- * on panel headers and persisted in WorkspaceState so the layout survives
- * reload.
- */
+/** Panel shown in each slot; persisted in WorkspaceState. */
 export type DashboardSlotMap = Record<DashboardSlot, DashboardPanel>;
 
-/**
- * Persisted split-pane ratios for the Dashboard's resizable layout.
- * Each tuple is `[primary%, secondary%]` summing to ~100. Stored per
- * workspace so the user's preferred proportions survive reload. When
- * absent on an older workspace, Dashboard falls back to its DEFAULT_LAYOUT_SIZES.
- */
+/** Persisted split ratios `[primary%, secondary%]` summing to ~100; absent = DEFAULT_LAYOUT_SIZES. */
 export interface DashboardLayoutSizes {
     /** Horizontal: [left-column%, right-column%]. Default ~ [66.67, 33.33]. */
     columns: [number, number];
@@ -575,9 +325,7 @@ export interface DashboardLayoutSizes {
     leftRows: [number, number];
 }
 
-/** A single pinned axis bound for the Scatter chart — which sensor it was
- *  set against, plus min/max (either may be omitted to keep that side
- *  auto-fitting). */
+/** Pinned axis bound for Scatter; an omitted side keeps auto-fit. */
 interface ScatterAxisPin {
     sensor: string;
     min?: number;
@@ -589,12 +337,7 @@ export interface ScatterAxisPins {
     y?: ScatterAxisPin;
 }
 
-/** One user-defined time window, highlighted on Line and Scatter (not Pair
- *  Plot — it keeps its own lasso-cluster gesture instead) — a span of
- *  wall-clock time, not tied to any one sensor or chart. `start`/`end` are
- *  datetime-local input strings (not epoch numbers) so they round-trip
- *  through the same `<input type="datetime-local">` the rest of the app's
- *  date fields already use. */
+/** User time window highlighted on Line and Scatter (not Pair Plot). `start`/`end` are datetime-local strings. */
 export interface TimeHighlight {
     id: string;
     start: string;
@@ -604,12 +347,7 @@ export interface TimeHighlight {
     enabled: boolean;
 }
 
-/** One user-defined value range ("load band") under `ValueHighlight.sensor`
- *  — a point whose value on that sensor falls in [min, max] gets this
- *  range's colour when `enabled`. Colour is assigned once (from the same
- *  palette `TimeHighlight` cycles through) when the range is created and
- *  persisted from then on, same as `TimeHighlight.color` — stable across
- *  adding/removing other ranges, and user-recolourable. */
+/** A value band under `ValueHighlight.sensor`: points with value in [min, max] get this colour when `enabled`. Colour is fixed at creation. */
 export interface ValueHighlightRange {
     id: string;
     min: number;
@@ -618,39 +356,13 @@ export interface ValueHighlightRange {
     enabled: boolean;
 }
 
-/** "By value" highlighting — colours Scatter chart points by where a 3rd
- *  sensor's value falls among user-defined ranges (e.g. two speed bands
- *  compared spatially on an X/Y plot). Lives in the same "Highlights" tab
- *  as `TimeHighlight` ("By time"), but is a single sensor + its ranges
- *  rather than a flat list — Scatter only has one colour channel, so
- *  ranges from more than one sensor active at once would be ambiguous.
- *  Scatter-only (Line/Pair Plot don't read this at all — Pair Plot keeps
- *  its own lasso-cluster gesture, Line has no 3rd-sensor colour channel).
- *  `sensor: ''` = off (no sensor picked yet). */
+/** 'By value' highlighting, Scatter only: colours points by one third sensor's ranges (one colour channel). `sensor: ''` = off. */
 export interface ValueHighlight {
     sensor: string;
     ranges: ValueHighlightRange[];
 }
 
-/** A single tagged point on the Line chart — "pin this exact point so I can
- *  compare its value against another one." Identified by its x-axis
- *  TIMESTAMP, not a raw array index: the query result's index-to-timestamp
- *  mapping shifts whenever the time range/aggregation changes, so an
- *  index-based reference would silently point at the wrong point after any
- *  such change. Re-resolved to the nearest plotted index at render time via
- *  the same `nearestXIndex` snapping `TimeHighlight` already uses.
- *
- *  NOT part of `WorkspaceState` — per the user's explicit call, tags don't
- *  need to survive closing and reopening the app. They're still lifted up
- *  to Dashboard.tsx (not left as LineChart-local state) so they survive
- *  switching chart type away and back to Line within the same running
- *  session — Dashboard's in-memory state just never gets written to or
- *  seeded from disk.
- *
- *  Scatter chart's own tagged points are deliberately NOT modeled here
- *  either — Scatter's sample comes from reservoir sampling
- *  (`get_scatter_sample`), so a tagged point has no stable identity across a
- *  refetch; ScatterChart keeps its tags as local, ephemeral state instead. */
+/** Pinned Line-chart point, identified by x-axis TIMESTAMP (indices shift with range/aggregation) and re-resolved with `nearestXIndex`. Lives in Dashboard state, not saved. */
 export interface LineTaggedPoint {
     id: string;
     timestamp: string;
@@ -669,13 +381,7 @@ export interface WorkspaceState {
     selectedSensors: string[];
     visibleSensors: string[];
     operationConfig: SensorOperationConfig | null;
-    /** Undefined only for a workspace that has never been through Dashboard's
-     *  autosave — a freshly-created one (see `DataUploadPage.handleContinue`,
-     *  which omits this field entirely). Dashboard reads that absence as
-     *  "never had a time period chosen" and applies its one-time "last 6
-     *  months" default range; a workspace that HAS been autosaved always has
-     *  this set (even to explicitly-empty strings, e.g. after "Reset
-     *  Period"), and Dashboard leaves those alone. */
+    /** Undefined only for a workspace never autosaved; Dashboard then applies its one-time 'last 6 months' default. */
     filters?: WorkspaceFilterState;
     chartType?: 'line' | 'scatter' | 'pair';
     samplingMethod?: 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
@@ -683,88 +389,34 @@ export interface WorkspaceState {
     mappingFilePath?: string | null;
     mappingKeyColumn?: string | null;
     failureGroupState?: FailureGroupStateSlice;
-    /** @deprecated Legacy global PM slot from before PM config was folded
-     *  into each `FailureModel`. Only read by the workspace-load migration
-     *  shim (`workspaceManager.ts`) to seed the one model it used to belong
-     *  to; never written by current code. */
+    /** @deprecated Legacy global slot; only read by the load migration. */
     predictiveModelState?: PredictiveModelStateSlice;
-    /** Dashboard's resizable layout ratios (split.js gutters). Optional so
-     *  older workspaces just use the default proportions. Updated on the
-     *  fly via `onDragEnd` and persisted by the existing autosave effect. */
+    /** Split.js ratios; absent = default proportions. */
     layoutSizes?: DashboardLayoutSizes;
-    /** Which alarm setpoint lines are toggled on, per sensor tag. Keyed by
-     *  tag rather than a flat list so removing a sensor's entry is O(1) and
-     *  the shape stays legible in the saved JSON. Absent tag = no lines on. */
+    /** Alarm lines turned on, per sensor tag; absent tag = none. */
     alarmLinesEnabled?: Record<string, AlarmLevel[]>;
-    /** Scatter chart's selected X/Y sensor pair. Persisted because
-     *  Chart.tsx unmounts ScatterChart entirely when the chart type isn't
-     *  'scatter' — without this, switching to Line/Pair Plot and back reset
-     *  the pair to the first two sensors every time. Absent = default to
-     *  the first two selected sensors. */
+    /** Scatter X/Y pair, persisted because ScatterChart unmounts on chart-type change. Absent = first two selected sensors. */
     scatterAxes?: { x: string; y: string };
-    /** Metadata for sensors created at runtime via "Add Special Sensor"
-     *  (calculated/derived sensors have no row in the mapping CSV, so they
-     *  get no entry there). Merged with the mapping-CSV-derived
-     *  `sensorMetadata` in Dashboard.tsx -- kept separate here rather than
-     *  folded into one array because `sensorMetadata` itself is re-derived
-     *  fresh from the mapping CSV on every load, not persisted directly.
-     *
-     *  Cosmetic only (name/description/unit/component) -- see
-     *  `specialSensorRecipes` below for what actually reconstructs the
-     *  sensor's data on reload. */
+    /** Metadata of Add Special Sensor columns (not in the mapping CSV), merged with mapping metadata in Dashboard.tsx. Cosmetic only. */
     extraSensorMetadata?: SensorMetadata[];
-    /** What to re-run, in order, right after `load_csv` on
-     *  workspace open, to rebuild each "Add Special Sensor" column in the
-     *  Rust backend's in-memory session. The computed column only ever
-     *  lives in that session's memory (`calculate_new_sensor`/
-     *  `evaluate_formula` push directly onto `AppState.data`), so without
-     *  the recipe it is gone after every restart: `extraSensorMetadata`
-     *  keeps the cosmetic name/description around, but the sensor would
-     *  plot no data at all, with no error. This is
-     *  the actual recipe (not the result) needed to recreate it, in the
-     *  same spirit as the rest of the app never caching computed data.
-     *  `tag` is always forced back as
-     *  the recomputation's `customName` so the recreated column's header
-     *  matches `extraSensorMetadata`/`selectedSensors` exactly, regardless
-     *  of Rust's own auto-naming. Entries must replay in array order --
-     *  formula sensors can reference an earlier "Add Special Sensor" round
-     *  by tag, and Rust needs that earlier column to already exist. */
+    /** Recipes replayed in array order after `load_csv` to rebuild special-sensor columns (they live only in Rust session memory). Order matters: formulas can reference earlier ones. */
     specialSensorRecipes?: SpecialSensorRecipe[];
-    /** Per-sensor line-color override, set via the pipette in the Selected
-     *  Sensor tab. Sensors absent from this map fall back to the default
-     *  palette (see `resolvedSensorColors` in Dashboard.tsx). */
+    /** Per-sensor colour override; absent falls back to the default palette (`resolvedSensorColors`). */
     sensorColors?: Record<string, string>;
-    /** Per-sensor pinned Y-axis bounds for the Line chart, set via the
-     *  axis-editor icon in the Selected Sensor tab. min/max are independent
-     *  — either may be omitted to keep that side auto-fitting. */
+    /** Per-sensor pinned Line Y bounds; an omitted side keeps auto-fit. */
     sensorAxisRange?: Record<string, { min?: number; max?: number }>;
-    /** Scatter chart's pinned X/Y axis scale (the ruler-icon editor,
-     *  independent of `scatterAxes` above which just tracks WHICH sensor is
-     *  on each axis). Each side records which sensor it was pinned against
-     *  so it stops applying automatically if the X/Y dropdown is later
-     *  switched to a different sensor — same "stale pin" guard ScatterChart
-     *  already does for the in-session case, now surviving reload too. */
+    /** Scatter pinned axis scale; each side records its sensor so a pin stops applying when the axis sensor changes. */
     scatterAxisPins?: ScatterAxisPins;
-    /** Last-used input for the TIME RANGE panel's quick relative-range
-     *  shortcut (the Y/M/W/D/H buttons + amount field). Purely a UI
-     *  convenience — the actual applied range lives in `filters`, which
-     *  already persists on its own; this only restores what was last typed
-     *  into the shortcut so it doesn't silently reset to "1 D". */
+    /** Last input of the relative-range shortcut; UI convenience only (the applied range lives in `filters`). */
     relativeTimeRange?: { amount: string; unit: 'Y' | 'M' | 'W' | 'D' | 'H' };
-    /** Time windows highlighted on Line and Scatter (Pair Plot doesn't read
-     *  this list) — see `TimeHighlight`. Absent = no highlights defined
-     *  (the pre-feature default). */
+    /** Highlighted time windows (Line and Scatter); absent = none. */
     timeHighlights?: TimeHighlight[];
     /** "By value" highlighting — see `ValueHighlight`. Scatter-only. Absent
      *  = no sensor picked (the pre-feature default). */
     valueHighlight?: ValueHighlight;
-    /** The machine this project is about (Project details). The project's
-     *  `name` ("Plant · Machine") and `description` ("tag · notes") are derived
-     *  from it by `saveProjectDetails` (`utils/projectDetails.ts`), the ONE
-     *  writer of all four. Absent on a project made before it existed. */
+    /** The machine this project is about; `saveProjectDetails` is the only writer of it and of the derived `name` and `description`. Absent on older projects. */
     machine?: MachineDetails;
-    /** The time zone the data's timestamps are in, minutes east of UTC
-     *  (-720..840). Absent until `ensureDataUtcOffset` fills in the PC's. */
+    /** Minutes east of UTC (-720..840) of the data's timestamps; absent until `ensureDataUtcOffset` fills it. */
     dataUtcOffsetMin?: number;
 }
 
@@ -777,8 +429,7 @@ export interface MachineDetails {
     notes: string;
 }
 
-/** Cross-window event: a project's name/description changed (Project details
- *  saved). Receivers drop a payload whose `workspaceId` is not theirs. */
+/** Cross-window event: project details saved; receivers drop a foreign `workspaceId`. */
 export const PROJECT_DETAILS_CHANGED = 'project-details-changed';
 
 /** Payload of `PROJECT_DETAILS_CHANGED`. */

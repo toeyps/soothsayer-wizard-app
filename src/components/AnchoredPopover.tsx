@@ -1,10 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties, type ReactNode } from 'react';
 import Portal from './Portal';
 
-/** Viewport-relative rectangle of the element a popover is anchored to —
- *  the shape `Element.getBoundingClientRect()` returns, captured once at
- *  the moment the popover is opened (typically in the trigger button's own
- *  `onClick`, via `e.currentTarget.getBoundingClientRect()`). */
+/** Viewport rectangle of the anchor, captured when the popover opens (getBoundingClientRect). */
 export interface PopoverAnchorRect {
     top: number;
     bottom: number;
@@ -19,20 +16,11 @@ interface AnchoredPopoverProps {
     /** Called when the popover should close itself because the page
      *  scrolled out from under its anchor — see the scroll note below. */
     onRequestClose: () => void;
-    /** Popover's own fixed pixel width. When given, the popover's RIGHT
-     *  edge lines up with the anchor's right edge (matches the approved
-     *  prototype's own `placePop()`, which right-aligns every popover
-     *  except the plain colour swatch). Left-aligned to the anchor's own
-     *  left edge when omitted. */
+    /** Fixed width; the right edge aligns to the anchor's right edge. Omitted = left-aligned. */
     width?: number;
-    /** The tallest this popover can grow while open (e.g. the sensor picker's list
-     *  `max-height`). Used to decide below vs above ONCE at open, and — when it opens above —
-     *  reserved as its height, so the content (the picker's search box) never moves while the
-     *  user types or opens groups. Omitted → the height measured at open. */
+    /** Tallest it can grow: decides below/above at open and is reserved as height when above. Omitted = height measured at open. */
     reserveHeight?: number;
-    /** Called once per open, right after the first clamp has positioned the popover — the
-     *  place to move focus into it (with `preventScroll`), so a focus-scroll can never fire
-     *  before the popover is where it will stay. */
+    /** Called once per open after the first clamp; move focus here with `preventScroll`. */
     onPlaced?: (el: HTMLDivElement) => void;
     children: ReactNode;
     style?: CSSProperties;
@@ -41,9 +29,7 @@ interface AnchoredPopoverProps {
 const GAP = 6;
 const EDGE = 8;
 
-/** The lowest `top` a popover may take: 8 px from the viewport edge, or 4 px under the main
- *  window's fixed custom titlebar (`.titlebar`, z-index 9999 — it would cover the popover).
- *  Read from the DOM, so windows without a titlebar keep the plain 8 px. */
+/** Lowest `top`: 8px from the viewport edge or 4px under the fixed titlebar (z-index 9999). */
 export function popoverMinTop(): number {
     const tb = typeof document !== 'undefined' ? document.querySelector('.titlebar') : null;
     const bottom = tb ? tb.getBoundingClientRect().bottom : 0;
@@ -76,14 +62,7 @@ export interface PopoverPlacement {
     height: number | null;
 }
 
-/**
- * The clamp/flip math (pure, so it is unit-tested directly). Below the anchor unless the
- * popover's planned height does not fit there and there is more room above. Above, it is
- * anchored by its BOTTOM edge (6 px over the anchor) so it grows upward from the trigger, with
- * `reserveHeight` (capped to the room above) as a fixed height; a popover with no reserve that is
- * taller than the room above is pinned at `minTop` instead (it then overlaps the anchor rather
- * than sliding under the titlebar or off screen).
- */
+/** Clamp/flip: below unless it won't fit and above has more room; above is bottom-anchored with `reserveHeight`, else at `minTop`. */
 export function computePopoverPlacement(i: PopoverPlacementInput): PopoverPlacement {
     const { anchor, height, vw, vh, minTop, reserveHeight } = i;
     const popoverWidth = i.alignWidth ?? i.width;
@@ -109,43 +88,21 @@ export function computePopoverPlacement(i: PopoverPlacementInput): PopoverPlacem
     return { placement, top, bottom: null, left, height: null };
 }
 
-/**
- * Floating popover rendered through `Portal` so it escapes any scrollable
- * ancestor's `overflow` clipping. Serves the colour picker, pin-Y-axis and
- * alarm-setpoints popovers.
- *
- * Position is computed ONCE from `anchorRect` (already viewport
- * coordinates, so `position: fixed` lines up directly) rather than
- * re-measured live on every scroll/resize. Instead, the popover closes
- * itself via `onRequestClose` as soon as the page scrolls or resizes —
- * without that it would stay rendered at its original screen position
- * while its anchor button scrolls away underneath it.
- */
+/** Rendered through `Portal` to escape scroll clipping; closes via `onRequestClose` on page scroll or resize. */
 export default function AnchoredPopover({ anchorRect, onRequestClose, width, reserveHeight, onPlaced, children, style }: AnchoredPopoverProps) {
     const onPlacedRef = useRef(onPlaced);
     onPlacedRef.current = onPlaced;
-    // Ref so the scroll/resize listener below always calls the LATEST
-    // onRequestClose without needing it in the effect's own dependency
-    // array (callers typically pass an inline arrow function).
+    // Ref so the listener calls the latest `onRequestClose` without making it an effect dependency.
     const closeRef = useRef(onRequestClose);
     closeRef.current = onRequestClose;
 
-    // The popover's own rendered element — needed both to tell a scroll
-    // that originated INSIDE it (a long list or a horizontally-overflowing
-    // input firing its own `scroll` event must not close the popover on
-    // itself) apart from a scroll elsewhere and, below, to measure its
-    // real on-screen size for the viewport clamp/flip pass.
+    // Own element: to ignore scrolls inside it and to measure it for the clamp.
     const popoverRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (!anchorRect) return;
         const handleViewportChange = (event: Event) => {
-            // A scroll that happened inside the popover (its own `overflow-
-            // y: auto` list, or a text/number input scrolling its content
-            // horizontally once it overflows) does not invalidate the
-            // anchor position — only a scroll of the page/list BEHIND the
-            // popover does, since that's what actually moves the anchor
-            // out from under it.
+            // A scroll inside the popover does not move the anchor; only a scroll behind it does.
             if (
                 event.type === 'scroll' &&
                 popoverRef.current &&
@@ -156,41 +113,17 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
             }
             closeRef.current();
         };
-        // `capture: true` so this also sees a scroll on any scrollable
-        // ancestor (e.g. the sensor list's own overflow-y container), not
-        // just a window-level scroll.
+        // `capture: true` so scrolls on any scrollable ancestor are seen.
         window.addEventListener('scroll', handleViewportChange, true);
         window.addEventListener('resize', handleViewportChange);
         return () => {
             window.removeEventListener('scroll', handleViewportChange, true);
             window.removeEventListener('resize', handleViewportChange);
         };
-        // Re-subscribing per anchorRect is harmless (same listener logic
-        // every time) and keeps this simple — the important thing is the
-        // listener exists for the whole time anchorRect is non-null.
     }, [anchorRect]);
 
-    // Viewport clamp/flip pass. The popover is first rendered (below) at
-    // its "natural" position — directly under the anchor, right-aligned to
-    // it when `width` is given — but that can push it partly or fully off
-    // screen (anchor near the bottom/right edge). Its real size isn't known
-    // until it has rendered, so this measures the actual element via
-    // `getBoundingClientRect()` and nudges its inline `top`/`left` back on
-    // screen if needed, flipping above the anchor instead of below when
-    // that leaves more of the popover visible.
-    //
-    // This runs from a CALLBACK ref, not a `useLayoutEffect` keyed on
-    // `anchorRect` — `Portal` (see its own doc comment) mounts its children
-    // into `#wizard-portal-root` only after ITS OWN `useEffect` runs, one
-    // commit after this component's first render/layout-effect pass. A
-    // `useLayoutEffect` here would run too early, see `popoverRef.current`
-    // as still null, and silently no-op forever (caught by hand: the clamp
-    // never actually applied in any test until this was switched to a
-    // callback ref). A callback ref fires exactly when the host node is
-    // actually inserted into the DOM, whichever commit that turns out to
-    // be, so it reliably catches the delayed portal mount.
-    // The below/above choice made at open; later re-clamps (ResizeObserver) keep it, so a list
-    // that shrinks while the user types never makes the popover jump to the other side.
+    // Clamp/flip runs from a callback ref: Portal mounts children one commit later, so a layout effect sees a null ref.
+    // The below/above choice made at open is kept on re-clamp so the popover never jumps sides.
     const placementRef = useRef<'below' | 'above' | null>(null);
     const applyClamp = useCallback((el: HTMLDivElement) => {
         if (!anchorRect) return;
@@ -214,9 +147,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
         el.dataset.placement = p.placement;
     }, [anchorRect, width, reserveHeight]);
 
-    // Holds the ResizeObserver set up below for the currently-mounted
-    // popover element, so it can be torn down (and not leaked/duplicated)
-    // when the node changes or unmounts.
+    // Holds the ResizeObserver for the mounted element so it is torn down on change or unmount.
     const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
     const setPopoverRef = useCallback((node: HTMLDivElement | null) => {
@@ -227,15 +158,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
         if (node) {
             applyClamp(node);
             onPlacedRef.current?.(node);
-            // The clamp above only runs once, right when the popover is
-            // first inserted — content that grows AFTER that can push the
-            // popover's bottom edge off screen with no way to reach it,
-            // since `.sensor-popover` only scrolls internally once it hits
-            // its own max-height. A ResizeObserver on the popover's own
-            // element re-runs the SAME `applyClamp` logic whenever its
-            // content box actually changes size. Guarded for environments
-            // (jsdom in tests that don't need it) with no ResizeObserver at
-            // all — those simply keep the open-time-only clamp.
+            // Re-clamp when content grows after open (the clamp otherwise runs once). Skipped where ResizeObserver is missing (jsdom).
             if (typeof ResizeObserver !== 'undefined') {
                 const ro = new ResizeObserver(() => applyClamp(node));
                 ro.observe(node);
@@ -244,12 +167,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
         }
     }, [applyClamp]);
 
-    // Belt-and-suspenders re-clamp for the (currently unused) case of
-    // `anchorRect`/`width` changing on an ALREADY-mounted instance, without
-    // a fresh ref attach — every current caller instead fully unmounts and
-    // remounts a fresh AnchoredPopover per anchor (see callers' `key`s), so
-    // the callback ref above is what actually fires in practice, but this
-    // keeps the clamp correct if that assumption ever changes.
+    // Re-clamp if anchorRect/width change on a mounted instance; current callers remount per anchor.
     useLayoutEffect(() => {
         placementRef.current = null;
         if (popoverRef.current) applyClamp(popoverRef.current);
@@ -275,10 +193,7 @@ export default function AnchoredPopover({ anchorRect, onRequestClose, width, res
                     zIndex: 1000,
                     ...style,
                 }}
-                // Stops a click inside the popover from bubbling up to
-                // whatever row/list it's anchored over (e.g. a sensor row's
-                // own onClick toggles selection) — the popover's own
-                // contents handle their own clicks.
+                // Stop clicks inside from reaching the anchored row's onClick.
                 onClick={(e) => e.stopPropagation()}
             >
                 {children}

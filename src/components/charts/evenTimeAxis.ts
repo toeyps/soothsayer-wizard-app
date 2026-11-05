@@ -6,15 +6,7 @@ export function hasTimeXAxis(option: any): boolean {
     return x?.type === 'time';
 }
 
-/**
- * Keep a chart's time axis on evenly spaced ticks (`utils/timeAxisTicks.ts`).
- *
- * The step follows what is VISIBLE — the zoom window and the plot's width — so
- * it is recomputed after every render and zoom; the option is only patched
- * (`axisTick.customValues` / `axisLabel.customValues`) when the step changes or
- * the view leaves the range the last patch covered (one window either side), so
- * hovering and panning inside it cost nothing. Returns the detach function.
- */
+/** Keeps a chart's time axis on evenly spaced ticks (utils/timeAxisTicks.ts), following the zoom window and plot width. Patches `customValues` only when the step changes or the view leaves the covered range. Returns the detach function. */
 export function attachEvenTimeTicks(inst: any): () => void {
     if (!inst?.on || !inst?.getModel) return () => {};
     let lastKey = '';

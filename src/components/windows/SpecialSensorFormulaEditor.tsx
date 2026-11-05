@@ -30,23 +30,7 @@ import {
 import { sensorRef } from '../../utils/specialSensorNaming';
 import { resolveFormulaVerdict, usePreviewFormula } from '../../hooks/usePreviewFormula';
 
-/**
- * The special-sensor Formula editor + Quick build (spec:
- * `docs/design/handoff/customer-batch-2026-10/README.md` §5, DESIGN_SYSTEM §4.1).
- *
- * ONE free-text field — the stored formula itself (`$Tag` / `${Tag with spaces}`) — with its
- * structure painted behind the text: a transparent `<textarea>` over a mirror in the same mono
- * font. The mirror is rendered from `tokenizeFormula` (one tokenize per text change, memoised),
- * so it re-renders only when the text, the bracket pair at the caret, the error range or the
- * autocomplete anchor change. Every programmatic edit (wrap, unwrap, palette, fix, autocomplete,
- * Quick build insert) goes through `applyEdit`, a NATIVE insertion over the changed range
- * (`execCommand('insertText')`), so Ctrl+Z / Ctrl+Shift+Z undo it like typing.
- *
- * Average / Median stay an aggregate BLOCK (`kind: 'operation'`, its own `multiOp.decimals`).
- * The live check is the cheap front-end pass (`checkFormula`) until Rust's
- * `preview_formula` answers for the current text (`resolveFormulaVerdict`); the function list is
- * Rust's (never retyped here). The window decides what Add / Save do with the reported state.
- */
+/** Special-sensor Formula editor + Quick build: one free-text field (the stored formula) over a mirror in the same mono font, rendered from `tokenizeFormula`. Every programmatic edit goes through `applyEdit` (native `execCommand('insertText')`) so Ctrl+Z undoes it; Average/Median stay an aggregate block; the function list is Rust's. */
 
 /** What the editor tells the window after every change. */
 export interface FormulaEditorReport {
@@ -78,8 +62,7 @@ export interface FormulaEditorRepair {
 }
 
 interface Props {
-    /** Sensors the formula may use: autocomplete, Replace…, a block's "Add…" (excludes the sensor
-     *  being edited and everything built on it). */
+    /** Sensors the formula may use (autocomplete, Replace…, 'Add…'); excludes the edited sensor and everything built on it. */
     sensors: string[];
     /** Every column in the dataset (an unknown one is painted red). */
     knownSensors: string[];
@@ -99,8 +82,7 @@ interface Props {
     onReport: (report: FormulaEditorReport) => void;
 }
 
-/** One line per engine function (hover / suggestions). The LIST comes from Rust; this is only
- *  the wording for the names we know (an unknown one shows without a meaning). */
+/** Wording per engine function; the LIST comes from Rust, unknown names show without a meaning. */
 const FN_HELP: Record<string, string> = {
     abs: 'size of a value, sign removed', sqrt: 'square root', pow: 'pow(x, n) = x ^ n', exp: 'e ^ x',
     ln: 'natural log', log: 'log base 10', log10: 'log base 10',
@@ -150,7 +132,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const lookup = useSensorLookup();
     const editing = initialRecipe !== null;
 
-    // ---- What the editor holds (seeded once from the recipe) ----------------------------------
     const initial = useMemo(() => (initialRecipe ? recipeToEditorState(initialRecipe) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
     const [text, setText] = useState(initial?.mode === 'formula' ? initial.text : '');
     const [roundDecimals, setRoundDecimals] = useState<number | null>(initial?.mode === 'formula' ? initial.roundDecimals : null);
@@ -165,7 +146,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
         return { mode: 'formula', text, roundDecimals, note };
     }, [block, text, roundDecimals, note]);
 
-    // ---- Caret / selection, focus, autocomplete ------------------------------------------------
     const taRef = useRef<HTMLTextAreaElement>(null);
     const mirrorRef = useRef<HTMLDivElement>(null);
     const [sel, setSel] = useState<[number, number]>(() => {
@@ -181,10 +161,9 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const tokens = useMemo(() => tokenizeFormula(text), [text]);
     const isKnown = useMemo(() => sensorResolver(knownSensors), [knownSensors]);
 
-    // ---- Live check + preview ------------------------------------------------------------------
     const rounded = useMemo(() => withRoundResult(text, roundDecimals), [text, roundDecimals]);
     const previewInput = useMemo(() => {
-        if (locked) return null; // preview is off while the formula is locked
+        if (locked) return null;
         if (block) return { aggregate: blockPreviewAggregate(block) };
         return rounded.formula ? { formula: rounded.formula } : null;
     }, [locked, block, rounded]);
@@ -212,7 +191,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     // No red flash for the word still being typed.
     const shown = useMemo(() => issueWhileTyping(blocking, ac?.ctx ?? null), [blocking, ac]);
 
-    // ---- Report to the window (only when something it reads changed) ----------------------------
     const edited = !sameState(state, initial);
     const reportRef = useRef<string>('');
     const blockingKey = issueKey(blocking);
@@ -225,7 +203,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [state, blockingKey, edited, onReport]);
 
-    // ---- Editing primitives --------------------------------------------------------------------
     const currentSel = (): [number, number] => {
         const ta = taRef.current;
         return ta ? [ta.selectionStart, ta.selectionEnd] : sel;
@@ -321,7 +298,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
         setSel(r);
     };
 
-    // ---- Autocomplete ---------------------------------------------------------------------------
     const openAc = (value: string, caret: number, force = false) => {
         const ctx = autocompleteContext(value, caret, { force });
         setAc(prev => (ctx ? { ctx, idx: prev && prev.ctx.start === ctx.start ? prev.idx : 0 } : null));
@@ -411,7 +387,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     };
     useEffect(() => () => cancelAnimationFrame(hoverFrame.current), []);
 
-    // ---- Replace… (unknown sensor) and the "All functions" menu --------------------------------
     const [replace, setReplace] = useState<{ name: string; rect: PopoverAnchorRect } | null>(null);
     const replaceTrigger = useRef<HTMLElement | null>(null);
     const closeReplace = useCallback(() => setReplace(null), []);
@@ -422,7 +397,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const closeFnMenu = useCallback(() => setFnMenu(null), []);
     usePopoverDismiss(!!fnMenu, fnTrigger, 'fx-fnmenu', closeFnMenu);
 
-    // ---- Quick build → editor --------------------------------------------------------------------
     const applyQuickFormula = (f: QuickFormula) => {
         if (locked) return;
         setBlock(null);
@@ -453,7 +427,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
         taRef.current?.focus();
     };
 
-    // ---- Derived display --------------------------------------------------------------------------
     const typingName = ac?.ctx.kind === 'sensor' ? ac.ctx : null;
     const used = useMemo(
         () => referencedSensors(tokens).filter(r => !(typingName && r.start >= typingName.start && r.start < Math.max(typingName.end, typingName.start + 1))),
@@ -676,9 +649,7 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                     <span>Round the result</span>
                     <span className="fx-seg" role="radiogroup" aria-label="Round the result">
                         {(() => {
-                            // A stored value outside the usual choices (an older recipe rounded to,
-                            // say, 4 places) is shown as one more, selected, choice -- never as no
-                            // selection at all.
+                            // A stored value outside the usual choices is shown as one more selected choice, never as no selection.
                             const current = block ? block.decimals : roundDecimals;
                             return current !== null && current !== undefined && !ROUND_CHOICES.includes(current)
                                 ? [...ROUND_CHOICES, current] : ROUND_CHOICES;
@@ -830,8 +801,7 @@ function RoundHint({ block, roundDecimals, stored }: { block: BlockState | null;
     );
 }
 
-/** The painted mirror: the same text, split into token spans. A zero-width marker sits at the
- *  autocomplete anchor so the suggestion popover can be placed under it. */
+/** The painted mirror: the text split into token spans, with a zero-width marker at the autocomplete anchor to place the popover. */
 function renderMirror(
     text: string,
     tokens: FormulaToken[],
@@ -951,12 +921,7 @@ const PreviewPlot = memo(function PreviewPlot({ values, empty }: { values: (numb
     );
 });
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * Quick build — the selection-aware option sets of the old ButtonBuilder, the friendly way to
- * START a formula: what is offered depends only on how many sensors are picked on the left. It
- * never commits anything hidden: the generated text is shown, then written into the editor
- * (Use / Insert / Replace), where it is edited freely. Generators: `utils/quickBuild.ts`.
- * ───────────────────────────────────────────────────────────────────────────── */
+/* Quick build: options depend only on how many sensors are picked; nothing hidden is committed. The generated text is shown, then written into the editor (generators in `utils/quickBuild.ts`). */
 
 const TRANSFORM_LABEL: Record<QuickTransform, string> = { abs: 'abs', sqrt: '√', log10: 'log₁₀', exp: 'exp', ceil: 'ceil', floor: 'floor', round: 'round' };
 type OneChoice = null | { kind: 'number'; op: QuickNumberOp } | { kind: 'transform'; fn: QuickTransform };
@@ -1176,9 +1141,6 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
     );
 }
 
-/* ─────────────────────────────────────────────────────────────────────────────
- * The sensor's own fields: Name / Description / Unit / Component.
- * ───────────────────────────────────────────────────────────────────────────── */
 
 export function SensorFieldsCard({
     title, name, setName, nameLocked, nameLockReason, nameError, description, setDescription, unit, setUnit,
@@ -1231,11 +1193,7 @@ export function SensorFieldsCard({
     );
 }
 
-/**
- * A select limited to components that already exist on some sensor — deliberately NOT free
- * typing: a typo would silently fork a new component ("Pump" vs "pump"), so the Sensor tab's
- * grouping fills with near-duplicates. "Uncategorized" is always offered.
- */
+/** Select limited to existing components (a typo would fork a near-duplicate); 'Uncategorized' is always offered. */
 export function ComponentSelect({ value, onChange, options, className, id }: {
     value: string; onChange: (value: string) => void; options: string[]; className?: string; id?: string;
 }) {

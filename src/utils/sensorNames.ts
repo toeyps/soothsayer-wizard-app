@@ -1,11 +1,4 @@
-/**
- * Pure rules for printing long sensor names (DESIGN_SYSTEM §4 "Long sensor names", rules 1, 2, 3, 3b).
- * Everything works on the DISPLAYED name: the description, or the tag when the sensor has none.
- *
- * A split never changes the name: `pre + head + tail` is the name itself, so a name that fits prints
- * exactly as it would without these rules. WHETHER a name is cut is decided by measuring at render time
- * (`hooks/useNameFit.ts`), never here.
- */
+/** Pure rules for printing long sensor names. A split never changes the name; whether it is cut is measured at render (`hooks/useNameFit.ts`). */
 
 const SEP = /\s[-–—·|/]\s/g;
 const SEP_END = /\s*[-–—·|/]\s*$/;
@@ -23,12 +16,7 @@ export const NAME_HEAD_MIN = 8;
 /** Rule 2: the shared prefix and what each row keeps after it are at least this long. */
 const PREFIX_MIN = 12;
 
-/**
- * `head` is the part that gets cut; `tail` stays. `head` never ends in a space and, when there is a head,
- * `tail` starts with exactly one space, so a cut head reads "head… tail".
- * `shared`: the head is the set's shared start (rule 2), printed muted or dropped.
- * `pre`: the start kept before the cut part (rule 3). `head2` + `tail2`: the two-line form (rule 3).
- */
+/** `head` is cut, `tail` stays; head never ends in a space and tail starts with one. `shared`: set's shared start; `pre`: kept start; `head2`/`tail2`: two-line form. */
 export interface NameSplit {
     head: string;
     tail: string;
@@ -49,8 +37,7 @@ export function displayedName(info: NamedSensor): string {
     return info.description || info.tag;
 }
 
-/** Rule 3b: true when two names differ only in case, spaces and punctuation ("SegmentNo 1" = "Segment No 1").
- *  Combining marks count as letters, so Thai names that differ only in a vowel or tone mark stay different. */
+/** True when names differ only in case, spaces and punctuation. Combining marks count as letters, so Thai names differing in a vowel or tone mark stay different. */
 export function sameNameLoosely(a: string | null | undefined, b: string | null | undefined): boolean {
     if (!a || !b) return false;
     const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu, '');
@@ -73,12 +60,7 @@ function segStarts(name: string): number[] {
     return out;
 }
 
-/**
- * Rule 1 for one label. With a `prefix` shared by the set: head = the prefix + the name's own separator,
- * tail = the rest. Otherwise the tail is the longest run of trailing segments ≤ 28 characters; a name with
- * no separator keeps its trailing whole words instead. A name ≤ 28 characters or with no spaces is never
- * split (it end-cuts).
- */
+/** Rule 1: tail = longest trailing segments <= 28 chars (whole words if no separator), or head = shared `prefix`; names <= 28 chars or without spaces end-cut. */
 export function splitName(name: string, prefix?: string): NameSplit {
     if (prefix && name.startsWith(prefix) && name.length - prefix.length >= 2) {
         const sep = SEP_START.exec(name.slice(prefix.length));
@@ -96,11 +78,7 @@ export function splitName(name: string, prefix?: string): NameSplit {
     return whole(name);
 }
 
-/**
- * What is worked out once per names array, because a group can hold thousands of names and every row reads all of
- * them. Keyed by the array itself, so a names array must not be changed in place after its first use (every caller
- * builds a new one in a `useMemo`).
- */
+/** Computed once per names array; do not mutate the array after first use (callers build it in a useMemo). */
 interface NameSetCache {
     /** Every name split into words; built on first need. */
     others: { name: string; words: string[] }[] | null;
@@ -120,13 +98,7 @@ function nameSetCache(names: readonly string[]): NameSetCache {
     return cache;
 }
 
-/**
- * Rule 3 for a label inside a set (list, chips, picker group, tooltip, "X vs Y"): the visible text reads
- * differently from every other name in `names`. Keeps `pre` (up to the first word that differs from a row
- * sharing its end) and `tail` (from the last word that differs from a row sharing its start), taking the
- * shortest pair that tells it apart. Add sensors printed on the same card (a model target) to `names`.
- * Results are cached per `names` array: keep the array stable across rows and renders.
- */
+/** Rule 3: the shortest `pre` + `tail` that tells the name apart from the others in `names`. Cached per array: keep it stable. */
 export function splitInSet(name: string, names: readonly string[], prefix?: string): NameSplit {
     const sp = splitName(name, prefix);
     if (!names.length || sp.shared || name.length <= NAME_TAIL_MAX) return sp;
@@ -196,8 +168,7 @@ function splitAgainst(name: string, sp: NameSplit, others: NonNullable<NameSetCa
     let tailStart = W[t].s;
     let seg = 0;
     for (const st of segStarts(name)) if (st <= tailStart) seg = st;
-    // The end starts at its segment's start when that is short. A tail with no kept start carries the whole
-    // difference, so it may reach 40 characters rather than read as a bare last word ("… A").
+    // Tail starts at its segment start when short; a tail with no kept start carries the whole difference, up to 40 chars.
     const segMax = preEnd === 0 && tailNeeded ? NAME_TAIL_DIFF_MAX : NAME_TAIL_SEGMENT_MAX;
     if (seg > preEnd && name.length - seg <= segMax) tailStart = seg;
     const mid = name.slice(preEnd, tailStart).trimEnd();
@@ -223,10 +194,7 @@ export function compactName(sp: NameSplit): string {
     return `${pre}${pre ? ' … ' : '… '}${sp.tail.trimStart()}`;
 }
 
-/**
- * Rule 3 "the tail grows back": the compact text with 0, 1, 2… more words pulled back into the tail, as far
- * as the kept start. `starts[k - 1]` is where the tail starts in form k (use with `withWiderTail`).
- */
+/** Compact text with 0, 1, 2… more words pulled into the tail; `starts[k - 1]` is form k's tail start (see `withWiderTail`). */
 export function widerTailForms(sp: NameSplit): { forms: string[]; starts: number[] } {
     const pre = sp.pre ?? '';
     const full = pre + sp.head + sp.tail;
@@ -251,12 +219,7 @@ export function withWiderTail(sp: NameSplit, starts: readonly number[], k: numbe
     return { ...sp, head: full.slice(pre.length, i).trimEnd(), tail: ' ' + full.slice(i) };
 }
 
-/**
- * Rule 2: the start every name of a set shares, cut back to a segment boundary, without its separator.
- * '' when there is none worth printing: under 2 names, every name ≤ 28 characters, a prefix under 12
- * characters, or a name that would keep under 12 characters after it. Whether it is PRINTED depends on a
- * row actually being cut (`useCutRuns`).
- */
+/** Rule 2: start shared by every name, cut at a segment boundary, without separator; '' when not worth printing. Whether it is printed depends on a row being cut (`useCutRuns`). */
 export function commonPrefix(names: readonly string[]): string {
     const list = names.filter(Boolean);
     if (list.length < 2) return '';
@@ -276,8 +239,7 @@ export function commonPrefix(names: readonly string[]): string {
     return '';
 }
 
-/** Rule 2 for a set where most names share a start: the prefix of the names in the same family as
- *  `names[0]` (same first segment), '' when fewer than two are in it. */
+/** Prefix of the names in the same family as `names[0]` (same first segment); '' if fewer than two. */
 export function familyPrefix(names: readonly string[]): string {
     const list = names.filter(Boolean);
     if (list.length < 2) return '';
@@ -292,8 +254,7 @@ export function afterPrefix(name: string, prefix: string): string {
     return prefix && name.startsWith(prefix) ? name.slice(prefix.length).replace(SEP_START, '') : name;
 }
 
-/** `afterPrefix` over a whole set, one array per names + prefix: rows of a set share it, so `splitInSet`'s cache
- *  works for them too. A new array per row would pay for every name, per row. */
+/** One array per names + prefix so `splitInSet`'s cache works; a new array per row would redo every name. */
 export function namesAfterPrefix(names: readonly string[], prefix: string): readonly string[] {
     const { after } = nameSetCache(names);
     let out = after.get(prefix);
@@ -304,11 +265,7 @@ export function namesAfterPrefix(names: readonly string[], prefix: string): read
     return out;
 }
 
-/**
- * Rule 1 for an export model key `<sanitized tag>-<R|I|C><n>` + extension: the same 28-character tail, cut
- * at a sanitized " - " (`_-_`), then at `_`. The `-R1` and the extension always stay. A key with no such
- * boundary end-cuts (head '').
- */
+/** Rule 1 for export model keys `<tag>-<R|I|C><n>`+ext: 28-char tail cut at `_-_`, else `_`; suffix and extension stay. */
 export function splitKey(key: string, ext = ''): { head: string; tail: string } {
     const m = /^(.*)(-[RIC]\d+)$/.exec(key);
     const base = m ? m[1] : key;

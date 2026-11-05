@@ -1,19 +1,4 @@
-/**
- * A workspace saved BEFORE the wording change ("Relationship" ->
- * "Relation model" in every label) must open exactly as it was saved
- *.
- *
- * The old "Use '<name> (Relationship)'" suggestion wrote names such as
- * "TAG1 (Relationship)" into saved models. A model's name is the user's data:
- * it is shown in the Dashboard and the Workbench and written into the exported
- * files. The wording change is DISPLAY ONLY, so for such a workspace:
- *   - opening it rewrites nothing, and every name comes back byte for byte;
- *   - `kind` stays the value `'relationship'`;
- *   - the train fingerprint (the model name is not part of it) still equals the
- *     saved `trainedFingerprint`, so nothing turns stale and a Complete model
- *     stays Complete;
- *   - a later, unrelated write keeps the name and the status.
- */
+/** A workspace saved BEFORE the "Relationship" -> "Relation model" wording change must open exactly as saved: a name is user data and the change is DISPLAY ONLY. Opening rewrites nothing, `kind` stays `'relationship'`, and the train fingerprint (excludes the name) still equals `trainedFingerprint`, so a Complete model stays Complete. */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
 import { computeTrainFingerprint, isModelTrainedFresh } from '../utils/trainFingerprint';

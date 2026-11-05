@@ -2,24 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * Three features of the Build
- * Model Workbench:
- *   (1) Custom running-condition editor — DRAFT field, committed by Save/Train;
- *   (2) Relationship X-axis switcher — IMMEDIATE `scatterXSensor` write;
- *   (3) Clustering cluster-range slider + its new `compute_sensor_stats` fetch.
- *
- * Unit tests in BuildModelWindow.test.tsx mock the sensor pickers
- * and feed data straight into state. Everything here is
- * REAL except the Tauri boundary — same harness as
- * BuildModelWorkbenchTrainCrossWindow.integration.test.tsx: Dashboard and
- * BuildModelWindow mounted side by side on ONE workspace file (real
- * workspaceManager over an in-memory plugin-fs, one event bus with a switch
- * that DROPS Build Model's broadcasts so Dashboard's mirror goes stale).
- *
- * Bugs are recorded as `it.fails` (repo convention) — each one says what the
- * correct behaviour is, so it flips to a plain failure the moment it's fixed.
- */
+/* Integration test: Custom condition draft, Relationship X-axis switcher, Clustering range slider. Only Tauri is mocked; known bugs are `it.fails`. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -52,8 +35,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    // Workspace saves go to a temp sibling and are renamed over the real file
-    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    // Saves go to a temp sibling then rename: record the write when it lands.
     writeTextFile: async (p: string, c: string) => { h.files.set(p, c); if (!p.endsWith('.tmp')) h.writes.push(p); },
     rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); h.writes.push(to); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
@@ -151,7 +133,6 @@ import type { WorkspaceState } from '../types';
 import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 import { findPickerRow, pickSingle, pickerSearch, rowTag } from './helpers/sensorPicker';
 
-// ── fixtures ────────────────────────────────────────────────────────────
 
 const WS_FILE = 'workspaces/ws1.json';
 const HEADERS = ['TAG1', 'TAG2', 'TAG3'];
@@ -187,8 +168,7 @@ function dashModel(o: Record<string, unknown> & { kind?: string; tag?: string })
 /** The value input of a Custom model's one running-condition line (Model settings). */
 const customValue = () => within(bmw().getByTestId('custom-rc-one')).getByLabelText('Running above this value') as HTMLInputElement;
 
-/** Current-shape, CONFIGURED workspace (the one condition "TAG1 > 0") — raises
- *  no migration write-back and never auto-opens the Running Condition modal. */
+/** Current-shape configured workspace (condition 'TAG1 > 0'): no migration write-back, no auto-opened Running Condition modal. */
 function wsState(models: unknown[], extra: Record<string, unknown> = {}): WorkspaceState {
     return {
         id: 'ws1', name: 'QA WS', lastRoute: 'dashboard', dataFilePaths: [], metadataFilePath: null,
@@ -265,8 +245,7 @@ async function mountBoth() {
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
 const bmwEl = () => screen.getByTestId('build-model-window');
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status word ('Complete'/'Trained'/'Incomplete') of the open kind tab; there is no footer pill. */
 const pill = () => openTabStatus(bmwEl());
 // The Fit chart card's X-axis name. The charts come from the (debounced) health preview, so read it with waitFor.
 const echartsX = () => within(bmw().getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name');
@@ -307,9 +286,7 @@ async function pickSingleSensor(triggerText: string, tag: string) {
     await settle(30);
 }
 
-// These cross-window flows wait on the disk (waitFor), not fixed sleeps; a whole
-// train -> complete -> edit flow can exceed the 5 s default when the full suite
-// runs in parallel, so the per-test budget is larger here.
+// Cross-window flows wait on disk, not sleeps; a train -> complete -> edit flow can exceed 5 s under parallel runs.
 vi.setConfig({ testTimeout: 20_000 });
 
 beforeEach(() => {
@@ -330,18 +307,12 @@ afterEach(() => {
     cleanup();
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (1) Cross-window: the newly-editable fields vs. Dashboard's (possibly stale)
-//     mirror. Dashboard's FG writers derive from DISK and its autosave adopts
-//     the whole on-disk slice — these tests pin
-//     that the two NEW write paths are covered by that, too.
-// ─────────────────────────────────────────────────────────────────────────
+// Dashboard's mirror may be stale, but its FG writers derive from disk; these pin that these write paths are covered too.
 
 describe('(1) the X-axis switcher\'s IMMEDIATE scatterXSensor write vs. Dashboard\'s mirror', () => {
     for (const lost of [false, true]) {
         it(`scatterXSensor survives Dashboard autosave / FG rename / new model (${lost ? 'broadcast LOST — stale mirror' : 'broadcast delivered'}) and reopens on the chosen axis`, async () => {
-            // Two same-named models of different sensors can't collide, but the
-            // Dashboard toggle below creates a TAG2 Individual — give it room.
+            // Dashboard's toggle below creates a TAG2 Individual; same-named models of different sensors can't collide.
             writeDisk(wsState([REL()]));
             await mountBoth();
             if (lost) dropBuildModelBroadcasts();
@@ -392,8 +363,7 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
             // Seeded from the workspace's "TAG1 > 0"; the value is edited.
             fireEvent.change(customValue(), { target: { value: '42' } });
 
-            // Dashboard writes (and broadcasts, origin 'dashboard') while the
-            // Custom editor has unsaved edits — `applyFg` must not wipe drafts.
+            // Dashboard writes and broadcasts while the Custom editor has unsaved edits: `applyFg` must not wipe drafts.
             await act(async () => { fireEvent.click(screen.getByText('dash-rename-fg1')); });
             await settle(30);
             expect(customValue().value).toBe('42');
@@ -415,18 +385,12 @@ describe('(1) a Custom running condition saved from the Workbench vs. Dashboard\
     }
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (2) Custom condition + period edited live, SAVED, window closed, reopened,
-//     THEN trained separately — the (6) tests in
-//     BuildModelWorkbenchTrain.integration.test.tsx only cover
-//     edit-then-Train-in-one-go (commit inside trainForQueue).
-// ─────────────────────────────────────────────────────────────────────────
+// Save Custom condition+period, close, reopen, then train; BuildModelWorkbenchTrain only covers edit-then-Train.
 
 describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train separately', () => {
     it('the reopened model trains against the saved condition AND period, and the editor is not re-seeded', async () => {
         writeDisk(wsState([dashModel({ id: 'i1' })], {
-            // A workspace condition exists, so switching to Custom seeds from it —
-            // the reopened model must NOT re-seed on top of its own saved list.
+            // A workspace condition exists, so Custom seeds from it; a reopened model must not re-seed over its saved list.
             runningConditionFilters: [{ ...rcOn('TAG3', '7'), id: 'ws-c' }],
             // No workspace train period: the Custom model gets its own below.
             runningConditionTimePeriods: [],
@@ -467,9 +431,7 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
         expect(customValue().value).toBe('42');
 
         await clickTrain();
-        // Train's query is the last FILTERED one: the row counts (Step-1 card, and since
-        // the active Custom model's own count for the train-days note) also
-        // query this sensor, the unfiltered "total" possibly after Train (debounced).
+        // Train's query is the last filtered one; the debounced unfiltered total may come after Train.
         const call = statsCalls('TAG1').filter(c => c.args?.filter).slice(-1)[0];
         expect(call?.args?.filter?.value_filters).toEqual([{ sensor: 'TAG3', operation: 'greater_than', value1: 42, value2: null }]);
         expect(call?.args?.filter?.timestamp_ranges).toHaveLength(1);
@@ -479,10 +441,6 @@ describe('(2) Custom condition/period: Save changes -> close -> reopen -> Train 
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (3) The two draft flows side by side: X-axis (immediate) vs. everything
-//     else (draft until Save).
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(3) immediate X-axis write and the pending draft do not cross-contaminate', () => {
     it('changing the X-axis while a name edit is unsaved writes ONLY scatterXSensor; the draft stays pending and Save later keeps the new axis', async () => {
@@ -532,9 +490,6 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (4) The slider's new criteria-stats fetch vs. fast model switching.
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(4) criteria-stats fetch races between Clustering models', () => {
     // c1: criteria TAG2, real range [0, 10]; c3: criteria TAG1, real range [500, 900].
@@ -579,10 +534,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
     });
 
     it('FIXED (2026-09-30): while the newly selected model\'s stats are loading, its slider shows the loading state, never the PREVIOUS model\'s [min, max]', async () => {
-        // `criteriaStats` is one piece of state shared by every model, so it is
-        // reset to null at the top of its effect, before the early return and
-        // before the new fetch: c3's slider must not render with c1's bounds /
-        // header until its own reply lands.
+        // `criteriaStats` is shared across models and resets to null in its effect: c3's slider must not show c1's bounds.
         writeDisk(wsState([C1(), C3()]));
         await mountBuildModel();
         selectRow('TAG1');
@@ -597,12 +549,7 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
     });
 
     it('FIXED (2026-09-30): dragging while the new model\'s stats are still loading is a no-op — no live handle to drag on the wrong scale', async () => {
-        // Was: a consequence of the bug above — the handles stayed live
-        // during the stale-stats window, and a drag mapped the pointer
-        // through c1's [0, 10] — pulling c3's first split from 600 down to
-        // its left clamp (500.x) although the user dragged to the MIDDLE of
-        // the track. Now the loading state (no `role="slider"` at all) shows
-        // instead, so there's nothing to drag until c3's own stats resolve.
+        // While stats are stale there are no slider handles (a drag would map through c1's range); loading has no `role="slider"`.
         writeDisk(wsState([C1(), C3()]));
         await mountBuildModel();
         selectRow('TAG1');
@@ -651,17 +598,10 @@ describe('(4) criteria-stats fetch races between Clustering models', () => {
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (5) General bug hunt.
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(5a) cluster-range slider: ranges are never re-divided to the criteria sensor\'s real range', () => {
     it('FIXED (2026-09-30): picking a criteria sensor in the Workbench auto-divides the ranges into the sensor\'s real range', async () => {
-        // The auto-divide effect: a Dashboard-created model (ranges
-        // 0-33/33-66/66-100) given a criteria sensor whose data is 500-900 must
-        // get its ranges re-divided across the sensor's real [min, max] (anchored
-        // to the persisted model's own key — see BuildModelWindow.tsx), not three
-        // zero-width segments pinned at the left edge.
+        // A criteria sensor with data 500-900 re-divides the Dashboard default ranges across the real [min, max].
         h.stats.TAG3 = { ...DEFAULT_STATS, min: 500, max: 900 };
         writeDisk(wsState([dashModel({ id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2' })]));
         await mountBuildModel();
@@ -674,9 +614,7 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
         expect(ranges.every((r: any) => r.min >= 500 && r.max <= 900)).toBe(true);
     });
 
-    // The optional criteria sensor could not be cleared.
-    // Through the REAL picker: the trigger's × clears it, the count drops to one cluster (the
-    // only valid shape without a criteria sensor), the section stays open, Save writes it.
+    // The criteria sensor is clearable: × drops to one cluster, keeps the section open, and Save writes it.
     it('FIXED (2026-10-09): the criteria sensor is cleared with the trigger\'s ×, leaving a valid one-cluster model', async () => {
         writeDisk(wsState([dashModel({
             id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
@@ -705,9 +643,7 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
     });
 
     it('FIXED (2026-09-30): stepping the cluster count resizes the ranges array to match', async () => {
-        // `clusterRanges.length === numClusters` is an invariant the auto-divide
-        // effect enforces: `numClusters` 3 -> 4 must not leave 3 ranges
-        // (`executeTrain` slices, it never pads).
+        // Invariant `clusterRanges.length === numClusters`; 3 -> 4 must not leave 3 ranges (`executeTrain` never pads).
         writeDisk(wsState([dashModel({
             id: 'c1', kind: 'clustering', tag: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
             clusterRanges: [{ min: 0, max: 3 }, { min: 3, max: 6 }, { min: 6, max: 10 }],
@@ -722,10 +658,7 @@ describe('(5a) cluster-range slider: ranges are never re-divided to the criteria
 
 describe('(5b) the running-condition gate judges the PERSISTED model, not the pending Custom draft', () => {
     it('FIXED (2026-09-30): with the Custom editor showing "Required" (its one line half-filled), Train is blocked — nothing runs', async () => {
-        // The gate reads the DRAFT-merged model (`effectiveModelFor`): a pending
-        // draft that switched to Custom and left its one line unset must block
-        // Train — otherwise Train would commit it and train without the
-        // condition (every row, idle periods included).
+        // The gate reads the draft-merged model (`effectiveModelFor`): a Custom draft with no line must block Train.
         writeDisk(wsState([dashModel({ id: 'i1' })]));
         await mountBuildModel();
         openSettings();
@@ -752,9 +685,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
     });
 
     it('FIXED (2026-09-30): for a Custom-mode model, the results area\'s "fix" link opens this model\'s OWN Model settings / Custom editor, not the workspace modal', async () => {
-        // A Custom-mode model's gate link opens its own Model settings (its
-        // condition/period editor lives inline there), not the workspace modal —
-        // `incompleteItems` branches on the draft's `runningConditionMode`.
+        // A Custom-mode model's gate link opens its own Model settings, not the workspace modal.
         writeDisk(wsState([dashModel({ id: 'i1', runningConditionMode: 'custom' })]));
         await mountBuildModel();
         const results = within(bmw().getByTestId('results-incomplete'));
@@ -764,11 +695,7 @@ describe('(5b) the running-condition gate judges the PERSISTED model, not the pe
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (6) The redesigned Running condition modal with the REAL
-//     SensorPickerModal nested inside it (BuildModelWindow.test.tsx stubs the
-//     picker, so Esc ownership and a real pick are only provable here).
-// ─────────────────────────────────────────────────────────────────────────
+// Real nested picker in the Running condition modal (BuildModelWindow.test.tsx stubs it): Esc ownership, real pick.
 describe('(6) Running condition modal + the real nested sensor picker (2026-10-03)', () => {
     const COND5 = { ...rcOn('TAG1', '5'), id: 'f1' };
     const esc = () => act(async () => { fireEvent.keyDown(document.body, { key: 'Escape' }); await Promise.resolve(); });

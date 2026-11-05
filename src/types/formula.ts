@@ -1,15 +1,6 @@
-/**
- * Shared types of the special-sensor Formula editor + Quick build -- the
- * TypeScript side of Rust's `preview_formula` /
- * `convert_legacy_formula` (`src-tauri/src/lib.rs`) and of the issue codes in
- * `src-tauri/src/formula_diagnostics.rs`.
- *
- * Keys of both commands keep Tauri's DEFAULT camelCase (no `rename_all`):
- * `{ formula?, aggregate?, maxPoints?, expectedGeneration?, replace?, requestId? }`.
- */
+/** Shared types of the Formula editor + Quick build (Rust's `preview_formula` / `convert_legacy_formula`). Both commands keep Tauri's default camelCase keys (no `rename_all`). */
 
-/** Every stable code Rust's formula gate can answer with (the front-end check
- *  uses the same ones -- a fix button is keyed on the code, never the text). */
+/** Every stable code Rust's formula gate answers with (the front-end check uses the same); key a fix button on the code, never the text. */
 export type FormulaIssueCode =
     | 'unknown_function'
     | 'unknown_sensor'
@@ -34,18 +25,14 @@ export type FormulaIssueCode =
     | 'bad_decimals'
     | 'parse_error';
 
-/** One reason a formula / aggregate block is refused. `range` is `[start, end)`
- *  in UTF-16 code units of the text that was checked (a JS string index /
- *  textarea selection), absent when it could not be located. `code` is typed
- *  as a plain string too, so a code added in Rust later is carried, not lost. */
+/** One reason a formula/block is refused. `range` is `[start, end)` in UTF-16 units of the checked text, absent when not locatable. `code` also accepts a plain string. */
 export interface FormulaIssue {
     code: FormulaIssueCode | (string & {});
     message: string;
     range?: [number, number];
 }
 
-/** An Average / Median / Sum block, previewed exactly as `calculate_new_sensor`
- *  (mode `multi`) builds it. `decimals` = `SensorOperationConfig.multiOp.decimals`. */
+/** An Average/Median/Sum block, previewed as `calculate_new_sensor` (mode `multi`) builds it. `decimals` = `SensorOperationConfig.multiOp.decimals`. */
 export interface FormulaPreviewAggregate {
     type: 'mean' | 'median' | 'sum';
     sources: string[];
@@ -73,8 +60,7 @@ export interface FormulaPreviewLimits {
     max_depth: number;
 }
 
-/** Rust's `FormulaPreview` reply (snake_case field names: Rust serialises them
- *  as declared). A refusal is `ok: false` with `issues`, never a rejection. */
+/** Rust's `FormulaPreview` reply (snake_case, as declared). A refusal is `ok: false` with `issues`, never a rejection. */
 export interface FormulaPreviewResult {
     ok: boolean;
     issues: FormulaIssue[];

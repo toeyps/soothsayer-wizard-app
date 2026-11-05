@@ -1,43 +1,4 @@
-/**
- * A fake Rust backend for cross-window special-sensor integration tests.
- *
- * Unlike the small `fakeRust()` inside `AddSensorWindow.test.tsx` (which only
- * tracks column NAMES), this one holds real column VALUES and mirrors the
- * semantics of `src-tauri/src/lib.rs` closely enough that "the chart shows the
- * deleted sensor's old numbers" or "a downstream sensor was recomputed from a
- * stale source" is observable as wrong numbers, not just as a wrong call list:
- *
- *  - `store_derived_column`: create refuses any existing name (trimmed,
- *    case-insensitive, raw or derived); `replace: true` overwrites a DERIVED
- *    column in place (position kept, header takes the new casing), refuses a
- *    raw/timestamp column, appends when nothing matches.
- *  - `remove_derived_columns`: drops derived columns only (trimmed + ci),
- *    skips unknown/raw/timestamp names silently, returns the count.
- *  - `resolve_sensor` (sources of a formula/operation): exact header first,
- *    then the trimmed/case-insensitive match.
- *  - `scan_sensor_refs` (the ONE Rust tokenizer): `${...}` up to the first `}`,
- *    or a bare `$` name that starts with an alphanumeric/`_` and continues
- *    while alphanumeric/`_`/`.` -- where "alphanumeric" is Rust's
- *    `char::is_alphanumeric` (`Alphabetic || Numeric`).
- *  - `sensor_ref_token`: bare only when every char is alphanumeric or `_`.
- *  - `compute_formula_sensor`: any NaN input -> NaN; non-finite -> NaN;
- *    "cannot be built from itself" on a replace that reads its own column.
- *  - `compute_operation_sensor`: multi `sum` needs every input (any NaN ->
- *    NaN); `mean`/`median` skip NaN; single ops keep NaN; divide by 0 -> NaN.
- *  - `chart_query::resolve_ctx` and `ResolvedFilter::resolve`: EXACT header
- *    match (`h == s`), FIRST match, unknown names dropped silently.
- *  - Session generation (aa51de5): `load_csv` returns `generation`;
- *    `evaluate_formula` / `calculate_new_sensor` / `remove_sensor_columns` take an
- *    optional `expectedGeneration` (camelCase) and, when it is not the session's,
- *    mutate nothing and fail with `STALE_SESSION_ERROR`. The two computing
- *    commands check it at the start AND again at commit (after a held call is
- *    released), where -- as in `commit_derived` -- the pinned check comes BEFORE
- *    the plain "dataset changed while computing" one. `get_session_generation`
- *    answers the current generation (null before the first load).
- *  - Tauri v2 arg-key casing: every command rejects a key it would not
- *    deserialize (a snake_case key sent to a camelCase command is how a
- *    feature "silently does nothing" in this app), and a missing required key.
- */
+/** Fake Rust backend for cross-window special-sensor tests. Holds real column VALUES and mirrors `src-tauri/src/lib.rs` (derived columns, sensor-ref tokenizer, formulas, EXACT-header chart filters, session generation / `STALE_SESSION`). Enforces Tauri v2 arg-key casing: a key it wouldn't deserialize, or a missing required key, rejects. */
 
 export interface RawCsv {
     /** headers[0] is the timestamp column. */
@@ -129,9 +90,8 @@ const finite = (v: number) => (Number.isFinite(v) ? v : NaN);
 export const FORMULA_FUNCTION_LIST =
     'abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()';
 
-// fasteval semantics: `round(x)` = nearest integer, `round(modulus, x)`
-// = nearest multiple of modulus, both half AWAY from zero (Rust `f64::round`, unlike
-// JS `Math.round`); `log(x)` is BASE 10 and `log(base, x)` takes the base first.
+// fasteval: `round(x)` = nearest integer, `round(modulus, x)` = nearest multiple, half AWAY from zero (unlike `Math.round`).
+// `log(x)` is BASE 10; `log(base, x)` takes the base first.
 const rustRound = (v: number) => Math.sign(v) * Math.round(Math.abs(v));
 const FORMULA_FNS: Record<string, (...a: number[]) => number> = {
     abs: Math.abs, sqrt: Math.sqrt, exp: Math.exp, log10: Math.log10, pow: Math.pow,
@@ -164,15 +124,7 @@ export function prepareFormula(formula: string): { expr: string; safe: string[] 
 /** One braced-or-bare reference to `name` (lib.rs `sensor_ref_token`). */
 const refToken = (name: string) => (/^[\p{Alphabetic}\p{N}_]+$/u.test(name) ? `$${name}` : `\${${name}}`);
 
-/**
- * lib.rs `compile_formula`, the ONE gate `validate_formula` and
- * `evaluate_formula` share: parse, then a trial evaluation with every sensor =
- * 1 so an unknown name/function is an ERROR (it used to turn every row into
- * "missing"), then the `round($A, 2)` refusal. Messages mirror Rust's for the
- * cases tests rely on (prefixes, unknown name/function, pi/e, a sensor used as
- * a function, round argument order); argument-count checks are not modelled.
- * `expr` is the formula with every reference replaced by `__v[j]`.
- */
+/** Mirrors lib.rs `compile_formula`, the gate `validate_formula` and `evaluate_formula` share: parse, trial evaluation with every sensor = 1 (unknown name/function is an ERROR), then the `round($A, 2)` refusal. Argument counts are not modelled. `expr` has every reference replaced by `__v[j]`. */
 export function compileFakeFormula(formula: string, expr: string, safe: string[]): (v: number[]) => number {
     const js = expr.replace(/\^/g, '**');
     let fn: (...a: any[]) => number;
@@ -222,8 +174,7 @@ export function compileFakeFormula(formula: string, expr: string, safe: string[]
     return (v: number[]) => fn(v, ...FN_VALUES);
 }
 
-/** Allowed argument keys per command, exactly as Tauri v2 deserializes them
- *  for the Rust signatures in lib.rs (camelCase unless `rename_all`). */
+/** Allowed argument keys per command as Tauri v2 deserializes them (camelCase unless `rename_all`). */
 const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = {
     evaluate_formula: { required: ['formula'], optional: ['customName', 'replace', 'expectedGeneration'] },
     calculate_new_sensor: { required: ['sensors', 'config'], optional: ['replace', 'expectedGeneration'] },
@@ -240,21 +191,14 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
 };
 
 export interface FakeRustOptions {
-    /**
-     * CSV contents per `load_csv` `paths` (joined with `|`). When given,
-     * `load_csv` loads the dataset its paths name -- and rejects, keeping the
-     * current session (like lib.rs, which fails before taking the write lock),
-     * for paths it does not know. Without it every `load_csv` reloads `raw`.
-     */
+    /** CSV contents per `load_csv` `paths` (joined with `|`): loads the named dataset, rejects unknown paths and keeps the session (lib.rs fails before the write lock). Without it every `load_csv` reloads `raw`. */
     datasets?: Record<string, RawCsv>;
 }
 
-/** Rust `commit_derived`'s refusal when `load_csv` replaced the session while a
- *  special sensor was being computed (generation mismatch). */
+/** Rust `commit_derived`'s refusal when `load_csv` replaced the session while a special sensor was being computed. */
 export const GENERATION_CHANGED_ERROR = 'The dataset changed while the sensor was being computed; please try again';
 
-/** Rust's `STALE_SESSION_ERROR`: the caller pinned a generation that is not the
- *  session's (frontend matches the `STALE_SESSION` prefix). */
+/** Rust's `STALE_SESSION_ERROR`: the pinned generation isn't the session's (the frontend matches the `STALE_SESSION` prefix). */
 export const STALE_SESSION_ERROR = 'STALE_SESSION: the dataset changed since this window was opened';
 
 export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
@@ -554,9 +498,7 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
             const startedIn = generation;
             await gate.promise;
             if (computing) {
-                // ... and again at commit, pinned check first (`commit_derived`);
-                // then, for a caller that pinned nothing, `load_csv` having
-                // replaced the session means the result is not attached.
+                // Re-checked at commit (`commit_derived`), pinned check first; without a pin, a `load_csv` that replaced the session means the result isn't attached.
                 try { checkExpected(args); } catch (e) { entry.error = String(e); throw e; }
                 if (generation !== startedIn) {
                     entry.error = GENERATION_CHANGED_ERROR;
@@ -606,8 +548,7 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
         /** Make the next matching call (or every one, `once: false`) reject. */
         failOn: (cmd: string, pred: Pred, error = 'injected failure', once = true) => { faults.push({ cmd, pred, error, once }); },
         clearFaults: () => { faults.length = 0; },
-        /** Hold the next matching call until `release()`; it then runs against
-         *  the session AS IT IS at release time (Rust computes + commits then). */
+        /** Hold the next matching call until `release()`; it then runs against the session as it is at release time. */
         gate: (cmd: string, pred: Pred = () => true) => {
             let release!: () => void;
             const promise = new Promise<void>(r => { release = r; });

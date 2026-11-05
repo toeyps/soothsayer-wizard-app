@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Failure groups as Import step 3.
- *
- * The workers' unit tests each stop at their own seam: `DataUploadPage.test`
- * mocks `workspaceManager` (so the chip never sees a real recent entry),
- * `workspaceManager.test` checks the metadata fields on a hand-made state, and
- * `Dashboard.test` / `FailureGroupsPanel.test` / `SensorSelection.test` drive
- * the landing and assign mode from a hand-made `initialState`. Nothing ran the
- * whole loop: the groups named on step 3 -> the REAL `saveWorkspaceData` ->
- * the Dashboard's FG-tab landing + summary -> assign mode writing through the
- * Dashboard's on-disk read-modify-write -> `writeWorkspaceFile` refreshing the
- * recent entry -> the Import page's chip reading that entry back.
- *
- * Only Tauri is faked (in-memory plugin-fs / plugin-store / event bus from
- * `helpers/healthEnv`, the dataset session from `helpers/crossFeatureBackend`);
- * App, DataUploadPage, Dashboard, SensorSelection, the assignment sheet,
- * FailureGroupsPanel, RecentProjectCard and workspaceManager are all real.
- */
+/* Failure groups as Import step 3, whole loop through the real `saveWorkspaceData`, Dashboard, assign mode and the Import chip. Only Tauri is faked (healthEnv, crossFeatureBackend); App, pages, panels and workspaceManager are real. */
 
 vi.mock('../hooks/useMappingData', async (original) => ({
   ...(await original<typeof import('../hooks/useMappingData')>()),
@@ -80,7 +63,7 @@ vi.setConfig({ testTimeout: 60_000 });
 
 const PATH = 'C:/data/plant-a.csv';
 
-// ── console / rejection recorder (same rule as CrossFeatureSmoke) ─────────────
+// Console / rejection recorder (same rule as CrossFeatureSmoke).
 const logged: string[] = [];
 const rejections: string[] = [];
 const onRejection = (e: PromiseRejectionEvent) => { rejections.push(String((e as any).reason)); };
@@ -111,7 +94,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-// ── helpers ───────────────────────────────────────────────────────────────────
 
 const app = () => within(screen.getByTestId('app-root'));
 const onDashboard = () => !!document.querySelector('button[title="Back to Import"]');
@@ -302,7 +284,6 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         expect(swatchClasses(chip)).toEqual(['fg-group-color-amber', 'fg-group-color-violet']);
 
         // Reopen (it has groups now) -> add FG-3 on the Dashboard -> entry follows at once.
-        // A project WITH groups reopens on the Sensor tab (the step-3 lastRoute was replaced by the autosave).
         await openRecent('Alpha · Unit');
         expect(disk(A).lastRoute).toBe('dashboard');
         expect(fgTabShowing(), 'a project with groups reopens on the Sensor tab').toBe(false);
@@ -316,8 +297,7 @@ describe('Import step 3 -> Dashboard -> Recent-project chip, through the real wo
         expect(entry('Alpha · Unit')).toMatchObject({ failureGroupCount: 3, failureGroupNos: [1, 2, 3] });
         expect(summaryText()).toMatch(/^3 groups · 1 sensor assigned/);
 
-        // Delete FG-2 -> count 2, swatches FG-1 + FG-3. Since 2026-10-17 the trash asks first (a group
-        // now deletes the models that are only in it); FG-2 has none: "It has no models."
+        // Delete FG-2 -> count 2, swatches FG-1 + FG-3. The trash asks first; FG-2 has no models.
         await act(async () => { fireEvent.click(within(groupCard('Oil pressure low')).getByTitle('Delete group')); });
         const confirm = app().getByTestId('fg-delete-confirm');
         expect(confirm.textContent).toContain('It has no models.');

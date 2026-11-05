@@ -1,15 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { mono, type Tokens } from './uploadTheme';
-// Only the small toast module and pure helpers come from the Dashboard folder:
-// this page is in the start-up bundle, the Dashboard is loaded lazily.
+// Only the toast module and pure helpers come from the Dashboard folder: this page is in the start-up bundle, the Dashboard is lazy.
 import UndoToastStack, { UNDO_SECONDS } from '../dashboard/UndoToastStack';
 import { NOT_IN_GROUP, type FailureGroupDraft } from '../dashboard/failureGroupOps';
 import { getFgGroupColor } from '../../utils/failureGroupColor';
 
-/** One failure group typed on setup step 3 — not saved yet. "Open Dashboard"
- *  turns the list into the workspace's groups through the same helpers the
- *  Dashboard's Failure Groups tab uses (`buildInitialFailureGroups`). */
+/** One failure group typed on step 3, unsaved; 'Open Dashboard' turns the list into groups via `buildInitialFailureGroups`. */
 export interface DraftGroup extends FailureGroupDraft {
   /** Local key only (React key, undo); never saved. */
   id: number;
@@ -20,9 +17,7 @@ interface FailureGroupsStepProps {
   projectName: string;
   groups: DraftGroup[];
   onChange: (groups: DraftGroup[]) => void;
-  /** True while a card shows a name it could not save (a duplicate). The page
-   *  disables Open Dashboard meanwhile, so the old name is never saved
-   *  silently in its place. */
+  /** True while a card shows an unsaved (duplicate) name; the page disables Open Dashboard meanwhile. */
   onInvalidChange?: (invalid: boolean) => void;
 }
 
@@ -38,20 +33,7 @@ interface RemovedEntry {
   index: number;
 }
 
-/**
- * Step 3 of the Import page, "Which failures should Wizard look for?"
- * (DESIGN_SYSTEM §4.1 "Failure groups come first"). Names the failure modes
- * only — sensors are assigned later in the Dashboard, where the data can be
- * seen.
- *
- *  - Quick-add field: Enter adds a group and keeps focus, so several can be
- *    typed in a row; a duplicate name turns the field red and says why.
- *  - One card per group: Name (inline; Enter / blur saves, Esc puts the old
- *    name back, a duplicate stays red), Description, Recommendation.
- *  - ✕ removes a group with a 7 s Undo toast (the app's shared undo toast).
- *
- * The footer (Back · Skip for now · Open Dashboard) belongs to the page.
- */
+/** Step 3 of Import: names the failure modes only; sensors are assigned later in the Dashboard. Quick-add (a duplicate turns red), one card per group, ✕ removes with an Undo toast. The page owns the footer. */
 export default function FailureGroupsStep({ T, projectName, groups, onChange, onInvalidChange }: FailureGroupsStepProps) {
   const [quick, setQuick] = useState('');
   const [live, setLive] = useState('');
@@ -60,9 +42,7 @@ export default function FailureGroupsStep({ T, projectName, groups, onChange, on
   const quickRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const removeSeq = useRef(0);
-  // Draft ids come from a counter that only goes up, never from the list: a
-  // removed group waiting for Undo keeps its id, so a group added meanwhile
-  // must not get the same one (duplicate React keys, patch/remove hitting both).
+  // Ids come from an ever-increasing counter, not the list, so a new group can't reuse the id of one awaiting Undo.
   const idSeq = useRef(Math.max(0, ...groups.map(g => g.id)));
   // Cards showing a name they could not save.
   const [invalidIds, setInvalidIds] = useState<ReadonlySet<number>>(() => new Set());

@@ -1,17 +1,7 @@
-/**
- * Train queue ("Train sensor" / "Train all").
- *
- * Shared shapes for `useTrainQueue` (`src/hooks/useTrainQueue.ts`) and its pure
- * helpers (`src/utils/trainQueue.ts`). No Tauri command is involved: the queue
- * drives the Build Model window's per-model train (`executeTrain`),
- * which is injected as a plain function, one model at a time.
- */
+/** Shared shapes for `useTrainQueue` and `src/utils/trainQueue.ts`. No Tauri command: the queue drives the window's per-model `executeTrain`, one model at a time. */
 
 import type { ModelKind } from '../types';
 
-// ---------------------------------------------------------------------------
-// Before a run: what each model would do
-// ---------------------------------------------------------------------------
 
 /** Where a "Fix →" link for a model that can't train should take the user. */
 export type TrainFixTarget =
@@ -41,30 +31,18 @@ export interface TrainCandidate {
 /** What started the run (only used for copy, e.g. which modal "Details" opens). */
 export type TrainRunSource = 'sensor' | 'sensor-all' | 'subset' | 'all' | 'retry';
 
-// ---------------------------------------------------------------------------
-// The injected per-model train
-// ---------------------------------------------------------------------------
 
-/**
- * What the injected `train(modelId)` resolves to. It may also reject: a
- * rejection is a failure with the error's text (and STALE_SESSION if the text
- * starts with it).
- */
+/** Result of the injected `train(modelId)`. A rejection counts as a failure with the error text (and STALE_SESSION if the text starts with it). */
 export type TrainOutcome =
     | { ok: true }
-    /** Training failed. `stale` (or an error starting with `STALE_SESSION`)
-     *  stops the whole run: the dataset is not this window's any more. */
+    /** Training failed. `stale` (or an error starting with `STALE_SESSION`) stops the whole run: the dataset isn't this window's any more. */
     | { ok: false; error: string; stale?: boolean }
-    /** The model could not be trained when its turn came (its settings or the
-     *  gate changed since the run started): recorded as skipped, not failed. */
+    /** Could not train when its turn came (settings or gate changed since the run started): recorded as skipped, not failed. */
     | { ok: false; skip: string }
     /** The window was re-pointed at another workspace mid-train: the run is
      *  dropped silently (same as `reset()`). */
     | { ok: false; abandoned: true };
 
-// ---------------------------------------------------------------------------
-// A run
-// ---------------------------------------------------------------------------
 
 export type TrainItemState =
     | 'queued'
@@ -84,9 +62,7 @@ export interface TrainQueueItem {
     state: TrainItemState;
     /** `failed` only. */
     error?: string;
-    /** `skipped` only: grey (`upToDate`) or amber (`missing`), with the reason.
-     *  `atTurn` = it was queued but could not train when its turn came
-     *  (`{ ok: false, skip }`), as opposed to a preflight skip. */
+    /** `skipped` only: grey (`upToDate`) or amber (`missing`) with the reason; `atTurn` = queued but unable to train at its turn, as opposed to a preflight skip. */
     skip?: { kind: 'upToDate' | 'missing'; reason: string; atTurn?: boolean };
     /** `trained` / `failed`: how long the train call took. */
     durationMs?: number;

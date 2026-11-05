@@ -1,37 +1,5 @@
-//! Health score, Rust side, PRIVATE surface.
-//!
-//! Included from `lib.rs` as a `#[cfg(test)]` child module (one `#[path]`
-//! line) because `health_preview`, `model_export`, the session/cache helpers
-//! and the file writers are private to the crate; the file itself lives under
-//! `src-tauri/tests/internal/` (not auto-discovered by
-//! cargo as an integration-test target).
-//!
-//! Since 2026-10-11 the health score is computed on 1-HOUR AVERAGES (one point
-//! per clock hour = the mean of the hour's in-scope rows, `health_hourly`):
-//! the checks below re-compute every hourly point independently (the fixtures
-//! are 10-minute rows, so an hour is 6 rows). The Relation model's hourly point
-//! is the hour's mean target against the model's prediction for the hour's MEAN
-//! predictors; its raw series (the fit's training rows) still equals
-//! `REL_DATASET` row for row.
-//!
-//! Covers what the in-module tests do not:
-//!   A. rounding consistency — write the model file through the legacy `train_*` core,
-//!      read it back, re-score every hourly point with an independent
-//!      reference (Relationship: the file's rows averaged per hour, through
-//!      the model) and compare with the preview;
-//!   B. training-scope consistency between `compute_health_preview` and the
-//!      legacy `train_*` file for many filter shapes, against an independent filter;
-//!   C. Relationship cache: generation straddle, concurrency, foreign rows;
-//!   D. exact JSON shapes of the legacy `train_*` files (the Mark-complete export
-//!      robustness tests went with that export, Export results phase 4);
-//!   E. edge datasets (empty, one row, duplicate / case-variant names,
-//!      TS_MISSING, Buddhist-Era timestamps, huge residuals, payload sizes);
-//!   F. REAL-DATA smoke tests (`#[ignore]`d — run explicitly, skip gracefully
-//!      when the file / sidecar binary is missing).
-//!
-//! A known bug is pinned as a test asserting the CORRECT behaviour, marked
-//! ignored with a BUG reason (project convention) until fixed. The `bug_*`
-//! tests guard bugs this file found.
+//! Health score, Rust side, PRIVATE surface: a `#[cfg(test)]` child module of `lib.rs` (one `#[path]` line), not an integration target.
+//! Covers rounding and scope consistency vs an independent filter, Relationship cache, JSON shapes and edge datasets.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -50,9 +18,6 @@ use crate::{
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
 
 struct Rng(u64);
 impl Rng {
@@ -83,8 +48,7 @@ fn ts_at(i: usize) -> String {
     (base + chrono::Duration::minutes(10 * i as i64)).format("%Y-%m-%dT%H:%M:%S").to_string()
 }
 
-/// Dataset with a timestamp column + named columns, 10-minute rows from
-/// 2024-01-01 (`ts_override` lets a test blank / rewrite individual rows).
+/// Dataset with a timestamp column + named columns, 10-minute rows from 2024-01-01; `ts_override` blanks/rewrites individual rows.
 fn ds_with(cols: Vec<(&str, Vec<f64>)>, ts_override: &dyn Fn(usize) -> Option<String>) -> ColumnarData {
     let n = cols[0].1.len();
     let mut headers = vec!["TimeStamp".to_string()];
@@ -130,8 +94,7 @@ fn clu_parts(p: &HealthPreview) -> (&crate::health_preview::ClusteringStats, &cr
     }
 }
 
-/// The HOURLY series of a preview (`hourly`: one scored point per clock hour;
-/// `*_parts` above give the RAW `series`, which carries no score).
+/// Hourly series of a preview (one scored point per clock hour); the raw `series` carries no score.
 fn ind_hourly(p: &HealthPreview) -> &crate::health_preview::IndividualSeries {
     match &p.hourly {
         HealthSeries::Individual(se) => se,
@@ -151,10 +114,8 @@ fn rel_hourly(p: &HealthPreview) -> &crate::health_preview::RelationshipSeries {
     }
 }
 
-/// Independent hourly grouping: the clock hour of a row is read from its
-/// timestamp TEXT (`YYYY-MM-DDTHH`), never from `ts_parsed`. Returns, in time
-/// order, `(hour start text, the dataset rows of `rows` in that hour)`; a row
-/// without a timestamp is in no hour.
+/// Independent hourly grouping: the hour comes from the timestamp TEXT (`YYYY-MM-DDTHH`), never `ts_parsed`.
+/// Returns (hour start text, rows in that hour) in time order; a row with no timestamp is in no hour.
 fn ref_hours(d: &ColumnarData, rows: impl Iterator<Item = usize>) -> Vec<(String, Vec<usize>)> {
     let mut by_hour: std::collections::BTreeMap<String, Vec<usize>> = std::collections::BTreeMap::new();
     for r in rows {
@@ -194,12 +155,8 @@ fn sp_n(n: f64) -> SetPointsArg {
     SetPointsArg { outer_sd: Some(n), ..Default::default() }
 }
 
-// ===========================================================================
-// A. Rounding consistency: file -> independent re-score == preview
-// ===========================================================================
 
-/// Three rotated, anisotropic clusters selected by a criteria sensor C, plus
-/// rows in a criteria gap and rows with a missing criteria value.
+/// Three rotated, anisotropic clusters selected by criteria sensor C, plus rows in a criteria gap and rows with a missing criteria value.
 fn three_cluster_data(n: usize, crit: &dyn Fn(&mut Rng, usize) -> f64) -> ColumnarData {
     let mut rng = Rng::new(202);
     let (mut x, mut y, mut c) = (Vec::new(), Vec::new(), Vec::new());
@@ -232,10 +189,7 @@ fn clu_req(ranges: Vec<ClusterRange>, n_out: f64, filter: Option<PreviewFilter>)
     }
 }
 
-/// Overlapping criteria ranges: a row belongs to the FIRST matching cluster
-/// only, for the FIT and the SCORE alike (2026-10-20: Train, the health score
-/// and the export share `health_score::assign_cluster`; before, the fit used
-/// every row each range contained, so overlap rows were fitted twice).
+/// Overlapping criteria ranges: a row belongs to the FIRST matching cluster only, for fit and score (`health_score::assign_cluster`).
 #[test]
 fn a2b_overlapping_ranges_fit_and_score_first_match_only() {
     let d = three_cluster_data(9000, &|r: &mut Rng, _: usize| r.range(0.0, 30.0));
@@ -267,9 +221,6 @@ fn rel_sp_from_w(w: f64) -> SetPointsArg {
     }
 }
 
-// ===========================================================================
-// B. Training scope: preview == export == independent computation
-// ===========================================================================
 
 fn vf(sensor: &str, op: &str, v1: Option<f64>, v2: Option<f64>) -> PreviewValueFilter {
     PreviewValueFilter { sensor: sensor.into(), operation: op.into(), value1: v1, value2: v2 }
@@ -278,11 +229,8 @@ fn tr(s: Option<&str>, e: Option<&str>) -> TimeRangeArg {
     TimeRangeArg { start: s.map(String::from), end: e.map(String::from) }
 }
 
-/// Independent filter: parses the bounds and each row's timestamp TEXT with
-/// chrono itself (never `ts_parsed`), applies the documented semantics
-/// (ranges inclusive & OR-ed, missing timestamp excluded under a time gate,
-/// value conditions AND / OR, missing value fails its condition, unknown
-/// sensor ignored).
+/// Independent filter: parses bounds and each row's timestamp TEXT with chrono (never `ts_parsed`).
+/// Ranges inclusive, OR-ed; no timestamp = excluded under a time gate; conditions AND/OR; missing value fails; unknown sensor ignored.
 fn ref_keeps(d: &ColumnarData, f: &PreviewFilter, row: usize) -> bool {
     let p = |s: &str| chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S").ok();
     let mut ranges: Vec<(Option<chrono::NaiveDateTime>, Option<chrono::NaiveDateTime>)> = Vec::new();
@@ -331,8 +279,7 @@ fn ref_keeps(d: &ColumnarData, f: &PreviewFilter, row: usize) -> bool {
     }
 }
 
-/// 6000 rows: S (target, with NaN gaps), G (gate), C (criteria), X/Y; rows
-/// 100..110 have no timestamp, rows 200..210 carry a Buddhist-Era year.
+/// 6000 rows: S (target, NaN gaps), G (gate), C (criteria), X/Y; rows 100..110 lack a timestamp, 200..210 use a Buddhist-Era year.
 fn scope_data() -> ColumnarData {
     let n = 6000;
     let mut rng = Rng::new(404);
@@ -418,8 +365,7 @@ fn b3_include_out_of_scope_marks_rows_without_changing_stats_or_in_scope_scores(
         let ((sa, ea), (sb, eb)) = (ind_parts(&a), ind_parts(&b));
         assert_eq!((sa.mean, sa.sd, sa.rows), (sb.mean, sb.sd, sb.rows), "{name}: stats must not change");
         assert_eq!(a.score_summary, b.score_summary, "{name}: the summary must not change");
-        // RAW universe with the flag = every finite row, each with its scope
-        // flag; without it only the in-scope rows. Neither carries a score.
+        // RAW universe: with the flag every finite row (each with its scope flag), without it only in-scope rows. Neither carries a score.
         let finite: Vec<u32> = (0..d.n_rows()).filter(|&r| d.columns[si][r].is_finite()).map(|r| r as u32).collect();
         assert_eq!(eb.rows, finite, "{name}");
         assert!(ea.score.is_none() && eb.score.is_none(), "{name}");
@@ -433,9 +379,7 @@ fn b3_include_out_of_scope_marks_rows_without_changing_stats_or_in_scope_scores(
             let r = eb.rows[i] as usize;
             assert_eq!(eb.in_scope[i], kept.binary_search(&r).is_ok(), "{name}: row {r} in_scope");
         }
-        // HOURLY points: exactly the same with and without the flag - an
-        // out-of-scope row never enters a mean and never makes a point (an hour
-        // with no in-scope row is missing, not 0).
+        // Hourly points are the same with and without the flag: out-of-scope rows never enter a mean (an hour with none is missing, not 0).
         let (ha, hb) = (ind_hourly(&a), ind_hourly(&b));
         assert_eq!(serde_json::to_value(ha).unwrap(), serde_json::to_value(hb).unwrap(), "{name}: hourly changed");
         // ...and they are the independent per-hour means of the in-scope rows.
@@ -472,17 +416,13 @@ fn b4_buddhist_era_rows_are_converted_and_filtered_in_ce() {
     let rows: Vec<u32> = ind_parts(&p).1.rows.clone();
     let want: Vec<u32> = (200..210).filter(|i| i % 37 != 0).collect();
     assert_eq!(rows, want);
-    // Rows without a timestamp are in the universe without a time gate, with
-    // an empty timestamp string (never a panic), and drop out under one.
+    // Rows without a timestamp are in the universe without a time gate (empty timestamp string, no panic) and drop out under one.
     let p = individual_preview(&d, &ind_req("S", None, None)).unwrap();
     let se = ind_parts(&p).1;
     let at = se.rows.iter().position(|&r| r == 105).unwrap();
     assert_eq!(se.timestamps[at], "");
 }
 
-// ===========================================================================
-// C. Relationship cache
-// ===========================================================================
 
 fn small_fit(target: &str, n: usize, marker: f64) -> RelFit {
     RelFit {
@@ -507,15 +447,8 @@ fn rel_req(key: &str, gen: Option<u64>) -> HealthPreviewRequest {
     }
 }
 
-/// A fit is only cached while the derived epoch is unchanged (`SessionStamp`;
-/// `store_rel_fit` takes the stamp a Train captured). A special sensor
-/// recomputed in place (`commit_derived` with `replace=true`) clears the cache
-/// but does NOT bump the session generation, so without the epoch a
-/// Relationship Train that read the OLD column before the recompute and
-/// returns from the ~15 s sidecar run afterwards would be stored — and
-/// `compute_health_preview` would serve that stale fit under the same key
-/// forever (the frontend's cache key = model id + train fingerprint, which
-/// does not include special-sensor formulas). Same for `remove_derived_in_state`.
+/// A fit is cached only while the derived epoch is unchanged (`SessionStamp`). Recomputing a special sensor in place clears the cache
+/// but not the session generation, so a Train on the OLD column would be served forever; same for `remove_derived_in_state`.
 #[test]
 fn bug_c1_fit_straddling_a_special_sensor_recompute_must_not_be_cached() {
     let state = state_with(ds(vec![("X", vec![1.0; 50]), ("Y", vec![2.0; 50])]), 4);
@@ -532,8 +465,6 @@ fn bug_c1_fit_straddling_a_special_sensor_recompute_must_not_be_cached() {
 
 #[test]
 fn c1_companion_a_fit_straddling_a_replace_or_remove_is_refused_and_a_fresh_one_is_cached() {
-    // (Was `c1_companion_documents_the_current_straddle_behaviour` — it pinned
-    // the BUG; flipped when the derived epoch was added.)
     let state = state_with(ds(vec![("X", vec![1.0; 50]), ("Y", vec![2.0; 50])]), 4);
     commit_derived(&state, 4, None, "SP", vec![0.0; 50], false).unwrap();
     // Adding a NEW column cannot affect a fit: a Train that started before it still stores.
@@ -583,11 +514,8 @@ fn c3_mismatched_target_or_predictor_order_is_not_fitted_but_empty_lists_skip_th
     assert!(health_preview_in(&state, &rel_req("k", None)).is_ok());
 }
 
-/// Many threads: one keeps reloading datasets and caching a fit tagged with
-/// the generation it was computed under; others read with
-/// `expected_generation`. A successful read must ALWAYS see the fit of the
-/// generation it asked for (never another dataset's), and nothing panics or
-/// deadlocks.
+/// One thread reloads datasets and caches a fit tagged with its generation; others read with `expected_generation`.
+/// A successful read must ALWAYS see the fit of the generation it asked for; no panic or deadlock.
 #[test]
 fn c4_concurrent_reload_store_and_preview_never_mix_datasets() {
     let state = Arc::new(state_with(ds(vec![("X", vec![0.0; 64]), ("Y", vec![0.0; 64])]), 1));
@@ -642,14 +570,8 @@ fn c4_concurrent_reload_store_and_preview_never_mix_datasets() {
     assert!(loads > 10 && total_ok > 10);
 }
 
-// ===========================================================================
-// D. Legacy train_* file shapes
-// ===========================================================================
 
-/// Relationship file names join predictors with '+': a single predictor that
-/// is itself named "A+B" collides with the two-predictor model [A, B] (same
-/// REL_INFO/REL_DATASET/REL_MODEL names, last export wins). Pinned as a
-/// limitation (low; '+' is legal in sensor names and not sanitised).
+/// Joining predictor names with '+' makes one predictor "A+B" equal to the model [A, B]; '+' is legal in sensor names and not sanitised.
 #[test]
 fn d11_relationship_file_names_collide_for_a_predictor_named_with_plus() {
     let a = vec!["A+B".to_string()].join("+");
@@ -657,15 +579,11 @@ fn d11_relationship_file_names_collide_for_a_predictor_named_with_plus() {
     assert_eq!(a, b, "documenting the collision");
 }
 
-// ===========================================================================
-// E. Edge datasets
-// ===========================================================================
 
 #[test]
 fn e3_error_codes_for_bad_requests_are_prefixed() {
     let d = scope_data();
-    // Clustering with an unknown sensor / missing criteria: the fit error is
-    // passed through without a code today — see report (low).
+    // Clustering with an unknown sensor / missing criteria and a bad scope: only checks that an error comes back; the codes are asserted in the next test.
     let mut c = clu_req(vec![ClusterRange { min: None, max: Some(15.0) }, ClusterRange { min: Some(15.0), max: None }], 4.0, None);
     c.first_sensor = Some("NOPE".into());
     let e1 = clustering_preview(&d, &c).unwrap_err();
@@ -680,11 +598,8 @@ fn e3_error_codes_for_bad_requests_are_prefixed() {
     }
 }
 
-/// `compute_health_preview` answers every bad request with a stable
-/// `CODE: ...` prefix (`BAD_REQUEST`, `NO_DATA`, ...; `check_*_request` in
-/// health_preview.rs) — an unknown clustering sensor, a ranges/n_clusters
-/// mismatch, a missing criteria sensor and any invalid training-scope filter
-/// included — so the UI (`parseHealthError`) can classify them.
+/// `compute_health_preview` answers every bad request with a stable `CODE: ...` prefix (`BAD_REQUEST`, `NO_DATA`, ...)
+/// so the UI (`parseHealthError`) can classify it: unknown clustering sensor, ranges/n_clusters mismatch, missing criteria sensor, invalid scope filter.
 #[test]
 fn bug_e3_every_bad_request_error_is_coded() {
     let d = scope_data();
@@ -849,12 +764,8 @@ fn e6_every_series_respects_max_points_for_every_kind_and_cap() {
     }
 }
 
-/// Over IPC every number makes a round trip Rust -> JSON (shortest repr) ->
-/// JS -> JSON -> serde_json. If the user types the 3σ boundary exactly as
-/// shown, `validate_individual` must flag `lower_equals_3sd` — which needs
-/// serde_json to read the same double back. Without serde_json's
-/// `float_roundtrip` feature the parse is "best effort" and can be 1 ulp
-/// off. Measures how often that breaks the equality rule.
+/// Numbers round-trip Rust -> JSON -> JS -> JSON -> serde_json over IPC; `lower_equals_3sd` needs the same double back (1 ulp off breaks it).
+/// Counts how often the round trip breaks the equality rule.
 fn equal_rule_failures(samples: usize) -> (usize, usize) {
     let mut rng = Rng::new(77);
     let (mut lossy_parse, mut missed_equal) = (0, 0);
@@ -886,17 +797,10 @@ fn equal_rule_failures(samples: usize) -> (usize, usize) {
 fn e7_typed_3sd_boundary_round_trip_measurement() {
     let (lossy, missed) = equal_rule_failures(200_000);
     eprintln!("e7: serde_json parse != value for {lossy}/200000 boundaries; 'equals 3σ' rule missed {missed} times");
-    // Values rounded by round_metric (<= ~7 significant digits) round-trip
-    // exactly; only 16-17-digit literals can come back 1 ulp off (seen when
-    // reading a computed set point back in d10) — not a user-typed value.
+    // Values rounded by `round_metric` (<= ~7 significant digits) round-trip exactly; only 16-17 digit literals can be 1 ulp off.
     assert_eq!((lossy, missed), (0, 0));
 }
 
-// ===========================================================================
-// F. REAL DATA smoke tests (run explicitly; skip when files are missing)
-//
-//   cargo test --release --lib qa_health_internal::real_data -- --ignored --nocapture --test-threads=1
-// ===========================================================================
 
 #[test]
 fn e1_empty_and_one_row_datasets_never_panic() {

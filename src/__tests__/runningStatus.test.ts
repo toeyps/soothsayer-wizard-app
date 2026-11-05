@@ -8,8 +8,7 @@ const cond = (sensor: string, operation: WorkspaceSensorFilter['operation'], val
 const fg = (over: Partial<FailureGroupStateSlice>): Partial<FailureGroupStateSlice> => ({ groups: [], models: [], ...over });
 const H = ['SPEED', 'LOAD', 'TEMP'];
 
-// Since 2026-10-26 the export's running status IS the one running condition
-// ("Machine is running when <sensor> is above <value>").
+// The export's running status is the one running condition ('Machine is running when <sensor> is above <value>').
 describe('resolveRunningStatus', () => {
     it('is the one "sensor > value" running condition', () => {
         expect(resolveRunningStatus(fg({ runningConditionFilters: [cond('SPEED', 'greater_than', ' 1200 ')] }), H))

@@ -1,31 +1,5 @@
-//! Scoring periods ("just score it") — Rust side, PRIVATE surface.
-//!
-//! Included from `lib.rs` as a `#[cfg(test)]` child module (one `#[path]` line,
-//! like `qa_health_internal`) because the previews, the export and the session
-//! cache helpers are private to the crate.
-//!
-//! A scoring period is only start -> end: there is no Normal / Known-problem
-//! label, no event time, no lead time and no detection.
-//!
-//! Every scenario is a regular synthetic series whose expected numbers follow
-//! from how it is built (10-minute rows, 144 rows = 1 day):
-//!   * train  = rows 0..=287 (2 days),
-//!   * a quiet period with the same pattern,
-//!   * a period with a STEP at row 776 (so `pct_below_80`, `lowest` and
-//!     `lowest_at` are exact).
-//!
-//! **All three kinds are scored on 1-HOUR AVERAGES** (since 2026-10-11): 6
-//! rows = 1 hour, hour `h` = rows `6h..6h+6`, 144 rows = 24 hours. The step row
-//! 776 falls INSIDE hour 129 (rows 774..=779: two normal rows, four stepped
-//! ones), so that hour's point is a mix and the plateau proper starts with hour
-//! 130 (row 780). The raw facts (`rows`, `days`, `train_rows`, `train_days`)
-//! are unchanged; `hours`, `train_hours`, `scored`, `pct_below_80` and `lowest`
-//! count / judge hourly points.
-//!
-//! The Relation model's hourly point is the hour's mean target against the
-//! engine's prediction for the hour's MEAN predictors; those predictions are
-//! stored with the fit per (hour, mean predictors) - the second half of the
-//! Relationship section covers what is asked of the engine and when.
+//! Rust tests of scoring periods (start -> end only) on private surfaces; included from lib.rs as a cfg(test) child module.
+//! Synthetic 10-minute rows (144 = 1 day), scored on 1-hour averages (6 rows); the step at row 776 falls in hour 129.
 
 #![allow(clippy::too_many_arguments)]
 
@@ -120,12 +94,8 @@ fn hour_mean(col: &[f64], h: usize, keep: &dyn Fn(usize) -> bool) -> f64 {
     v.iter().sum::<f64>() / v.len() as f64
 }
 
-// ===========================================================================
-// Individual
-// ===========================================================================
 
-/// 10 days of S. Pattern 99..101 everywhere; from `STEP_ROW` for `dip` rows the
-/// value is 120 (far above the 3σ edge). G is 1 (running) except `stop`.
+/// 10 days of S, pattern 99..101; from STEP_ROW for `dip` rows the value is 120 (beyond 3σ). G is 1 (running) except `stop`.
 fn ind_data(dip: usize, stop: std::ops::Range<usize>) -> ColumnarData {
     let n = 10 * DAY;
     let s: Vec<f64> = (0..n)
@@ -261,10 +231,7 @@ fn a_result_carries_no_label_event_time_lead_or_detection_keys() {
 
 #[test]
 fn individual_lowest_is_the_lowest_hourly_average_a_dip_weighs_by_how_much_of_the_hour_it_fills() {
-    // The old rule ("the level held for 1 h of consecutive rows") is gone: each
-    // point already is a 1-hour average, so `lowest` is simply the lowest one.
-    // A dip of `dip_rows` rows from row 776 puts 4 rows in hour 129 and the
-    // rest in hour 130.
+    // Points are 1-hour averages, so `lowest` is the lowest one; a dip of N rows from row 776 puts 4 rows in hour 129 and the rest in hour 130.
     for dip_rows in [1usize, 4, 5, 6, 7, 10] {
         let d = ind_data(dip_rows, 0..0);
         let p = individual_preview(&d, &ind_req(vec![tp(576, 1151)], Some(ind_sp(&d)))).unwrap();
@@ -342,10 +309,7 @@ fn individual_empty_test_period_has_no_rows_and_no_metrics() {
 
 #[test]
 fn individual_test_rows_must_pass_the_running_condition_and_stopped_rows_are_never_averaged() {
-    // The machine is stopped (G = 0) for rows 800..=809 inside the period, and
-    // while stopped the sensor reads 500 (far beyond H = 130, a 0 on its own).
-    // Hour 133 = rows 798..=803 keeps its 2 running rows; hour 134 = rows
-    // 804..=809 has none.
+    // Machine stopped (G = 0) on rows 800..=809 while S reads 500 (beyond H = 130): hour 133 keeps 2 running rows, hour 134 none.
     let mut d = ind_data(400, 800..810);
     for r in 800..810 {
         d.columns[1][r] = 500.0;
@@ -373,8 +337,7 @@ fn individual_test_rows_must_pass_the_running_condition_and_stopped_rows_are_nev
     assert!(!h.rows.contains(&804), "an hour with no running row has no point");
     assert!(h.score.as_ref().unwrap().iter().all(|s| s.is_some()), "a missing hour is absent, never a 0");
 
-    // A stop inside a SHORT plateau: 776..=785 with row 779 stopped. Hour 129
-    // averages its 5 running rows (2 normal + 3 at 120); hour 130 is all 120.
+    // A stop inside a short plateau: hour 129 averages its 5 running rows (2 normal, 3 at 120); hour 130 is all 120.
     let d2 = ind_data(10, 779..780);
     let mut r2 = r.clone();
     r2.set_points = Some(ind_sp(&d2));
@@ -385,8 +348,7 @@ fn individual_test_rows_must_pass_the_running_condition_and_stopped_rows_are_nev
     let h2 = ind_hourly(&p2);
     let at = h2.rows.iter().position(|&x| x as usize == STEP_HOUR * HOUR).unwrap();
     assert_eq!(h2.value[at], hour_mean(&d2.columns[1], STEP_HOUR, &|r| r != 779));
-    // One more stopped row (782): hour 130 still has 5 running rows at 120, and
-    // they ARE its average - there is no minimum coverage and no 1 h window.
+    // One more stopped row: hour 130 still averages its 5 running rows at 120; there is no minimum coverage.
     let mut d3 = ind_data(10, 779..780);
     d3.columns[2][782] = 0.0;
     let mut r3 = r.clone();
@@ -471,8 +433,7 @@ fn individual_series_scores_test_rows_and_leaves_other_rows_out() {
         assert_eq!(h.timestamps[i], ts_at(r));
     }
     assert!(h.rows.contains(&696) && h.rows.contains(&300) && h.rows.contains(&6));
-    // With out-of-scope rows requested the gap rows come back in the RAW series
-    // (flagged); they still make no hourly point and so have no score.
+    // With out-of-scope rows requested, gap rows appear flagged in the raw series but make no hourly point, so no score.
     let mut r = ind_req(tests, Some(sp));
     r.include_out_of_scope = Some(true);
     let q = individual_preview(&d, &r).unwrap();
@@ -488,10 +449,7 @@ fn individual_series_scores_test_rows_and_leaves_other_rows_out() {
 
 #[test]
 fn a_scoring_period_edge_inside_an_hour_makes_a_boundary_hour_that_is_both() {
-    // Train = rows 0..=290 (ends 30 minutes into hour 48); S1 = rows 294..=431
-    // (starts on the 4th row of hour 49). Rows 291..=293 are in neither.
-    //   hour 48 = rows 288..=293: 288..=290 train, 291..=293 nothing
-    //   hour 49 = rows 294..=299: all S1
+    // Train = rows 0..=290, S1 = rows 294..=431; rows 291..=293 are in neither (hour 48: 288..=290 train; hour 49: all S1).
     let d = ind_data(0, 0..0);
     let filter = PreviewFilter {
         timestamp_ranges: vec![TimeRangeArg { start: Some(ts_at(0)), end: Some(ts_at(290)) }],
@@ -519,8 +477,7 @@ fn a_scoring_period_edge_inside_an_hour_makes_a_boundary_hour_that_is_both() {
     assert_eq!((t.hours, t.train_hours), (23, 0), "hours 49..=71; hour 48 holds no S1 row");
     assert_eq!((v.train.rows, v.train.hours), (291, 49), "hours 0..=48");
 
-    // Now S1 = rows 290..=431: it starts INSIDE hour 48 and overlaps one train row.
-    //   hour 48: rows 288, 289 train - row 290 train AND S1 - rows 291..=293 S1.
+    // S1 = rows 290..=431 starts inside hour 48 and overlaps train row 290.
     let mut r = ind_req(vec![tp(290, 431)], Some(sp));
     r.filter = Some(filter);
     let p = individual_preview(&d, &r).unwrap();
@@ -637,8 +594,7 @@ fn bad_test_periods_become_structured_issues_and_the_period_is_skipped() {
 
 #[test]
 fn a_legacy_label_or_event_time_on_the_wire_changes_nothing() {
-    // A legacy request shape: an event time outside the period and a label —
-    // both accepted on the wire and never read.
+    // A request with an event time outside the period and a label: both are accepted on the wire and never read.
     let d = ind_data(400, 0..0);
     let make = |periods: serde_json::Value| -> HealthPreviewRequest {
         serde_json::from_value(serde_json::json!({
@@ -666,9 +622,6 @@ fn a_legacy_label_or_event_time_on_the_wire_changes_nothing() {
     }
 }
 
-// ===========================================================================
-// Relationship
-// ===========================================================================
 
 const N_REL: usize = 10 * DAY;
 
@@ -680,9 +633,8 @@ fn rel_noise(i: usize) -> f64 {
     }
 }
 
-/// Y = 2X + noise (+10 from the step row on, inside the second scoring period).
-/// The row noise is +1 / -1 in turn, so over a clock hour (6 rows) it cancels:
-/// an hourly point lies ON the model unless the hour holds stepped rows.
+/// Y = 2X + noise (+10 from the step row, in the second scoring period).
+/// Row noise alternates +1/-1 so it cancels over an hour: an hourly point lies on the model unless the hour holds stepped rows.
 fn rel_data() -> ColumnarData {
     let x: Vec<f64> = (0..N_REL).map(|i| i as f64 * 0.01).collect();
     let y: Vec<f64> = (0..N_REL)
@@ -823,8 +775,7 @@ fn relationship_quiet_period_metrics_and_a_score_of_100_throughout() {
     approx(t.metrics.residual_sd.unwrap(), sd, 1e-9, "residual_sd");
     approx(rmse, 0.0, 1e-9, "reference rmse");
     approx(mean, 0.0, 1e-9, "reference mean");
-    // The train block equals the model's own (INFO) numbers: RAW rows, where the
-    // row noise is fully visible (RMSE 1).
+    // The train block equals the model's own numbers: RAW rows, where the row noise is fully visible (RMSE 1).
     let v = tv(&p);
     let st = match &p.stats {
         HealthStats::Relationship(s) => s,
@@ -844,8 +795,7 @@ fn relationship_drift_period_has_exact_share_below_80_lowest_and_residual_shift(
     let p = rel_preview(&d, &fit, vec![tp(576, 1151)]);
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.hours, t.scored), (576, 96, 96));
-    // Hours 96..=128 lie on the model (100). Hour 129 holds 4 stepped rows of 6:
-    // residual 10 * 4/6 = 6.667 -> 66.7. Hours 130..=191: residual 10 -> 40.
+    // Hours 96..=128 are on the model (100); hour 129 has 4 stepped rows of 6 -> residual 6.667 -> 66.7; hours 130..=191 residual 10 -> 40.
     assert_eq!(t.pct_below_80, Some(65.6), "63 of the 96 hours");
     assert_eq!(t.lowest, Some(40.0), "the lowest hourly score");
     assert_eq!(t.lowest_at.as_deref(), Some(ts_at(PLATEAU_ROW).as_str()), "the start of that hour");
@@ -882,12 +832,7 @@ fn relationship_drift_period_has_exact_share_below_80_lowest_and_residual_shift(
 
 #[test]
 fn relationship_lowest_is_the_lowest_hourly_average_a_burst_weighs_by_how_much_of_the_hour_it_fills() {
-    // A residual burst of +10 for `dip` rows from the step row (the 3rd row of
-    // hour 129). There is no "held for 1 h" window any more: the hourly mean IS
-    // the level of that hour.
-    //   2 rows  -> hour 129: 10 * 2/6 = 3.33 -> 91.1 (not below 80)
-    //   4 rows  -> hour 129: 10 * 4/6 = 6.67 -> 66.7
-    //   10 rows -> hour 129: 6.67 -> 66.7, hour 130 (all 6 rows): 10 -> 40
+    // Residual burst of +10 for `dip` rows from the step row (3rd row of hour 129). 2 rows -> 91.1; 4 -> 66.7; 10 -> hour 129 66.7, hour 130 40.
     for (dip, lowest, low_hours, at_row) in [(2usize, 91.0, 0usize, STEP_HOUR * HOUR), (4, 67.0, 1, STEP_HOUR * HOUR), (10, 40.0, 2, PLATEAU_ROW)] {
         let mut d = rel_data();
         for i in STEP_ROW..N_REL {
@@ -914,9 +859,7 @@ fn relationship_overlap_and_hours_without_a_prediction() {
     let t = &tv(&p).tests[0];
     assert_eq!((t.rows, t.days, t.train_rows, t.train_days), (288, 2.0, 144, 1.0));
     assert_eq!((t.hours, t.train_hours, t.scored), (48, 24, 48));
-    // Only the TRAINING hours have a prediction (the engine answered for the
-    // model without scoring periods): the period's other 24 hours are unscored -
-    // while every count stays what the data says.
+    // Only training hours have a prediction (engine ran without scoring periods): the period's other 24 hours are unscored; counts follow the data.
     let train_only = rel_extra(&d, &fit, &rel_req(vec![]));
     let p = relationship_preview_ex(&d, &fit, Some(&train_only), &req).unwrap();
     let t = &tv(&p).tests[0];
@@ -958,8 +901,7 @@ fn relationship_fit_summary_scatter_stats_and_raw_series_stay_training_only() {
     assert_eq!(a["stats"], b["stats"]);
     assert_eq!(a["score_summary"], b["score_summary"]);
     assert_eq!(a["fit_scatter"], b["fit_scatter"], "the Fit scatter shows the training rows");
-    // The raw series is the fit's training rows - with or without scoring
-    // periods (a scoring period has no per-row prediction) - and never scored.
+    // The raw series is the fit's training rows with or without scoring periods, and is never scored.
     assert_eq!(a["series"], b["series"]);
     if let (HealthSeries::Relationship(s0), HealthSeries::Relationship(s1)) = (&base.series, &with.series) {
         assert_eq!((s0.total_points, s1.total_points), (288, 288));
@@ -984,7 +926,6 @@ fn relationship_fit_summary_scatter_stats_and_raw_series_stay_training_only() {
     assert_eq!((a["scoring_interval_secs"].clone(), b["scoring_interval_secs"].clone()), (3600.into(), 3600.into()));
 }
 
-// ---------- the hourly predictions of compute_health_preview ----------
 
 fn rel_state() -> (AppState, ColumnarData) {
     let d = rel_data();
@@ -1048,8 +989,7 @@ fn only_hours_without_a_stored_prediction_are_planned_and_edits_never_run_again(
     apply_rel_extra(&state, &job2, &answers(&job2.points)).unwrap();
     let p = health_preview_in(&state, &longer).unwrap();
     assert_eq!((tv(&p).tests[0].hours, tv(&p).tests[0].scored), (48, 48), "old and new predictions are both used");
-    // REMOVING the period, going back to the shorter one, shortening it to an
-    // hour boundary, or a period over training rows: nothing to predict.
+    // Nothing to predict when a period is removed, shortened to an hour boundary, reverted to a shorter one, or lies over training rows.
     for tests in [vec![], vec![tp(288, 431)], vec![tp(288, 293)], vec![tp(100, 401)], vec![tp(288, 431), tp(432, 575)]] {
         assert!(planned(&state, tests.clone()).is_none(), "{tests:?}");
     }
@@ -1064,8 +1004,7 @@ fn a_period_edge_moved_inside_an_hour_re_predicts_exactly_that_hour() {
     let job = planned(&state, vec![tp(288, 433)]).unwrap();
     assert_eq!(rel_hours_of(&d, &job.points), vec![72]);
     approx(job.x_extra[0][0], (d.columns[1][432] + d.columns[1][433]) / 2.0, 1e-12, "mean of the two rows");
-    // Shortened to end INSIDE hour 71 (rows 426..=428 of 426..=431): that hour has
-    // other means now - its stored prediction is not reused, the hour is asked again.
+    // Shortened to end inside hour 71: its mean changed, so the stored prediction isn't reused and the hour is asked again.
     let job = planned(&state, vec![tp(288, 428)]).unwrap();
     assert_eq!(rel_hours_of(&d, &job.points), vec![71]);
     approx(job.x_extra[0][0], (426..=428).map(|r| d.columns[1][r]).sum::<f64>() / 3.0, 1e-12, "mean of the three rows");
@@ -1083,19 +1022,14 @@ fn a_period_edge_moved_inside_an_hour_re_predicts_exactly_that_hour() {
 
 #[test]
 fn removing_a_scoring_period_plans_nothing_even_when_it_shared_an_hour() {
-    // The model is trained on rows 0..=285, so hour 47 (rows 282..=287) holds
-    // four training rows. S1 = 286..=434: the rest of hour 47, hours 48..=71 and
-    // rows 432..=434 of hour 72. S2 = 434..=575: shares row 434 (and hour 72)
-    // with S1 - the usual case of two periods that meet at one instant.
+    // Trained on rows 0..=285, so hour 47 has four training rows. S1 = 286..=434 and S2 = 434..=575 share row 434 (hour 72).
     let d = rel_data();
     let state = state_with(rel_data());
     let stamp = session_stamp(&state).unwrap().unwrap();
     assert!(store_rel_fit(&state, stamp, "m1::fp".into(), rel_fit_n(&d, 286)));
     let (s1, s2) = (tp(286, 434), tp(434, 575));
     let job = planned(&state, vec![s1.clone(), s2.clone()]).unwrap();
-    // One point per hour 0..=95, plus the shared hours as they are WITHOUT one of
-    // their sources: hour 47 with the training rows only, hour 72 with S1 only
-    // and with S2 only.
+    // One point per hour 0..=95, plus shared hours without one source: hour 47 train-only, hour 72 with S1 only and with S2 only.
     let hours = rel_hours_of(&d, &job.points);
     assert_eq!(hours.len(), 96 + 3);
     assert_eq!(hours.iter().filter(|&&h| h == 47).count(), 2);
@@ -1186,11 +1120,8 @@ fn sidecar_answers_are_checked_and_an_outdated_sidecar_is_named() {
     assert!(parse_predicted_extra(&other, 1).unwrap_err().contains("boom"));
 }
 
-// ---------- Train pre-warm (preview_relationship_model) ----------
 
-/// The hourly points `preview_relationship_model` asks the engine for when it
-/// trains on rows 0..288 with these scoring periods - built the way the command
-/// does it (row-major training values, no fit yet).
+/// Hourly points `preview_relationship_model` asks the engine for when training on rows 0..288 with these periods (row-major, no fit yet).
 fn train_points(d: &ColumnarData, tests: &[TestPeriodArg]) -> RelHourPoints {
     let rows: Vec<u32> = (0..2 * DAY as u32).collect();
     let y: Vec<f64> = rows.iter().map(|&r| d.columns[2][r as usize]).collect();
@@ -1202,8 +1133,7 @@ fn train_points(d: &ColumnarData, tests: &[TestPeriodArg]) -> RelHourPoints {
     RelHours::build(d, &train, plan.as_ref().map(|p| (p, &cols))).points()
 }
 
-/// What the sidecar's `preview_relationship` returns for the 288 training rows
-/// (+ `predicted_extra` for the hourly points `extra` when given).
+/// What the sidecar's `preview_relationship` returns for the 288 training rows (+ `predicted_extra` for `extra` when given).
 fn train_response(d: &ColumnarData, extra: Option<&RelHourPoints>) -> serde_json::Value {
     let preds: Vec<f64> = (0..2 * DAY).map(|r| 2.0 * d.columns[1][r]).collect();
     let resid: Vec<f64> = (0..2 * DAY).map(|r| d.columns[2][r] - preds[r]).collect();
@@ -1253,9 +1183,7 @@ fn train_and_the_lazy_prediction_choose_the_same_hourly_points() {
     let job = plan_rel_extra(&state, &rel_req(tests)).unwrap().unwrap();
     assert_eq!(points, job.points);
     assert_eq!(points.x_rows(), job.x_extra);
-    // Training hours 0..=47 (the first period's training rows change nothing in
-    // them), the first period's other hours 48..=71, and the second period:
-    // hours 96..=99 complete plus hour 100 with its single row 600.
+    // Training hours 0..=47, the first period's other hours 48..=71, then the second period: hours 96..=99 plus hour 100 (single row 600).
     let want: Vec<i64> = (0..72).chain(96..=100).collect();
     assert_eq!(rel_hours_of(&d, &points), want);
     assert_eq!(*points.x_rows().last().unwrap(), vec![d.columns[1][600]], "a one-row hour is that row");
@@ -1368,7 +1296,6 @@ fn train_prewarm_is_not_stored_for_a_fit_that_was_not_cached() {
     assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.peek_extra("m1::fp").is_none());
 }
 
-// ---------- a failed hourly prediction degrades, never fails ----------
 
 #[test]
 fn failed_prediction_gives_the_fit_preview_with_unscored_hours_and_one_warning() {
@@ -1422,9 +1349,7 @@ fn failed_prediction_gives_the_fit_preview_with_unscored_hours_and_one_warning()
 
 #[test]
 fn a_failure_after_a_good_train_keeps_the_training_hours_scored() {
-    // The Train pre-warmed the training hours; a scoring period added later
-    // could not be predicted. The training hours keep their score, the new
-    // hours are null, every period reads "not scored".
+    // Train pre-warmed the training hours; a later-added period can't be predicted: training hours keep their score, new hours are null, every period reads 'not scored'.
     let (state, _d) = rel_state();
     fill(&state, &rel_req(vec![]));
     let req = rel_req(vec![tp(288, 431)]);
@@ -1466,8 +1391,7 @@ fn outdated_sidecar_gets_its_own_user_facing_wording() {
     assert!(ip.validation.iter().all(|i| i.code != "test_scoring_failed"));
 }
 
-/// A cache budget that holds the 288-row fit (8064 bytes) and its 48 training
-/// hours (48 x 24 = 1152 bytes -> 9216) but not 24 more hours (-> 9792).
+/// Cache budget fits the 288-row fit (8064 bytes) and its 48 training hours (1152 -> 9216) but not 24 more hours (-> 9792).
 const TIGHT_BUDGET: usize = 9300;
 
 #[test]
@@ -1507,7 +1431,6 @@ fn unscored_periods_still_report_their_rows_days_and_hours() {
     assert_eq!((t[1].hours, t[1].train_hours, t[1].train_days), (48, 24, 1.0));
 }
 
-// ---------- predict_rel_hours: lock scope, remembered failures, retry ----------
 
 use crate::{predict_rel_hours, ExtraPlan, RelExtraJob, TestScoringError};
 use std::future::Future;
@@ -1601,8 +1524,7 @@ fn the_training_hours_are_predicted_and_scored_without_any_scoring_period() {
     assert_eq!(block_on(predict_rel_hours(&state, &req, &serial, &outdated, good_runner(&calls), &|_| {})), Ok(None));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    // If it FAILS, the warning appears although there is no scoring period:
-    // every hour unscored, the model-fit side intact, no engine text anywhere.
+    // If the engine FAILS, the warning appears with no scoring period: every hour unscored, fit side intact, no engine text anywhere.
     let (failed_state, _) = rel_state();
     let nasty = "pygam LinearGAM exploded in backend.py (numpy.linalg.LinAlgError)";
     let e = block_on(predict_rel_hours(&failed_state, &req, &serial, &outdated, failing_runner(nasty, &calls), &|_| {}))
@@ -1820,8 +1742,7 @@ fn has_marker(state: &AppState, key: &str) -> bool {
 
 #[test]
 fn a_remembered_failure_applies_only_to_the_same_missing_hours() {
-    // The failed marker is per set of missing hourly points, not per fit: after a
-    // failure a change of the scoring periods must not answer "failed" at once.
+    // The failed marker is per set of missing hourly points, not per fit: after a failure, changed periods must not answer 'failed' at once.
     let (state, _d) = rel_state();
     let serial = tauri::async_runtime::Mutex::new(());
     let outdated = AtomicBool::new(false);
@@ -2019,8 +1940,7 @@ fn a_fit_the_health_page_keeps_reading_outlives_later_trains() {
 
 #[test]
 fn the_preview_and_the_prediction_step_use_the_same_hourly_points() {
-    // What the prediction step asks the engine for is exactly what the preview
-    // looks up: with the job's answers stored, no hour is left without a score.
+    // What the prediction step asks the engine for is what the preview looks up: with the answers stored, no hour lacks a score.
     let (state, d) = rel_state();
     let fit = rel_fit(&d);
     let tests = vec![tp(144, 431), tp(576, 600)];
@@ -2041,15 +1961,10 @@ fn the_preview_and_the_prediction_step_use_the_same_hourly_points() {
     assert_eq!((t[1].rows, t[1].hours, t[1].scored), (25, 5, 5));
 }
 
-// ---------- the export still refuses what it cannot validate ----------
 
-// ===========================================================================
-// Clustering
-// ===========================================================================
 
-/// X/Y around (10, 20) with a small bounded pattern; from the step row the X is
-/// shifted by +100 (far outside any ring). C is the criteria sensor: it changes
-/// by the HOUR (even hours 5, odd hours 15), so every hour is in one cluster.
+/// X/Y around (10, 20) with a small bounded pattern; X shifts +100 from the step row.
+/// C (criteria) changes per hour (even 5, odd 15), so each hour is in one cluster.
 fn clu_data() -> ColumnarData {
     let n = 10 * DAY;
     let x: Vec<f64> = (0..n)
@@ -2101,9 +2016,7 @@ fn clustering_quiet_period_and_a_period_with_a_shift() {
     assert!(n.lowest.unwrap() >= 80.0, "inside the 3 SD ring throughout: {:?}", n.lowest);
     let k = &v.tests[1];
     assert_eq!((k.rows, k.hours, k.scored), (576, 96, 96));
-    // The 33 hours before the shift are inside the ring. Hour 129 holds the step
-    // (2 rows at ~10, 4 at ~110): its MEAN point is far outside, like the 62
-    // fully shifted hours after it.
+    // The 33 hours before the shift are inside the ring; hour 129 (2 rows ~10, 4 ~110) has a mean far outside, like the 62 shifted hours after it.
     assert_eq!(k.metrics.inside_3sd_ring_pct, Some(34.4));
     assert_eq!(k.pct_below_80, Some(65.6));
     assert_eq!(k.lowest, Some(0.0), "an hourly mean beyond the outer ring scores 0");
@@ -2135,14 +2048,14 @@ fn clustering_quiet_period_and_a_period_with_a_shift() {
 
 #[test]
 fn clustering_hours_in_no_criteria_range_are_not_scored_and_not_counted_inside() {
-    // Criteria ranges [None,10) and [20,None): the C = 15 rows are unassigned.
+    // Criteria ranges (None,10] and (20,None): the C = 15 rows are unassigned.
     let d = clu_data();
     let mut r = clu_req(vec![tp(288, 575)], 2);
     r.cluster_ranges = Some(vec![
         ClusterRange { min: None, max: Some(10.0) },
         ClusterRange { min: Some(20.0), max: None },
     ]);
-    // The second cluster has no training row -> the fit is refused (NO_DATA) as before.
+    // The second cluster has no training row, so the fit is refused (NO_DATA).
     assert!(clustering_preview(&d, &r).unwrap_err().starts_with("NO_DATA"));
     // Three machine states, one per HOUR: C = 5, 15, 100; the ranges cover
     // C = 5 and C = 100 only.
@@ -2175,13 +2088,8 @@ fn clustering_hours_in_no_criteria_range_are_not_scored_and_not_counted_inside()
     assert_eq!(st.rows, 288);
     assert_eq!((st.assigned_rows, st.unassigned_rows), (192, 96), "the raw training rows, as before");
 
-    // Hours of the period whose rows are NOT all in one cluster have no cluster:
-    // they stay hours of the period but are not scored and not counted "inside".
-    //   * hour 50 (state 2): its first half is in state 0 - two clusters in one
-    //     hour. (Its mean criteria value, 52.5, is in the second range and its
-    //     mean point is far from that cluster: judged by the mean it was a 0.)
-    //   * hour 51 (state 0): one row has no criteria value.
-    //   * hour 54 (state 0): one row's criteria value is in no range.
+    // Hours whose rows aren't all in one cluster have no cluster: unscored, not counted inside.
+    // Hour 50 mixes states; hour 51 has a row with no criteria value; hour 54 has a row in no range.
     let state5 = |i: usize| if (300..303).contains(&i) { 0 } else { state(i) };
     let mut c: Vec<f64> = (0..n).map(|i| [5.0, 15.0, 100.0][state5(i)]).collect();
     c[308] = f64::NAN;
@@ -2221,8 +2129,7 @@ fn clustering_hours_in_no_criteria_range_are_not_scored_and_not_counted_inside()
     };
     assert_eq!((st.assigned_rows, st.unassigned_rows), (192, 96), "the training rows are untouched");
 
-    // The same three states changing every ROW: every hour holds rows of both
-    // clusters (and rows in no range), so no hour has a cluster - nothing is scored.
+    // States change every row, so every hour mixes clusters: nothing is scored.
     let c: Vec<f64> = (0..n).map(|i| [5.0, 15.0, 100.0][i % 3]).collect();
     let x: Vec<f64> = (0..n)
         .map(|i| [10.0, 40.0, 70.0][i % 3] + (((i * 37) % 11) as f64 - 5.0) * 0.2)
@@ -2270,22 +2177,9 @@ fn clustering_overlap_and_training_summary_stay_training_only() {
     }
 }
 
-// ===========================================================================
-// Export
-// ===========================================================================
 
-// ===========================================================================
-// Parity with the frontend's fake Rust backend (one shared fixture)
-// ===========================================================================
-//
-// `tests/fixtures/hourly_score_parity.json` holds ONE dataset (5-minute rows),
-// one `compute_health_preview` request per kind exactly as the frontend sends
-// it, and the answer expected for it. The frontend's integration tests run on
-// a TypeScript port of this module (`src/__tests__/helpers/fakeHealthRust.ts`);
-// `src/__tests__/HealthHourlyRustParity.test.ts` asserts the SAME fixture on
-// that port. A number only one side reproduces is a finding - Rust is the
-// source of truth, so fix the port (or, for a deliberate contract change, the
-// fixture and both sides together).
+// Parity with the frontend's fake Rust: hourly_score_parity.json holds one dataset, a request per kind and the expected answer;
+// src/__tests__/helpers/fakeHealthRust.ts ports this module. Rust is the truth: fix the port, or change the fixture and both sides together.
 
 const PARITY_FIXTURE: &str = include_str!("../fixtures/hourly_score_parity.json");
 
@@ -2405,8 +2299,7 @@ fn hourly_parity_clustering_answers_the_fixture_the_frontend_fake_is_tested_with
     assert_same(&j["scoring_interval_secs"], &want["scoring_interval_secs"], "scoring_interval_secs");
     assert!(j["series"]["score"].is_null());
     assert_same(&j["series"]["total_points"], &want["series_total_points"], "series.total_points");
-    // An hour with rows in two clusters, with a row that has no criteria value,
-    // or in no range: no cluster, no SD distance, no score (null, never 0).
+    // An hour with rows in two clusters, or a row with no criteria value or in no range: no cluster, no SD distance, no score (null, never 0).
     assert_listed(&j["hourly"], &want["hourly"], "hourly");
     let no_distance: Vec<serde_json::Value> = j["hourly"]["sd_distance"]
         .as_array()

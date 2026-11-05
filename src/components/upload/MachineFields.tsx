@@ -2,12 +2,7 @@ import { type Ref } from 'react';
 import type { MachineDetails } from '../../types';
 import { TZ_OPTIONS, fmtOffset, pcOffsetMin } from '../../utils/projectDetails';
 
-/*
- * The ONE set of machine fields — Step 1 ("Which machine is this?") and the
- * Project details dialog use this same component, so the labels, order and
- * placeholders are identical everywhere. UI only: the rules (required fields,
- * duplicate pair, derived name) live in `utils/projectDetails.ts`.
- */
+/* The ONE set of machine fields, shared by Step 1 and the Project details dialog; the rules live in `utils/projectDetails.ts`. */
 
 /** "Enter the plant name, machine name and machine tag to continue". */
 export function missingFieldsReason(missing: readonly string[], verb: 'continue' | 'save'): string | null {

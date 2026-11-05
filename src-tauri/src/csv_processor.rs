@@ -3,15 +3,10 @@ use std::fs::File;
 use std::io::BufReader;
 use std::time::Instant;
 
-/// Hard cap on the size of a single CSV the desktop app will accept.
-/// At 2 GB the parsed columns (~8 bytes/cell) plus transient batch buffers
-/// dominate; anything larger should be pre-processed externally.
+/// Max CSV size; above 2 GB the parsed columns (~8 bytes/cell) plus batch buffers dominate RAM.
 const MAX_CSV_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 
-/// Hard cap on the small side files (sensor information / tag-name mapping
-/// CSVs). They hold one row per sensor, so a real one is a few hundred KB at
-/// most; these readers keep every cell as a `String`, so an oversized file is
-/// refused before reading instead of eating RAM.
+/// Max size of the sensor-info / tag-mapping CSVs; cells are kept as `String`, so oversized files are refused before reading.
 pub const MAX_SIDE_CSV_BYTES: u64 = 10 * 1024 * 1024;
 
 /// Refuse a sensor-information / mapping CSV over [`MAX_SIDE_CSV_BYTES`].
@@ -26,72 +21,34 @@ fn check_side_csv_size(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Sentinel in [`ColumnarData::ts_parsed`] for a row whose timestamp is
-/// missing or failed to parse. Any timestamp filter excludes such rows,
-/// matching the legacy per-query parse behavior.
+/// Timestamp missing or unparseable; every timestamp filter excludes such rows.
 pub const TS_MISSING: i64 = i64::MIN;
 
-/// Wire-format row for sampled scatter payloads and table pages. NOT the
-/// in-RAM store — the loaded dataset lives in [`ColumnarData`]; records of
-/// this shape are materialized only at the IPC boundary (see
-/// [`ColumnarData::wire_record`]), and every command that emits them is
-/// bounded (`get_scatter_sample`).
+/// Wire-format row for scatter payloads, built only at the IPC boundary; the store is `ColumnarData`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CsvRecord {
     pub timestamp: Option<String>,
     pub values: Vec<Option<f64>>,
 }
 
-/// In-RAM store for the loaded dataset — column-major.
-///
-/// Why columnar: `Option<f64>` occupies 16 bytes (the discriminant pads to
-/// f64 alignment) and a per-row `Vec` adds a 24-byte header plus its own
-/// heap allocation. One contiguous `Vec<f64>` per sensor halves the
-/// dominant term (8 bytes/cell, NaN = missing) and drops the per-row
-/// overhead entirely. Every aggregation in lib.rs walks columns, so this
-/// is also the cache-friendly orientation for stats/filter/projection.
+/// In-RAM dataset, column-major: one contiguous `Vec<f64>` per sensor (8 bytes/cell, NaN = missing).
 pub struct ColumnarData {
     /// Column names; `headers[0]` is the canonical timestamp column after
     /// the merge step.
     pub headers: Vec<String>,
-    /// Timestamp text per row, round-tripped to the frontend as-is — EXCEPT
-    /// a non-ISO shape (`1/2/2026 0:05`, `2026/01/02 …`, AM/PM), which is
-    /// rewritten to `YYYY-MM-DD HH:MM:SS[.f]` per file at read time
-    /// ([`normalize_file_timestamps`]), and a detected Buddhist-Era year (see [`normalize_buddhist_era`]), which
-    /// `from_parts` rewrites to Gregorian here too, not just in `ts_parsed`.
-    /// Keeping this text and `ts_parsed` derived from the exact same
-    /// (possibly-corrected) string is what keeps Raw-mode display (which
-    /// reads this text directly) and Aggregated-mode display (built from
-    /// `ts_parsed`) agreeing on the year for the same rows.
+    /// Timestamp text per row; non-ISO shapes and Buddhist-Era years are rewritten so it agrees with `ts_parsed`.
     pub timestamps: Vec<Option<String>>,
-    /// Timestamps parsed ONCE at load to epoch microseconds ([`TS_MISSING`]
-    /// when absent/unparseable). Filters compare against this — never
-    /// re-parse `timestamps` per query.
-    ///
-    /// WRITE-ONCE: filled by [`ColumnarData::from_parts`] and never changed
-    /// afterwards (special sensors only add / replace / remove VALUE columns).
-    /// [`ColumnarData::sample_interval_secs`] caches a value derived from it,
-    /// so a future path that changes the timestamps of a loaded dataset must
-    /// build a NEW `ColumnarData` through `from_parts` (which starts with an
-    /// empty cache) instead of editing this vector in place.
+    /// Epoch microseconds parsed once at load (`TS_MISSING` if absent); filters compare this, never re-parse text.
+    /// Write-once: `sample_interval_secs` caches from it, so changed timestamps need a new dataset via `from_parts`.
     pub ts_parsed: Vec<i64>,
-    /// `columns[c][r]` = value of column `c` at row `r`; NaN = missing.
-    /// Every column has length `n_rows()`, including the timestamp
-    /// column's all-NaN placeholder, so header indices map 1:1.
+    /// `columns[c][r]`; NaN = missing. Every column has `n_rows()` entries (the timestamp column is all NaN).
     pub columns: Vec<Vec<f64>>,
-    /// Cache of [`ColumnarData::sample_interval_secs`] (the median sample
-    /// interval of `ts_parsed`), filled by the first call. Private, so every
-    /// dataset outside this module is built by `from_parts` and starts empty:
-    /// the cache lives and dies with the dataset it describes.
+    /// Cache of `sample_interval_secs`; private so it starts empty with each dataset.
     sample_interval: std::sync::OnceLock<Option<f64>>,
 }
 
 impl ColumnarData {
-    /// Assemble a dataset from already-built parts, normalizing a detected
-    /// Buddhist-Era year (see [`normalize_buddhist_era`]) in `timestamps`
-    /// BEFORE computing `ts_parsed` (the one-time timestamp parse), both in
-    /// parallel — so every downstream consumer of either field, in Rust or
-    /// shipped to the frontend, sees only the corrected Gregorian year.
+    /// Builds a dataset from parts; corrects Buddhist-Era years in `timestamps` before computing `ts_parsed`.
     pub fn from_parts(
         headers: Vec<String>,
         timestamps: Vec<Option<String>>,
@@ -145,20 +102,7 @@ impl ColumnarData {
         self.timestamps.len()
     }
 
-    /// Median sample interval of this dataset in seconds — exactly
-    /// [`median_interval_seconds`] of `ts_parsed` (`None` below 2 valid
-    /// timestamps / without a positive gap), computed AT MOST ONCE per dataset.
-    ///
-    /// The computation is two passes over `ts_parsed`, up to 2M gap samples
-    /// and a sort (plus a full sort of the timestamps when they are out of
-    /// order): several times the cost of the count scan / preview it
-    /// accompanies, and constant for a loaded dataset. `load_csv` fills the
-    /// cache while it builds the load report (off the session lock, on the
-    /// load's own blocking thread), so no later command pays for it.
-    ///
-    /// Never stale: the cache is a field of the dataset itself. A new load
-    /// installs a new `ColumnarData` (empty cache), and `ts_parsed` is
-    /// write-once (see its doc) — special sensors only touch value columns.
+    /// Median sample interval in seconds, computed once per dataset; never stale because `ts_parsed` is write-once.
     pub fn sample_interval_secs(&self) -> Option<f64> {
         *self
             .sample_interval
@@ -170,9 +114,7 @@ impl ColumnarData {
         self.headers.iter().position(|h| h == name)
     }
 
-    /// Cell accessor with the legacy `Option` semantics: NaN (missing)
-    /// maps to `None`, everything else (including ±inf) to `Some`.
-    /// Out-of-range indices also yield `None`.
+    /// NaN maps to `None`, anything else (including ±inf) to `Some`; out-of-range indices give `None`.
     #[inline]
     pub fn value(&self, col: usize, row: usize) -> Option<f64> {
         let v = *self.columns.get(col)?.get(row)?;
@@ -192,23 +134,7 @@ impl ColumnarData {
     }
 }
 
-/// Detects a Buddhist-Era (BE = CE + 543) year in the leading `YYYY` of a
-/// timestamp string and rewrites it to Gregorian in place — every format
-/// [`parse_timestamp`] accepts starts with `%Y`, so the first 4 characters
-/// are always the year regardless of which one matches.
-///
-/// Detection rule: `year >= 2400`. No genuine CE sensor timestamp is ever
-/// that far out (2400 CE is over 370 years away), and no genuine BE year is
-/// ever under 2400 either (BE 2400 = CE 1857, decades before any plausible
-/// sensor log) — safe both directions for this app's domain, so this runs
-/// unconditionally with no per-import opt-in.
-///
-/// Why this matters beyond cosmetics: a BE date's leap day, e.g.
-/// `2567-02-29` (BE 2567 = CE 2024, a real leap year), fails to parse
-/// entirely if read as literal CE — CE 2567 is not a leap year, so
-/// `chrono` rejects the date outright and the whole row is dropped as
-/// [`TS_MISSING`]. Correcting the year here, before any parse attempt, is
-/// what makes that row valid again.
+/// Rewrites a leading Buddhist-Era year (>= 2400) to Gregorian (-543); otherwise BE `2567-02-29` fails to parse and the row becomes `TS_MISSING`.
 fn normalize_buddhist_era(mut s: String) -> String {
     if let Some(year) = s.get(0..4).and_then(|y| y.parse::<i32>().ok()) {
         if year >= 2400 {
@@ -220,20 +146,14 @@ fn normalize_buddhist_era(mut s: String) -> String {
     s
 }
 
-/// True if `s`'s leading `YYYY` reads as a Buddhist-Era year, per
-/// [`normalize_buddhist_era`]'s detection rule — without rewriting it. Used
-/// only to decide whether a load-report warning is worth surfacing.
+/// True if the leading year reads as Buddhist-Era (>= 2400); detection only, no rewrite.
 fn is_buddhist_era_year(s: &str) -> bool {
     s.get(0..4)
         .and_then(|y| y.parse::<i32>().ok())
         .is_some_and(|y| y >= 2400)
 }
 
-/// Load-report warning for detected Buddhist-Era years, or `None` if none
-/// were found — `from_parts` corrects them silently, so this is the only
-/// place the user finds out it happened. Scan BEFORE normalization (pass
-/// the still-original timestamp text): after `from_parts` runs, every year
-/// has already been rewritten and there's nothing left to detect.
+/// Load-report warning for Buddhist-Era years, or `None`; scans the original text because `from_parts` rewrites the years.
 fn buddhist_era_warning<'a>(timestamps: impl IntoIterator<Item = &'a str>) -> Option<String> {
     let count = timestamps
         .into_iter()
@@ -248,21 +168,11 @@ fn buddhist_era_warning<'a>(timestamps: impl IntoIterator<Item = &'a str>) -> Op
     ))
 }
 
-/// Try the common timestamp formats and return the parsed `NaiveDateTime`,
-/// or `None` if no format matches. Single source of truth for every
-/// timestamp parse in the app (load-time row parsing and per-query filter
-/// bounds alike).
-///
-/// Reads the year-first ISO shapes only (plus a trailing `Z`, read as the
-/// wall clock written — the same way a `+07:00` offset is read). The non-ISO
-/// shapes (`M/D/YYYY`, `D.M.YYYY`, `YYYY/MM/DD`, AM/PM …) are rewritten to
-/// ISO text per file at read time by [`normalize_file_timestamps`] — the
-/// day/month order of `A/B/YYYY` can only be decided from the whole file, so
-/// a single string can never be read here.
+/// Parses the year-first ISO shapes (trailing `Z` read as wall clock).
+/// Non-ISO shapes are rewritten per file by `normalize_file_timestamps`.
 pub fn parse_timestamp(s: &str) -> Option<chrono::NaiveDateTime> {
     parse_iso_timestamp(s).or_else(|| {
-        // `…Z` (UTC designator): the app reads the wall clock as written,
-        // exactly like `DateTime::naive_local()` does for `+07:00` below.
+        // `Z` is read as the wall clock as written, like `+07:00` offsets.
         let rest = s.strip_suffix('Z').or_else(|| s.strip_suffix('z'))?;
         if rest.ends_with(|c: char| c.is_ascii_digit()) {
             parse_naive_iso(rest)
@@ -309,35 +219,13 @@ pub fn ts_to_micros(dt: chrono::NaiveDateTime) -> i64 {
     dt.and_utc().timestamp_micros()
 }
 
-/// Epoch microseconds → `NaiveDateTime`, for formatting saved-model date
-/// bounds. `None` only for values outside chrono's representable range.
+/// Epoch microseconds to `NaiveDateTime`; `None` outside chrono's range.
 pub fn micros_to_naive(us: i64) -> Option<chrono::NaiveDateTime> {
     chrono::DateTime::from_timestamp_micros(us).map(|dt| dt.naive_utc())
 }
 
-// ── Non-ISO timestamp shapes (read per file, rewritten to ISO text) ────────
-//
-// Real exports come in many shapes: `1/2/2026 0:05` (US Excel),
-// `2/1/2026 0:05` (most other locales), `01-Jan-25 12:00 AM` (historians),
-// `Mon, 01 Jan 2025 13:05:00 +0700` (RFC), `20250131130500` (compact),
-// `1 ม.ค. 2568 13:05 น.` (Thai), Excel serial numbers, Unix epochs … These are
-// read ONCE per file, right after the file is read and BEFORE the multi-file
-// merge, and rewritten to
-// `YYYY-MM-DD HH:MM:SS[.f]` so every later step (merge order, `from_parts`'
-// one-time parse, the frontend's year-first `readWallClock`) sees ISO text.
-// Text already in a shape `parse_timestamp` reads ([`is_plain_iso`]) is
-// never touched.
-//
-// The parser is token based rather than one big pattern: the text is split
-// on whitespace, the decoration is peeled off (weekday, time zone, AM/PM,
-// Thai `น.`), the time token is taken off the end, and what is left must be
-// one of a small table of date shapes (see [`parse_date_tokens`]).
-//
-// The year is written out AS GIVEN: a Buddhist-Era year (`1/2/2569`) stays
-// `2569-01-02 …` here and is converted exactly once, by `from_parts`'
-// `normalize_buddhist_era`, which also produces the BE load-report warning.
-// A time zone (`Z`, `+0700`, `GMT+0700`, `UTC`) is dropped: the app reads
-// the wall clock as written, exactly like `+07:00` offsets in ISO text.
+// Non-ISO timestamps are rewritten per file, before the merge, to `YYYY-MM-DD HH:MM:SS[.f]`.
+// The year stays as written (Buddhist-Era is converted later by `from_parts`); time zones are dropped.
 
 /// Day/month order of an `A/B/YYYY` date — decided per FILE, never per row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -363,9 +251,7 @@ enum NameStyle {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LooseDate {
-    /// `YYYY/MM/DD`, `YYYY.MM.DD`, `YYYY-M-D`, ISO-like texts that
-    /// `parse_timestamp` does not take (`2025-01-31T130500`, lowercase `t`,
-    /// comma fraction, date only) — unambiguous.
+    /// `YYYY/MM/DD`, `YYYY.MM.DD`, `YYYY-M-D` and ISO-like texts `parse_timestamp` rejects; unambiguous.
     YearFirst { y: i32, m: u32, d: u32 },
     /// `YYYYMMDD[HHMM[SS]]` — unambiguous.
     Compact { y: i32, m: u32, d: u32 },
@@ -383,13 +269,10 @@ struct LooseTs {
     h: u32,
     mi: u32,
     s: u32,
-    /// Fractional-second digits as written (`frac_len` digits, leading zeros
-    /// kept through the width), so the rewritten text keeps them verbatim.
+    /// Fractional-second digits as written, kept verbatim in the rewritten text.
     frac: u32,
     frac_len: u8,
-    /// The year was written with 2 digits: read as `2000 + YY` (no sensor
-    /// log predates 2000), or `2500 + YY` (Buddhist-Era) next to a Thai
-    /// month name.
+    /// Year written with 2 digits: read as 2000+YY, or 2500+YY next to a Thai month name.
     two_digit_year: bool,
 }
 
@@ -410,9 +293,7 @@ fn year_in(s: &str, century: i32) -> Option<(i32, bool)> {
     }
 }
 
-/// Month name → (1..=12, is Thai). English: 3-letter, `Sept`, or full, any
-/// case, a trailing `.` allowed (`Jan.`). Thai: the abbreviations with or
-/// without dots (`ม.ค.` / `มค`) and the full names (`มกราคม`).
+/// Month name to (1..=12, is_thai): English 3-letter, `Sept` or full; Thai abbreviated (with or without dots) or full.
 fn month_from_name(s: &str) -> Option<(u32, bool)> {
     if s.is_ascii() {
         const NAMES: [(&str, &str); 12] = [
@@ -539,8 +420,7 @@ fn offset_minutes(s: &str) -> Option<i16> {
     Some(sign * (h * 60 + m))
 }
 
-/// The UTC offset a raw timestamp spells out, in minutes (`Z`, `UTC`, `GMT` = 0).
-/// Read from the raw text: the rewrite to ISO drops the zone.
+/// UTC offset in minutes spelled in the raw text (`Z`, `UTC`, `GMT` = 0); read from raw because the ISO rewrite drops the zone.
 fn written_offset_minutes(raw: &str) -> Option<i16> {
     let s = raw.trim();
     if !s.is_ascii() {
@@ -557,7 +437,7 @@ fn written_offset_minutes(raw: &str) -> Option<i16> {
             _ => offset_minutes(last),
         };
     }
-    // Glued to a time. The time check keeps `2024-10-27` and `27-OCT-2025` out.
+    // Zone glued to a time; the time check keeps `2024-10-27` and `27-OCT-2025` out.
     let has_time = |t: &str| t.contains(':') || t.as_bytes().windows(2).any(|w| w[0] == b'T' && w[1].is_ascii_digit());
     if let Some(rest) = last.strip_suffix(['Z', 'z']) {
         return has_time(rest).then_some(0);
@@ -580,10 +460,8 @@ fn written_offsets(timestamps: &[Option<String>]) -> Vec<Option<i16>> {
     }
 }
 
-/// Which output row a row lands on among the rows of one instant (`claims` =
-/// the offset of each output row so far, in order of first appearance). A
-/// different written offset is a different moment (a daylight-saving fall-back
-/// repeats the wall clock). A row without an offset joins the first output row.
+/// Output row an input row lands on among rows of one instant; a different written offset is a different moment (DST fall-back repeats the wall clock).
+/// No offset joins the first row.
 fn offset_slot(claims: &mut Vec<Option<i16>>, offset: Option<i16>) -> u32 {
     let Some(first) = claims.first().copied() else {
         claims.push(offset);
@@ -610,9 +488,8 @@ fn merged_rows_warning(merged: usize) -> Option<String> {
     })
 }
 
-/// One time token → (h, mi, s, frac, frac_len). Shapes: `H:MM`, `H:MM:SS`,
-/// `H:MM:SS.f` / `,f`, compact `HHMM` / `HHMMSS[.f]`, and `H.MM` after a
-/// Thai `น.`. `meridiem` applies the 12-hour clock (12 AM = 00, 12 PM = 12).
+/// One time token to (h, mi, s, frac, frac_len): `H:MM[:SS[.f]]`, compact `HHMM[SS]`, `H.MM` after Thai `น.`.
+/// `meridiem` applies the 12-hour clock (12 AM = 00, 12 PM = 12).
 fn parse_clock(t: &str, mut meridiem: Option<bool>, thai: bool) -> Option<(u32, u32, u32, u32, u8)> {
     let t = strip_glued_zone(t);
     let (t, glued) = split_glued_meridiem(t);
@@ -746,8 +623,7 @@ fn parse_date_token(tok: &str) -> Option<(LooseDate, bool)> {
     Some((LooseDate::YearLast { a: digits_in(p1, 1, 2)?, b: digits_in(p2, 1, 2)?, y }, yy))
 }
 
-/// The date-shape table: one token (see [`parse_date_token`]) or three
-/// tokens `D Mon Y`, `Mon D Y`, `Y Mon D` (English or Thai month name).
+/// Date shapes: one token, or three tokens `D Mon Y`, `Mon D Y`, `Y Mon D`.
 fn parse_date_tokens(toks: &[&str]) -> Option<(LooseDate, bool)> {
     match *toks {
         [one] => parse_date_token(one),
@@ -772,10 +648,7 @@ fn parse_date_tokens(toks: &[&str]) -> Option<(LooseDate, bool)> {
     }
 }
 
-/// True when `s` is in a shape [`parse_timestamp`] reads directly (ISO with
-/// `T`/space, `HH:MM[:SS[.f]]`, optional `Z` or — with seconds — `±HH:MM`).
-/// Such text is never rewritten. A plain byte check: cheap enough to run on
-/// every row of an ISO file.
+/// True if `parse_timestamp` reads this shape directly; such text is never rewritten. Plain byte check, cheap per row.
 fn is_plain_iso(s: &str) -> bool {
     let b = s.as_bytes();
     let dig = |r: std::ops::Range<usize>| b.len() >= r.end && b[r].iter().all(u8::is_ascii_digit);
@@ -821,9 +694,7 @@ fn is_plain_iso(s: &str) -> bool {
     }
 }
 
-/// Split a non-ISO timestamp into fields, or `None` when it is not one of
-/// the known shapes. Field ranges (month ≤ 12, real calendar day) are NOT
-/// checked yet: that depends on the file's day/month order.
+/// Splits a non-ISO timestamp into fields; ranges are not checked yet because they depend on the file's day/month order.
 fn parse_loose(raw: &str) -> Option<LooseTs> {
     let converted;
     let mut s = raw.trim();
@@ -949,8 +820,7 @@ impl LooseTs {
         }
     }
 
-    /// The instant under `order`, validated against the calendar with the
-    /// Buddhist-Era year already corrected (BE 2567-02-29 is a real day).
+    /// Instant under `order`, validated with the Buddhist-Era year already converted (BE 2567-02-29 is real).
     fn to_naive(self, order: DayMonthOrder) -> Option<chrono::NaiveDateTime> {
         let (y, m, d) = self.ymd(order);
         let ce = if y >= 2400 { y - 543 } else { y };
@@ -958,8 +828,7 @@ impl LooseTs {
         chrono::NaiveDate::from_ymd_opt(ce, m, d)?.and_hms_nano_opt(self.h, self.mi, self.s, nanos)
     }
 
-    /// `YYYY-MM-DD HH:MM:SS[.f]` (year as written), or `None` when the date
-    /// does not exist under `order` (e.g. `2/30/2026`, `13/13/2026`).
+    /// `YYYY-MM-DD HH:MM:SS[.f]` with the year as written; `None` if the date does not exist under `order`.
     fn to_iso_text(self, order: DayMonthOrder) -> Option<String> {
         self.to_naive(order)?;
         let (y, m, d) = self.ymd(order);
@@ -1060,12 +929,7 @@ impl OrderEvidence {
     }
 }
 
-/// How well the rows sit in time when the year-last dates are read with
-/// `order`: (backwards steps between consecutive readable rows in file
-/// order, total size of all steps in seconds). Smaller is more plausible:
-/// a sensor log runs forwards in small regular steps, so the wrong reading
-/// either steps backwards or jumps by weeks (`1/1 23:55` → `1/2 0:00` is
-/// 5 minutes as month/day but a month as day/month — in order both ways).
+/// Plausibility of a day/month order as (backward steps, total step seconds); smaller is better.
 fn order_fit(timestamps: &[Option<String>], order: DayMonthOrder) -> (usize, u128) {
     let mut prev: Option<chrono::NaiveDateTime> = None;
     let mut back = 0usize;
@@ -1118,14 +982,11 @@ fn date_part_of(s: &str) -> &str {
     s.split_whitespace().next().unwrap_or(s)
 }
 
-// ── Numeric timestamp columns (Excel serial dates, Unix epochs) ────────────
 
 /// What an all-numeric timestamp column holds — decided per FILE.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SerialKind {
-    /// Excel 1900 date system: days since 1899-12-30 (this epoch absorbs
-    /// Excel's fictitious 1900-02-29 for every serial ≥ 61), fraction = time
-    /// of day, rounded to the nearest second (Excel stores float noise).
+    /// Excel 1900 system: days since 1899-12-30 (absorbs the fake 1900-02-29), fraction = time of day, rounded to the second.
     Excel,
     /// Seconds since 1970-01-01 UTC (10 integer digits).
     EpochSeconds,
@@ -1198,10 +1059,7 @@ fn serial_to_iso(s: &str, kind: SerialKind) -> Option<String> {
     Some(out)
 }
 
-/// When EVERY timestamp of the file is a plain number that is not a compact
-/// `YYYYMMDD…` date, read the column as Excel serials or Unix epochs (kind
-/// chosen from the first readable rows) and return the warnings; `None` when
-/// the column is not like that (the text path then handles it).
+/// Reads an all-numeric timestamp column as Excel serials or Unix epochs (kind from the first rows); `None` otherwise.
 fn normalize_serial_column(file_name: &str, timestamps: &mut [Option<String>]) -> Option<Vec<String>> {
     let all_numeric = timestamps
         .par_iter()
@@ -1261,25 +1119,8 @@ fn unreadable_warning(n: usize, file_name: &str) -> String {
     format!("{} timestamp(s) in {} could not be read as a date and time", n, file_name)
 }
 
-/// Rewrite one file's non-ISO timestamps to ISO text in place and return the
-/// load-report warnings this produced (empty for a file whose timestamps are
-/// all in a shape `parse_timestamp` reads — those are never touched).
-///
-/// - An all-numeric column → Excel serials / Unix epochs
-///   ([`normalize_serial_column`]).
-/// - Day/month order of `A/B/YYYY` is decided for the WHOLE file: some
-///   `A > 12` → day/month; some `B > 12` → month/day; both → the file
-///   contradicts itself: every year-last row is left unreadable
-///   ([`TS_MISSING`]) and a warning says so; neither → the reading with fewer
-///   backwards steps between consecutive readable rows wins, then the one
-///   whose rows sit closer together ([`order_fit`]); a full tie → month/day
-///   (Excel's default), flagged as a guess.
-/// - Every other shape is unambiguous; one info line names the file's main
-///   one with an example.
-///
-/// A row that cannot be read (unknown shape, or a date that does not exist,
-/// e.g. `2/30/2026`) keeps its original text and so becomes [`TS_MISSING`];
-/// those rows are counted in their own warning.
+/// Rewrites one file's non-ISO timestamps to ISO in place and returns load warnings; unreadable rows keep their text (`TS_MISSING`).
+/// A/B/YYYY order is per file: A > 12 = day-first, B > 12 = month-first, both = conflict (rows unreadable), else best `order_fit`; tie = month-first (a guess).
 pub(crate) fn normalize_file_timestamps(
     file_name: &str,
     timestamps: &mut [Option<String>],
@@ -1306,8 +1147,7 @@ pub(crate) fn normalize_file_timestamps(
     let conflict = ev.day_first > 0 && ev.month_first > 0;
     let (order, guessed) = if conflict || ev.day_first == 0 && ev.month_first == 0 {
         if conflict || ev.year_last == 0 || !ev.differ {
-            // Conflict: order unused for year-last rows. No year-last rows,
-            // or every A == B: both readings are the same — nothing to guess.
+            // Conflict, no year-last rows, or all A == B: the order is irrelevant, nothing to guess.
             (DayMonthOrder::MonthFirst, false)
         } else {
             let mf = order_fit(timestamps, DayMonthOrder::MonthFirst);
@@ -1345,9 +1185,7 @@ pub(crate) fn normalize_file_timestamps(
         ));
     }
 
-    // Example for the order warning, taken from the ORIGINAL text (pass 2
-    // overwrites it): the first readable year-last row, preferring one with
-    // A != B (it shows which number became the month). Output shown in CE.
+    // Example for the order warning from the ORIGINAL text (pass 2 overwrites it): first readable year-last row, preferring A != B.
     let example = if ev.year_last > 0 && !conflict {
         let mut first: Option<(String, String)> = None;
         let mut telling: Option<(String, String)> = None;
@@ -1385,9 +1223,7 @@ pub(crate) fn normalize_file_timestamps(
         })
     });
 
-    // Pass 2: rewrite in place. Rows left alone (conflict / impossible date /
-    // unknown shape) keep their original text, which `parse_timestamp` does
-    // not read.
+    // Pass 2: rewrite in place; unreadable rows (conflict, impossible date, unknown shape) keep their original text.
     let unreadable = AtomicUsize::new(0);
     timestamps.par_iter_mut().for_each(|t| {
         let Some(s) = t.as_deref() else { return };
@@ -1464,11 +1300,7 @@ pub struct ColumnInfo {
     pub valid_count: usize,
 }
 
-/// Per-file facts shown on the Prepare-dataset step (one entry per file given
-/// to `load_csv`, in the order given). Every time is read with the SAME
-/// parser as `ts_parsed` and AFTER Buddhist-Era -> CE normalisation; a value
-/// that cannot be computed (no parseable timestamp in the file) is `None`,
-/// never a placeholder.
+/// Per-file facts for the Prepare-dataset step, in load order; times use the `ts_parsed` parser after BE conversion.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CsvFileInfo {
     /// File name only (no directory).
@@ -1498,11 +1330,8 @@ pub enum CsvLoadStage {
     Done,
 }
 
-/// Payload of the `csv-load-progress` event `load_csv` emits.
-///
-/// `reading` is sent twice per file: when it starts (`files_done == file_index`)
-/// and when it has finished (`files_done == file_index + 1`). `merging` and
-/// `done` carry `file_index == file_count`, `files_done == file_count`.
+/// Payload of `csv-load-progress`. `reading` is sent at file start and finish;
+/// `merging`/`done` carry `file_index == files_done == file_count`.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub struct CsvLoadProgress {
     /// 0-based index of the file this event is about (`file_count` for
@@ -1548,9 +1377,7 @@ pub struct CsvLoadReport {
     /// Per-file info, in the order the files were given (JSON `files`).
     #[serde(default)]
     pub files: Vec<CsvFileInfo>,
-    /// Earliest / latest valid timestamp of the MERGED dataset
-    /// (`"YYYY-MM-DD HH:MM:SS"`, plus the same instants as epoch-microseconds).
-    /// `None` when no row has a parseable timestamp.
+    /// Earliest/latest valid timestamp of the merged dataset; `None` if no row parses.
     #[serde(default)]
     pub period_start: Option<String>,
     #[serde(default)]
@@ -1559,21 +1386,14 @@ pub struct CsvLoadReport {
     pub period_start_micros: Option<i64>,
     #[serde(default)]
     pub period_end_micros: Option<i64>,
-    /// Typical sampling interval in seconds: the median of the positive
-    /// consecutive differences of the merged, sorted timestamps (deterministic
-    /// stride sample when there are millions of rows). `None` with < 2 valid
-    /// timestamps or no positive difference.
+    /// Median positive gap between sorted merged timestamps (stride sample for big files); `None` with < 2 valid timestamps or no positive gap.
     #[serde(default)]
     pub interval_seconds: Option<f64>,
-    /// Empty (NaN) cells / (rows x sensor columns, timestamp column excluded)
-    /// x 100, in 0..=100. `None` when there are no rows or no sensor column.
+    /// Empty cells / (rows x sensor columns) x 100, in 0..=100; `None` without rows or sensor columns.
     #[serde(default)]
     pub missing_percent: Option<f64>,
-    /// Session generation created by the `load_csv` call that returned this
-    /// report (JSON field `generation`). `build_load_report` leaves it 0;
-    /// `load_csv` stamps the real value once the dataset is installed. A caller
-    /// bound to this dataset passes it back as `expectedGeneration` on the
-    /// special-sensor commands so a stale window can't mutate a newer dataset.
+    /// Generation of the `load_csv` call; `build_load_report` leaves 0 and `load_csv` stamps it.
+    /// Passed back as `expectedGeneration` so a stale window can't mutate a newer dataset.
     #[serde(default)]
     pub generation: u64,
 }
@@ -1596,15 +1416,10 @@ use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Result of reading a single CSV, including parse failure tracking.
-///
-/// `data.ts_parsed` is left EMPTY at this stage — the merge step may drop,
-/// reorder, or fold rows, so the (parallel) timestamp parse happens once,
-/// at the end of the merge, via [`ColumnarData::from_parts`].
+/// Result of reading one CSV; `data.ts_parsed` is empty because the merge may drop or reorder rows (`from_parts` fills it).
 pub struct ReadCsvResult {
     pub data: ColumnarData,
-    /// Per-column count of non-empty fields that failed to parse as f64.
-    /// Indexed by column position in headers (includes timestamp column position).
+    /// Per-column count of non-empty fields that failed to parse as f64, indexed like headers.
     pub parse_fail_counts: Vec<usize>,
     /// File size in bytes, as checked against [`MAX_CSV_BYTES`].
     pub size_bytes: u64,
@@ -1617,10 +1432,7 @@ pub struct ReadCsvResult {
     pub non_utf8_values: usize,
 }
 
-/// A header name as the app uses it: surrounding whitespace and any UTF-8
-/// byte-order mark (`\u{FEFF}`, written by Excel/historians at the start of
-/// the file and so glued to the FIRST header) removed. Without this a
-/// `\u{FEFF}TimeStamp` column is not recognised as the timestamp column.
+/// Header name with whitespace and a UTF-8 BOM removed; the BOM would hide the timestamp column.
 fn clean_header(s: &str) -> String {
     s.trim_matches(|c: char| c == '\u{FEFF}' || c.is_whitespace())
         .to_string()
@@ -1639,9 +1451,7 @@ fn unequal_lengths_error(rec: &csv::ByteRecord, expected: usize) -> String {
 
 pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let total_start = Instant::now();
-    // Refuse pathologically-large CSVs up front so we don't OOM partway
-    // through the parse. `std::fs::metadata` follows symlinks, which is
-    // what we want — we want the size of what we'd actually open.
+    // Refuse huge CSVs up front to avoid OOM; `metadata` follows symlinks, so the real file's size is checked.
     let size = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
     if size > MAX_CSV_BYTES {
         let size_gb = size as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -1660,10 +1470,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let mut header_list: Vec<String> = headers.iter().map(clean_header).collect();
     let num_cols = header_list.len();
 
-    // A column named timestamp / time wins, wherever it is; otherwise the first
-    // column is the time column ("Date", "DateTime", ...). It takes the name
-    // `timestamp` here, so everything after this point (merge, report, sensor
-    // lists) keeps recognising it by name and it is never counted as a sensor.
+    // A column named timestamp/time wins, else the first column is the time column and is renamed `timestamp`.
     let named_timestamp_idx = header_list
         .iter()
         .position(|h| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time"));
@@ -1674,10 +1481,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     };
     let timestamp_idx = named_timestamp_idx.or(ts_from_first_column.as_ref().map(|_| 0));
 
-    // Pre-size the column vecs from file size / approx bytes-per-row so
-    // they don't repeatedly reallocate (and memcpy the whole spine) while
-    // ingesting millions of records; clamp so a pathological (very-few-
-    // column) file can't over-allocate.
+    // Pre-size column vecs from file size to avoid reallocation; clamped so few-column files don't over-allocate.
     let bytes_per_row_est = (num_cols * 8 + 20).max(1);
     let est_rows = (size as usize / bytes_per_row_est).clamp(1024, 16_000_000);
 
@@ -1690,11 +1494,7 @@ pub fn read_csv_with_stats(path: &str) -> Result<ReadCsvResult, String> {
     let mut short_rows = 0usize;
     let mut first_short_row_error: Option<String> = None;
 
-    // Read + parse in bounded batches: at most BATCH_ROWS raw ByteRecords
-    // are alive at any moment. (The previous implementation buffered the
-    // ENTIRE file as ByteRecords before parsing — a whole extra file-size
-    // of transient RAM on a 2 GB CSV.) Each batch is split into chunks
-    // parsed to columnar blocks in parallel, then appended in order.
+    // Read in bounded batches (at most BATCH_ROWS raw records alive), parsed in parallel chunks, appended in order.
     const BATCH_ROWS: usize = 65_536;
     const PAR_CHUNK: usize = 4_096;
 
@@ -1840,9 +1640,7 @@ pub struct MergeResult {
     pub files: Vec<CsvFileInfo>,
 }
 
-/// Parse one raw timestamp exactly as `ColumnarData::from_parts` does
-/// (Buddhist-Era year corrected first), without allocating in the common
-/// non-BE case.
+/// Parses a raw timestamp as `from_parts` does (BE year first), allocating only for BE years.
 fn parse_micros_normalized(s: &str) -> Option<i64> {
     if is_buddhist_era_year(s) {
         parse_timestamp(&normalize_buddhist_era(s.to_string())).map(ts_to_micros)
@@ -1906,10 +1704,8 @@ pub fn read_merge_csvs_with_report(paths: Vec<String>) -> Result<MergeResult, St
     read_merge_csvs_with_progress(paths, &|_| {})
 }
 
-/// [`read_merge_csvs_with_report`] that also reports progress through
-/// `on_progress` (`reading` start/finish per file, then `merging`; the final
-/// `done` is sent by the caller once the dataset is installed). The callback
-/// must never be able to fail the load, so it returns nothing.
+/// Like `read_merge_csvs_with_report` but reports progress; the caller sends `done`.
+/// The callback returns nothing so it cannot fail the load.
 pub fn read_merge_csvs_with_progress(
     paths: Vec<String>,
     on_progress: &dyn Fn(CsvLoadProgress),
@@ -1921,7 +1717,7 @@ pub fn read_merge_csvs_with_progress(
     let mut warnings: Vec<String> = Vec::new();
     let file_count = paths.len();
 
-    // 1. Read all files individually (with stats)
+    // Read each file on its own, with stats.
     let mut results = Vec::new();
     let mut files: Vec<CsvFileInfo> = Vec::with_capacity(file_count);
     let mut date_warnings: Vec<String> = Vec::new();
@@ -1952,8 +1748,7 @@ pub fn read_merge_csvs_with_progress(
         // Non-ISO shapes (`1/2/2026 0:05`, `2026/01/02 …`) → ISO text, per
         // file and before anything reads the time.
         date_warnings.extend(normalize_file_timestamps(&name, &mut r.data.timestamps));
-        // Several files: parsed here for the file's range and the merge key.
-        // One file: filled from the merged `ts_parsed` below, no extra pass.
+        // Several files: parsed here for range and merge key; one file: filled from merged `ts_parsed` below.
         let instants = if file_count > 1 {
             file_instants(&r.data.timestamps)
         } else {
@@ -1973,11 +1768,7 @@ pub fn read_merge_csvs_with_progress(
 
     let duplicate_warnings = duplicate_column_warnings(&results);
 
-    // Single file → skip the cross-file timestamp merge entirely. That merge
-    // rebuilds every row through a single-threaded BTreeMap — pure overhead
-    // when there's nothing to merge. `merge_single_file` follows the same
-    // rules on indices + per-column gathers, and does its own Buddhist-Era
-    // detection, so skip the one below entirely on this path.
+    // Single file skips the cross-file merge (a single-threaded BTreeMap); `merge_single_file` applies the same rules and does its own BE detection.
     if results.len() == 1 {
         let mut merged = merge_single_file(results.pop().unwrap(), &offsets_per_file[0]);
         // The merged dataset IS this one file (rows without a timestamp are
@@ -1998,12 +1789,10 @@ pub fn read_merge_csvs_with_progress(
 
     warnings.extend(date_warnings);
 
-    // 2. A column shared by several files is normal (more of the same data) and
-    //    is not reported (user decision 2026-10-19); twice inside one file is.
+    // A column shared by several files is normal and not reported; twice inside one file is.
     warnings.extend(duplicate_warnings);
 
-    // Buddhist-Era detection across every file's raw timestamps, before any
-    // merge/parse step touches them — see `buddhist_era_warning`'s docstring.
+    // Detect Buddhist-Era across raw timestamps before any merge/parse touches them.
     if let Some(w) = buddhist_era_warning(
         results
             .iter()
@@ -2014,7 +1803,7 @@ pub fn read_merge_csvs_with_progress(
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
-    // 3. Determine global headers (Superset)
+    // Global headers: the superset of all files.
     let mut global_headers: Vec<String> = Vec::new();
     let mut seen_headers: HashSet<String> = HashSet::new();
 
@@ -2049,7 +1838,7 @@ pub fn read_merge_csvs_with_progress(
         .map(|(i, h)| (h.to_lowercase(), i))
         .collect();
 
-    // 4. Aggregate parse_fail_counts per global column
+    // Aggregate parse_fail_counts per global column.
     let mut global_fail_counts: Vec<usize> = vec![0; g];
 
     for result in &results {
@@ -2067,11 +1856,8 @@ pub fn read_merge_csvs_with_progress(
         }
     }
 
-    // 5. Merge rows on the parsed instant, so any shape or era of one moment
-    // lands on one row (later non-null wins). Readable rows come out in time
-    // order; unreadable ones are never merged and follow them in file order.
-    // The key's second part: rows of one wall clock with different written
-    // offsets stay apart, in order of first appearance (`offset_slot`).
+    // Merge rows on the parsed instant (later non-null wins). Readable rows in time order, unreadable ones after, unmerged, in file order.
+    // Rows with different written offsets stay apart (`offset_slot`).
     struct MergedRow {
         text: String,
         rows: u32,
@@ -2131,10 +1917,10 @@ pub fn read_merge_csvs_with_progress(
         }
     }
 
-    // 6. Report the rows that hold more than one row of the files.
+    // Report the output rows built from more than one input row.
     warnings.extend(merged_rows_warning(merged_rows));
 
-    // 7. Convert the merged rows into columnar storage.
+    // Convert the merged rows into columnar storage.
     let n_out = by_instant.len() + unreadable.len();
     let mut out_timestamps: Vec<Option<String>> = Vec::with_capacity(n_out);
     let mut out_columns: Vec<Vec<f64>> = (0..g).map(|_| Vec::with_capacity(n_out)).collect();
@@ -2163,16 +1949,8 @@ pub fn read_merge_csvs_with_progress(
     })
 }
 
-/// Single-file specialization of [`read_merge_csvs_with_report`]'s merge step.
-///
-/// Timestamp column canonicalized to the front, a column written twice folded
-/// into one (first spelling kept, later non-null value wins), rows without a
-/// timestamp dropped, rows merged and ordered on the parsed instant (later
-/// non-null value wins), unreadable timestamps after them in file order and
-/// never merged. So the rows and their order match the same rows in several
-/// files. Works on row INDICES and per-column gathers. A clean file with
-/// strictly increasing timestamps (the common case) passes the parsed columns
-/// through without any copy. `offsets` = [`written_offsets`] of the raw text.
+/// Single-file merge: same rules and row order as several files, via row indices; a clean strictly increasing file passes through uncopied.
+/// `offsets` = `written_offsets` of the raw text.
 fn merge_single_file(result: ReadCsvResult, offsets: &[Option<i16>]) -> MergeResult {
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
@@ -2183,9 +1961,7 @@ fn merge_single_file(result: ReadCsvResult, offsets: &[Option<i16>]) -> MergeRes
         ..
     } = result;
 
-    // Computed before anything below partially moves `ds` — see
-    // `buddhist_era_warning`'s docstring for why this has to run on the
-    // still-original text.
+    // Compute before `ds` is partially moved; it needs the original text.
     let be_warning = buddhist_era_warning(ds.timestamps.iter().flatten().map(String::as_str));
 
     // Global headers: the timestamp column first, then the rest in file order.
@@ -2235,10 +2011,8 @@ fn merge_single_file(result: ReadCsvResult, offsets: &[Option<i16>]) -> MergeRes
     let instants = file_instants(&ds.timestamps);
     let instant_of = |r: u32| instants[r as usize];
 
-    // Row selection & ordering, entirely on u32 indices (a 2 GB CSV tops out
-    // far below u32::MAX rows). Same rules as several files: rows without a
-    // timestamp dropped, readable rows in time order, unreadable ones after
-    // them in file order and never merged.
+    // Row selection on u32 indices (the 2 GB cap fits). Same rules as several files: rows without a timestamp are dropped,
+    // readable rows in time order, unreadable ones after in file order, unmerged.
     let (mut order, unreadable): (Vec<u32>, Vec<u32>) = (0..ds.n_rows() as u32)
         .filter(|&r| ds.timestamps[r as usize].is_some())
         .partition(|&r| instant_of(r) != TS_MISSING);
@@ -2309,10 +2083,8 @@ fn merge_single_file(result: ReadCsvResult, offsets: &[Option<i16>]) -> MergeRes
     order.extend(unreadable);
     groups.extend((readable..order.len()).map(|i| (i as u32, i as u32 + 1)));
 
-    // For each global column, the local columns feeding it, in file order.
-    // Duplicate header names can map several locals to one slot; scanning
-    // rows (outer, file order) then locals (inner, file order) and letting
-    // the last non-NaN win reproduces the old per-row overwrite order.
+    // Per global column, the local columns feeding it. Duplicate headers can map several locals to one slot;
+    // last non-NaN wins, scanning rows then locals in file order.
     let mut sources: Vec<Vec<usize>> = vec![Vec::new(); g];
     for (li, &gi) in col_map.iter().enumerate() {
         // The local timestamp column maps to slot 0 but is all-NaN, so it
@@ -2369,30 +2141,18 @@ const MAX_INTERVAL_SAMPLES: usize = 2_000_000;
 
 #[cfg(test)]
 thread_local! {
-    /// How many times [`median_interval_seconds`] ran ON THIS THREAD. Per
-    /// thread so that tests running in parallel cannot disturb each other's
-    /// count (the function is entered on its caller's thread).
+    /// Calls to `median_interval_seconds` on this thread; per-thread so parallel tests don't disturb each other.
     static MEDIAN_INTERVAL_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Test probe: runs of [`median_interval_seconds`] on the calling thread so
-/// far. Tests pin "the interval is computed at most once per dataset" with the
-/// difference of two readings.
+/// Test probe: median runs on this thread; tests diff two readings to pin 'at most once per dataset'.
 #[cfg(test)]
 pub(crate) fn median_interval_runs() -> usize {
     MEDIAN_INTERVAL_RUNS.with(|c| c.get())
 }
 
-/// Median positive gap, in seconds, between consecutive valid timestamps of
-/// the merged dataset. A load orders rows by time, but `ts` is not assumed
-/// sorted: an out-of-order one is sorted first (a copy; the common case costs
-/// no allocation beyond the difference samples). With more
-/// than [`MAX_INTERVAL_SAMPLES`] gaps a deterministic stride sample is used.
-/// Equal neighbours (gap 0) are ignored. Even sample count: mean of the two
-/// middle gaps. `None` if fewer than 2 valid timestamps / no positive gap.
-///
-/// O(rows) + a sort: do NOT call this per query on a loaded dataset — read
-/// [`ColumnarData::sample_interval_secs`], which runs it once per dataset.
+/// Median positive gap in seconds between consecutive valid timestamps; `None` if < 2 valid or no positive gap; gap 0 ignored, even count = mean of the middle two.
+/// Sorts a copy if out of order, stride sample above `MAX_INTERVAL_SAMPLES`. O(rows) + sort: use `ColumnarData::sample_interval_secs` instead of calling per query.
 pub(crate) fn median_interval_seconds(ts: &[i64]) -> Option<f64> {
     #[cfg(test)]
     MEDIAN_INTERVAL_RUNS.with(|c| c.set(c.get() + 1));
@@ -2458,9 +2218,7 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
-    // Per-column valid (non-NaN) counts — one contiguous scan per column,
-    // columns in parallel. The timestamp column's validity comes from the
-    // timestamps vec (its value column is the all-NaN placeholder).
+    // Per-column valid counts, columns in parallel; the timestamp column's validity comes from `timestamps` (its value column is all-NaN).
     let ts_valid = data.timestamps.iter().filter(|t| t.is_some()).count();
     let valid_counts: Vec<usize> = data
         .columns
@@ -2509,9 +2267,7 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
         }
     }
 
-    // Period / interval come off the already-parsed `ts_parsed`; the empty-cell
-    // share reuses the per-column valid counts computed above — no new pass
-    // over the sensor columns.
+    // Period and interval come from `ts_parsed`; the empty-cell share reuses the valid counts, no new pass.
     let range = ts_min_max(&data.ts_parsed);
     let mut sensor_cols = 0usize;
     let mut missing_cells = 0usize;
@@ -2539,9 +2295,7 @@ pub fn build_load_report(merge_result: &MergeResult) -> CsvLoadReport {
         period_end: range.and_then(|(_, hi)| format_micros(hi)),
         period_start_micros: range.map(|(lo, _)| lo),
         period_end_micros: range.map(|(_, hi)| hi),
-        // Fills the dataset's interval cache: `load_csv` builds this report
-        // before it installs the dataset, so the one computation happens here
-        // (on the load's blocking thread) and every later command reads it.
+        // Fills the interval cache here, on the load's blocking thread, before the dataset is installed.
         interval_seconds: data.sample_interval_secs(),
         missing_percent,
     }
@@ -2572,14 +2326,12 @@ pub fn apply_mapping(
     mapping_data: &MappingData,
     dataset_headers: &[String],
 ) -> Result<MappingResult, String> {
-    // Find key column index in mapping headers
     let key_idx = mapping_data
         .headers
         .iter()
         .position(|h| h == key_column)
         .ok_or_else(|| format!("Key column '{}' not found in mapping headers", key_column))?;
 
-    // Extract unique key values from mapping rows
     let mut key_values: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     for row in &mapping_data.rows {
@@ -2592,7 +2344,6 @@ pub fn apply_mapping(
         }
     }
 
-    // Build a set of dataset headers for quick lookup
     let dataset_set: HashSet<&str> = dataset_headers.iter().map(|s| s.as_str()).collect();
 
     let mut matched = Vec::new();
@@ -2606,7 +2357,6 @@ pub fn apply_mapping(
         }
     }
 
-    // Find dataset headers not in mapping key values
     let is_timestamp =
         |h: &str| h.eq_ignore_ascii_case("timestamp") || h.eq_ignore_ascii_case("time");
 
@@ -2711,8 +2461,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// What one file's timestamp column reads as: the per-file rewrite, then
-    /// the same parse `from_parts` runs (Buddhist-Era year corrected first).
+    /// Per-file rewrite, then the same parse as `from_parts`.
     fn read_file_ts(raw: &[&str]) -> (Vec<Option<chrono::NaiveDateTime>>, Vec<String>, Vec<String>) {
         let mut ts: Vec<Option<String>> = raw.iter().map(|s| Some(s.to_string())).collect();
         let warnings = normalize_file_timestamps("run-01.csv", &mut ts);
@@ -2728,10 +2477,7 @@ mod tests {
         parse_timestamp(s).unwrap()
     }
 
-    // The Import page lists these as the supported date/time shapes
-    // (`SensorDataPanel.tsx` SUPPORTED_TIMESTAMPS): each must be read (one
-    // file of that shape) to the 31 Jan 2025 13:05 wall clock, and the shapes
-    // listed as NOT read must not be.
+    // Mirrors the Import page's `SUPPORTED_TIMESTAMPS`: each reads as 31 Jan 2025 13:05; unsupported shapes must not.
     #[test]
     fn the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed() {
         let want = dt("2025-01-31 13:05:00");
@@ -2779,7 +2525,6 @@ mod tests {
         }
     }
 
-    // ── Non-ISO shapes: per-row field parsing ──────────────────────────────
 
     #[test]
     fn each_non_iso_shape_reads_to_the_right_wall_clock() {
@@ -2830,7 +2575,6 @@ mod tests {
         assert_eq!(parse_timestamp("Z"), None);
     }
 
-    // ── Non-ISO shapes: day/month order per file ───────────────────────────
 
     #[test]
     fn a_day_over_12_in_the_first_field_means_day_month() {
@@ -2910,7 +2654,6 @@ mod tests {
         );
     }
 
-    // ── More shape families (weekday/RFC, compact, ISO-like, Thai, serial) ─
 
     fn iso(s: &str) -> Option<String> {
         loose_of(s).and_then(|l| l.to_iso_text(DayMonthOrder::MonthFirst))
@@ -3013,8 +2756,7 @@ mod tests {
 
     #[test]
     fn an_all_numeric_column_reads_as_excel_serials_or_unix_epochs() {
-        // Excel: 45658 = 2025-01-01 (the 1899-12-30 epoch absorbs the
-        // fictitious 1900-02-29); fraction = time of day, nearest second.
+        // Excel 45658 = 2025-01-01; fraction = time of day.
         let (p, texts, w) = read_file_ts(&["45658", "45658.5", "45658.5416667"]);
         assert_eq!(texts, vec!["2025-01-01 00:00:00", "2025-01-01 12:00:00", "2025-01-01 13:00:00"]);
         assert!(p.iter().all(|x| x.is_some()));
@@ -3080,7 +2822,7 @@ mod tests {
 
     #[test]
     fn a_buddhist_era_year_in_a_slash_date_is_converted_once() {
-        // BE 2567-02-29 = CE 2024-02-29 (a real leap day) — validated in CE.
+        // BE 2567-02-29 is a real leap day (CE 2024).
         let (p, texts, w) = read_file_ts(&["1/2/2569 0:05", "2/29/2567 0:00"]);
         // The rewrite keeps the year as written; `from_parts` converts it.
         assert_eq!(texts, vec!["2569-01-02 00:05:00", "2567-02-29 00:00:00"]);
@@ -3090,7 +2832,6 @@ mod tests {
         assert_eq!(w, vec!["Dates in run-01.csv read as month/day/year (1/2/2569 → 2026-01-02)"]);
     }
 
-    // ── Month names, 2-digit years, BOM ────────────────────────────────────
 
     #[test]
     fn the_historian_lines_read_with_month_names_and_12_hour_clock() {
@@ -3185,8 +2926,7 @@ mod tests {
         }
     }
 
-    /// The user's two historian exports (2025.csv / 2026.csv): BOM-prefixed
-    /// `TimeStamp` header, `DD-Mon-YY h:mm AM/PM`, the same sensors in both.
+    /// Historian exports: BOM-prefixed `TimeStamp`, `DD-Mon-YY h:mm AM/PM`, same sensors in both.
     #[test]
     fn the_two_historian_files_load_as_one_continuous_series() {
         let dir = tempfile::tempdir().unwrap();
@@ -3231,11 +2971,8 @@ mod tests {
         );
     }
 
-    // ── Non-ISO shapes: whole load path ────────────────────────────────────
 
-    /// The real-app report (2026-10-19): 5-minute rows across midnight,
-    /// month/day/year as Excel writes it on a US PC. Every value is ≤ 12, so
-    /// the order is decided by which reading keeps the rows in order.
+    /// US Excel month/day/year, 5-minute rows across midnight; all values <= 12, so the order comes from row order.
     #[test]
     fn the_reported_us_excel_file_reads_jan_1_to_jan_2() {
         let dir = tempfile::tempdir().unwrap();
@@ -3261,8 +2998,7 @@ mod tests {
 
     #[test]
     fn sensors_shared_by_several_files_are_not_reported_but_a_column_twice_in_one_file_is() {
-        // User decision 2026-10-19: several files = more of the same data (another period), so
-        // shared sensors are the normal case and get no "Duplicate column" line.
+        // Several files are more of the same data, so shared sensors get no 'Duplicate column' line.
         let dir = tempfile::tempdir().unwrap();
         let a = write_csv(&dir, "jan.csv", "timestamp,A,B
 2026-01-01 00:00:00,1,2
@@ -3288,7 +3024,7 @@ mod tests {
 
     #[test]
     fn a_column_twice_in_a_single_file_keeps_its_data_and_warns() {
-        // Later non-null wins, as in the multi-file merge. Also the fast-path shape.
+        // Later non-null wins, as in the multi-file merge.
         let dir = tempfile::tempdir().unwrap();
         let p = write_csv(
             &dir,
@@ -3450,9 +3186,7 @@ mod tests {
         assert!(rep.warnings[1].starts_with("1 timestamp(s) used a Buddhist-Era year"));
     }
 
-    /// Build a pre-merge ColumnarData from a row-major spec (readability):
-    /// each row is (timestamp, per-column Option values). `ts_parsed` is
-    /// left empty, exactly like `read_csv_with_stats` output.
+    /// Builds a pre-merge `ColumnarData` from rows; `ts_parsed` left empty like the reader.
     fn columnar(headers: Vec<&str>, rows: Vec<(Option<&str>, Vec<Option<f64>>)>) -> ColumnarData {
         let ncols = headers.len();
         let mut timestamps: Vec<Option<String>> = Vec::new();
@@ -3492,7 +3226,7 @@ mod tests {
         )
     }
 
-    /// One row's values in the legacy Option shape, for readable assertions.
+    /// One row's values as Options, for readable assertions.
     fn row_vals(d: &ColumnarData, r: usize) -> Vec<Option<f64>> {
         (0..d.headers.len()).map(|c| d.value(c, r)).collect()
     }
@@ -3644,7 +3378,6 @@ mod tests {
         assert_eq!(rec.values, vec![Some(f64::INFINITY), Some(1.5)]);
     }
 
-    // ── Buddhist-Era (พ.ศ.) year detection/normalization ───────────────────
 
     #[test]
     fn normalize_buddhist_era_rewrites_a_be_year_leaving_the_rest_untouched() {
@@ -3686,11 +3419,7 @@ mod tests {
         assert!(w.starts_with("2 "), "got: {w}");
     }
 
-    /// The real-world case that motivated this: a Buddhist-Era leap day
-    /// (BE 2567 = CE 2024, a genuine Gregorian leap year) fails to parse
-    /// entirely if the year is read literally as CE 2567 — chrono rejects
-    /// Feb 29 outright since CE 2567 is not a leap year. Normalizing the
-    /// year to Gregorian BEFORE the parse attempt is what recovers it.
+    /// A BE leap day fails to parse if read as CE 2567 (not a leap year); normalizing first recovers it.
     #[test]
     fn single_file_merge_recovers_a_buddhist_era_leap_day_and_agrees_on_the_year() {
         let m = single(
@@ -3727,7 +3456,6 @@ mod tests {
         assert!(m.warnings.is_empty());
     }
 
-    // ── Prepare-dataset report data (files / period / interval / missing) ───
 
     use std::io::Write as _;
     use std::sync::Mutex;
@@ -3907,9 +3635,7 @@ mod tests {
 
     #[test]
     fn interval_stride_sampling_is_deterministic_and_keeps_the_median() {
-        // 4.5M valid timestamps -> 4.5M gaps > MAX_INTERVAL_SAMPLES, so the
-        // stride sampler (stride 3) is exercised. Gaps alternate 1 s / 1 s /
-        // 10 s, so the median stays 1 s whichever third is sampled.
+        // 4.5M gaps exceed `MAX_INTERVAL_SAMPLES`, exercising the stride sampler; gaps 1/1/10 s keep the median at 1 s.
         let mut ts: Vec<i64> = Vec::with_capacity(4_500_000);
         let mut t = 0i64;
         for i in 0..4_500_000usize {
@@ -3921,7 +3647,6 @@ mod tests {
         assert_eq!(a, Some(1.0));
     }
 
-    // ── the per-dataset interval cache (`ColumnarData::sample_interval_secs`) ──
 
     /// `n` rows `step_secs` apart; `shuffle` stores them out of order.
     fn series(n: usize, step_secs: i64, shuffle: bool) -> ColumnarData {
@@ -3996,8 +3721,7 @@ mod tests {
 
     #[test]
     fn a_new_dataset_never_inherits_the_interval_of_the_previous_one() {
-        // What a reload does: a NEW `ColumnarData` (via `from_parts`), whose
-        // cache starts empty - the old dataset's value cannot leak into it.
+        // A reload builds a new dataset with an empty cache; the old value can't leak.
         let old = series(100, 60, false);
         assert_eq!(old.sample_interval_secs(), Some(60.0));
         let before = median_interval_runs();
@@ -4148,8 +3872,7 @@ mod tests {
         assert_eq!(m.data.ts_parsed, again.ts_parsed);
     }
 
-    /// Load `rows` (`time,A,B`) as one file and split at `split` over two; both must
-    /// agree. The per-file "Dates in <file>" lines name a file, so they cannot match.
+    /// Loads `rows` as one file and as two split at `split`; results must agree (per-file 'Dates in' lines name a file, so they differ).
     fn load_one_and_two(rows: &[&str], split: usize) -> MergeResult {
         let dir = tempfile::tempdir().unwrap();
         let write = |name: &str, lines: &[&str]| {
@@ -4301,8 +4024,7 @@ mod tests {
     #[test]
     fn missing_percent_is_exact_on_a_small_fixture() {
         let dir = tempfile::tempdir().unwrap();
-        // 4 rows x 3 sensors = 12 cells. Empty: S1 row 3, S2 rows 1 and 4;
-        // plus a non-numeric cell (-> NaN) in S3 row 2 => 4 empty of 12.
+        // 12 cells; 4 empty: S1 row 3, S2 rows 1 and 4, non-numeric S3 row 2.
         let body = "timestamp,S1,S2,S3\n\
             2024-01-01 00:00:00,1,,1\n\
             2024-01-01 00:01:00,2,2,abc\n\
@@ -4411,7 +4133,6 @@ mod tests {
         assert_eq!(v["missing_percent"], 0.0);
     }
 
-    // ── csv-load-progress payload / sequence ────────────────────────────────
 
     #[test]
     fn progress_payload_json_shape() {

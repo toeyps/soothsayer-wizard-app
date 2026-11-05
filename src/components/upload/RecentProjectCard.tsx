@@ -8,33 +8,21 @@ import { getFgGroupColor } from '../../utils/failureGroupColor';
 
 interface RecentProjectCardProps {
   T: Tokens;
-  /** `failureGroupCount` / `failureGroupNos` drive the failure-group chip;
-   *  left undefined (a project saved before they existed) = no chip. */
+  /** Failure-group chip data; undefined = no chip. */
   project: Pick<WorkspaceMetadata, 'id' | 'name' | 'description' | 'lastModified'>
     & Partial<Pick<WorkspaceMetadata, 'failureGroupCount' | 'failureGroupNos'>>;
-  /**
-   * Static, non-interactive rendering of the SAME card ("Shows in recent
-   * projects as" on the Name step): no open / rename / delete, "just now" for the
-   * time, a muted "Plant · Machine" placeholder for an empty name and "Machine tag ·
-   * notes" for an empty description. `onOpen` / `onEditDetails` / `onDelete` are not used.
-   */
+  /** Static, non-interactive rendering of the same card (the Name step's preview); the handlers are unused. */
   preview?: boolean;
   /** True while this project is the one being opened (loading overlay is up). */
   active?: boolean;
   onOpen?: () => void;
-  /** Rename opens Project details (the name is "Plant · Machine"; Project details'
-   *  save is the only writer of the name). No Rename button without it. */
+  /** Rename opens Project details, the only writer of the name; no Rename button without it. */
   onEditDetails?: () => void;
   /** Called once the user confirmed the in-row "Delete this project?" prompt. */
   onDelete?: () => void;
 }
 
-/**
- * One row of the "Recent projects" list on the Get-started page: coloured
- * initial, name, description (only when there is one), relative time. Hovering
- * (or focusing anything inside) reveals Rename / Delete. Rename opens Project
- * details; Delete asks for confirmation inside the row.
- */
+/** One row of the Recent projects list; Rename / Delete appear on hover or focus. */
 export default function RecentProjectCard({ T, project, preview = false, active = false, onOpen, onEditDetails, onDelete }: RecentProjectCardProps) {
   if (preview) return <ProjectCardPreview T={T} project={project} />;
   return <InteractiveProjectCard T={T} project={project} active={active} onOpen={onOpen ?? noop} onEditDetails={onEditDetails} onDelete={onDelete ?? noop} />;
@@ -45,13 +33,7 @@ const noop = () => {};
 interface PressRecord { inActions: boolean; touch: boolean; actionsShown: boolean }
 const NO_PRESS: PressRecord = { inActions: false, touch: false, actionsShown: false };
 
-/**
- * "n failure groups" with a colour square per group (up to three, the
- * Dashboard's own group colours), or a neutral dashed "No failure groups" —
- * never amber, having none is not a warning.
- * Nothing at all for a project saved before the count was recorded; it
- * appears after that project's next save.
- */
+/** "n failure groups" with a colour square per group, or a neutral dashed "No failure groups" (none is not a warning). Nothing when the count is unknown. */
 function FailureGroupChip({ project }: { project: RecentProjectCardProps['project'] }) {
   const chip = recentProjectFgChip(project);
   if (!chip) return null;
@@ -122,11 +104,7 @@ function InteractiveProjectCard({
   /** The time / Rename / Delete cell. Nothing that happens inside it may ever
    *  open the project. */
   const actionsCellRef = useRef<HTMLDivElement>(null);
-  /** Where the current pointer press started, recorded in the capture phase
-   *  before anything re-renders: a press that began inside the actions cell
-   *  must not open the project even if the browser retargets its `click` to
-   *  the card (mousedown and mouseup on different elements → the click goes
-   *  to their common ancestor). */
+  /** Where the current pointer press began; a press in the actions cell must not open the project if the click is retargeted to the card. */
   const pressRef = useRef<PressRecord>(NO_PRESS);
   const cardRef = useRef<HTMLDivElement>(null);
   /** Detaches the window listeners that forget an abandoned press. */
@@ -166,9 +144,7 @@ function InteractiveProjectCard({
     const inActions = !!actionsCellRef.current && target instanceof Node && actionsCellRef.current.contains(target);
     pressRef.current = { inActions, touch: e.pointerType === 'touch', actionsShown: showActions };
     if (!inActions) return;
-    // A press in the actions cell that never turns into a click on this card
-    // (released outside it, or cancelled by a touch scroll) must not linger
-    // and swallow a later click.
+    // A press in the actions cell that never becomes a click on this card must not linger and swallow a later click.
     const onUp = (ev: PointerEvent) => {
       const card = cardRef.current;
       if (!card || !(ev.target instanceof Node) || !card.contains(ev.target)) clearPress();
@@ -184,9 +160,7 @@ function InteractiveProjectCard({
     stopWatchingPressRef.current = stop;
   };
 
-  /** Card click = open, unless the click (or the press that produced it) is
-   *  in the actions cell. Keyboard activation of the "Open …" button has
-   *  `detail === 0` and no press, so it is never blocked by a stale record. */
+  /** Card click opens unless the click or its press was in the actions cell. Keyboard activation (`detail === 0`, no press) is never blocked. */
   const handleCardClick = (e: ReactMouseEvent<HTMLDivElement>) => {
     const press = pressRef.current;
     clearPress();
@@ -196,9 +170,7 @@ function InteractiveProjectCard({
     onOpen();
   };
 
-  /** Rename / Delete. A finger tap has no hover: when it lands on the still
-   *  invisible actions it only reveals them (by focusing the button) instead
-   *  of starting a rename or a delete the user could not see. */
+  /** A finger tap on the still invisible actions only reveals them (focuses the button) instead of renaming or deleting. */
   const runAction = (e: ReactMouseEvent<HTMLButtonElement>, action: () => void) => {
     e.stopPropagation();
     const press = pressRef.current;
@@ -226,9 +198,7 @@ function InteractiveProjectCard({
       onClick={handleCardClick}
       onPointerDownCapture={recordPress}
       onMouseEnter={() => setHover(true)}
-      // Re-asserts hover after a spurious mouseleave (WebView2 can report one
-      // while the pointer is still over the card); setState bails out when
-      // nothing changes, so this costs nothing while hovering.
+      // Re-asserts hover after a spurious mouseleave (WebView2 can report one); setState bails out when unchanged.
       onMouseMove={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       onFocus={() => setFocusWithin(true)}
@@ -283,23 +253,14 @@ function InteractiveProjectCard({
         ) : null}
       </div>
 
-      {/* Failure-group chip: its own cell between the text and the time; in a
-          narrow list (App.css container query) it moves under the description. */}
+      {/* Failure-group chip in its own cell; in a narrow list (App.css container query) it moves under the description. */}
       {hasFgChip && (
         <span className="fg-count-cell">
           <FailureGroupChip project={project} />
         </span>
       )}
 
-      {/* Time and actions share one cell: actions take over on hover/focus,
-          but stay in the DOM (and the tab order) the whole time.
-          An element with opacity < 1 forms a stacking context and paints
-          above a plain sibling at opacity 1, so the hidden time label would
-          otherwise sit ON TOP of the Rename / Delete buttons and a click on
-          them would bubble to the card ("open"). So: the label never takes
-          clicks, the buttons sit on their own layer above it and are always
-          hit-testable (only their visibility follows hover/focus), and the
-          whole cell is a no-open zone (see handleCardClick). */}
+      {/* Time and actions share one cell; actions stay in the DOM and tab order, only their visibility follows hover/focus. The time label takes no clicks and the buttons sit above it, so a click on a button can't bubble to the card and open it. */}
       <div
         ref={actionsCellRef}
         data-testid="project-card-actions"

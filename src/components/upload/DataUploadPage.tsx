@@ -48,12 +48,7 @@ import {
 } from "../../utils/projectDetails";
 
 interface DataUploadPageProps {
-  /**
-   * Bumped by App each time the native File > New Workspace menu item (or its
-   * Ctrl/Cmd+N accelerator) fires while this page is showing. On step 0 that
-   * starts a new project, like the "New project" button; on steps 1-2 it is
-   * ignored. Idempotent with HomeStep's own Ctrl+N key handler.
-   */
+  /** Bumped by App on File > New Workspace (Ctrl/Cmd+N); starts a new project only on step 0 while no workspace is loading, otherwise ignored. */
   newProjectSignal?: number;
   onDataReady: (
     metadata: CsvMetadata,
@@ -62,31 +57,7 @@ interface DataUploadPageProps {
   ) => void;
 }
 
-/**
- * Rebuilds every "Add Special Sensor" column in the Rust backend's
- * in-memory session right after `load_csv` on a workspace reopen -- see
- * `WorkspaceState.specialSensorRecipes`'s own doc comment for why this is
- * necessary at all: `calculate_new_sensor`/`evaluate_formula` push the
- * computed column straight onto that session's memory, which is wiped on
- * every app restart and re-created fresh from the ORIGINAL CSV (no calculated
- * columns) -- without this replay, a special sensor's name/description would
- * still show up (from `extraSensorMetadata`) but plot no data at all,
- * silently.
- *
- * The replay itself (dependency order, `customName` forced to the recipe's own
- * tag, skipping everything built on a recipe that failed) lives in
- * `utils/specialSensorReplay.ts`. This wrapper adds the user-facing part:
- * recipes that fail are skipped, not fatal for the whole workspace open, and
- * all failures are surfaced together as ONE toast via the global error
- * reporter. Returns the tags that have no data this session (failed +
- * skipped) so the caller can keep them off the plot.
- *
- * Every replay command is pinned to `generation` -- the generation
- * of the `load_csv` that produced THIS dataset -- so a second load that
- * overlapped this one (and replaced the Rust session) makes the replay fail
- * with `StaleSessionError` instead of building this workspace's sensors on
- * another workspace's data. The caller reloads and retries.
- */
+/** Rebuilds special-sensor columns after load_csv on a reopen; failed ones are skipped and shown in one toast. Returns the tags with no data. Commands are pinned to `generation`, so an overlapping load fails with StaleSessionError. */
 async function restoreSpecialSensors(
   recipes: SpecialSensorRecipe[],
   generation: number | undefined,
@@ -114,8 +85,7 @@ async function restoreSpecialSensors(
       // works even when a model uses the sensor (only its name stays locked).
       failed.length > 0
         ? `To fix: on the Dashboard open Add Special Sensor > Manage and edit ${failed.length === 1 ? 'it' : 'each one'} (pencil) to correct the formula.`
-          // Only true for a skipped sensor whose OWN recipe is still accepted:
-          // one that is refused too is then listed in Manage as needing its own fix.
+          // Only for a skipped sensor whose own recipe is still accepted; a refused one is listed in Manage.
           + (skipped.length > 0
             ? ' Fixing it also rebuilds the skipped ones whose own formulas are still accepted; any that are not are then marked in Manage to fix the same way.'
             : '')
@@ -132,7 +102,6 @@ async function restoreSpecialSensors(
 }
 
 /* ---------------------------------------------------------------- */
-/* Page                                                             */
 /* ---------------------------------------------------------------- */
 
 export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: DataUploadPageProps) {
@@ -146,28 +115,16 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   const [workspacesLoaded, setWorkspacesLoaded] = useState(false);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
 
-  // Onboarding: (0) choose new-vs-recent, (1) name the project, (2) add the
-  // sensor data (+ optional tag names), (3) name the failure groups (customer
-  // batch 2026-10, item 5; skippable), then (4) "Opening the Dashboard…" — a
-  // rail-only state for the moment the new workspace is saved and handed off.
-  // Name/description/groups live in local state until "Open Dashboard" (or
-  // "Skip for now") on step 3 persists them into the WorkspaceState. Step 0 is
-  // left only by New project or by picking a recent workspace — and
-  // handleLoadWorkspace never touches `step` (a reopened project is never
-  // walked through step 3; it navigates away from this page entirely).
+  // Steps: 0 new or recent, 1 name, 2 sensor data, 3 failure groups (skippable), 4 opening the Dashboard; the project is saved when step 3 continues.
   const [step, setStep] = useState<0 | 1 | 2 | 3 | 4>(0);
-  // The project IS the machine: named "Plant · Machine", described "tag ·
-  // notes" (both derived -- see utils/projectDetails.ts). The data's time zone
-  // is picked on step 2 (default: this PC's offset).
+  // The project is the machine, named 'Plant . Machine'; the data's time zone is picked on step 2 (default: this PC's offset).
   const [machine, setMachine] = useState<MachineDetails>(EMPTY_MACHINE);
   const [dataTz, setDataTz] = useState<number>(() => pcOffsetMin());
   const projectName = projectDisplayName(machine);
   const projectDescription = describeMachine(machine);
   const [draftGroups, setDraftGroups] = useState<DraftGroup[]>([]);
   const [groupsSkipped, setGroupsSkipped] = useState(false);
-  // A step-3 card shows a duplicate name it could not save: Open Dashboard
-  // waits until it is fixed (or Esc'd back), so the old name is never saved
-  // silently in its place. Skip stays available — it saves no groups at all.
+  // A duplicate group name that could not be saved blocks Open Dashboard until fixed; Skip saves no groups.
   const [groupsInvalid, setGroupsInvalid] = useState(false);
   // A Plant · Machine pair another project already uses is checked FIRST and
   // blocks Continue; then every required field must be filled.
@@ -211,15 +168,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   // focus-fallback below to decide whether to nuke a stuck loading state.
   const loadingStartedAtRef = useRef<number | null>(null);
 
-  // "Latest click wins". Every open-workspace click takes the next
-  // sequence number; only the newest load may replay sensors and hand over to
-  // the Dashboard -- an older one that finishes late is discarded. The Rust
-  // session is ONE shared object, so an older load_csv that lands after a
-  // newer one REPLACES the newer one's dataset: `loadCsvInFlightRef` lets the
-  // newer load wait for those to land (then re-check / reload) before it
-  // replays anything. `backendPhaseRef` counts loads between their first
-  // `load_csv` and their end -- the window in which a focus event is NOT a
-  // sign of a stuck spinner (see the focus fallback below).
+  // Latest click wins: only the newest load replays and hands over. An older load_csv landing late would replace the newer dataset (one Rust session), so the newer waits on loadCsvInFlightRef.
+  // backendPhaseRef counts loads in flight so a focus event doesn't clear a live spinner.
   const loadSeqRef = useRef(0);
   const loadCsvInFlightRef = useRef(new Map<number, Promise<unknown>>());
   const backendPhaseRef = useRef(0);
@@ -231,27 +181,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     loadingStartedAtRef.current = null;
   };
 
-  // Reset in-flight workspace-load state when a sub-window (FG / PM) hands
-  // focus back to main. Without this the loading spinner sticks forever:
-  //   1. User clicks a Recent Workspace → setLoadingWorkspace(true), then
-  //      handleLoadWorkspace spawns the FG/PM sub-window and (in the
-  //      handshake's success path) destroys main.
-  //   2. If the user clicks "Back to Upload" BEFORE main is destroyed (or
-  //      the destroy is swallowed), the sub-window reuses main via
-  //      WebviewWindow.getByLabel('main') + show()+setFocus(). React state
-  //      survives intact — including the stale `loadingWorkspace=true`.
-  //
-  // Two layers of defense:
-  //   (a) Primary — sub-window emits `upload-page-resumed` right before
-  //       closing; we listen and reset. Explicit, unambiguous.
-  //   (b) Fallback — `tauri://focus` event. If main regains focus and
-  //       `loadingWorkspace` is still true after the typical load duration
-  //       (>2 s), the load has clearly handed off already → reset. Catches
-  //       paths the explicit emit might miss (e.g. native red-close on
-  //       macOS, force-quit of sub-window, IPC swallowed).
-  //
-  // We refresh the workspace list on either signal since the user may have
-  // saved / renamed in the sub-window.
+  // Reset the loading spinner when a sub-window returns focus to main (main survives with a stale loadingWorkspace=true).
+  // Primary: `upload-page-resumed`; fallback: `tauri://focus` after more than 2 s. Both refresh the workspace list.
   useEffect(() => {
     let disposed = false;
     let disposeFocus: (() => void) | undefined;
@@ -264,9 +195,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     getCurrentWindow().onFocusChanged(({ payload: focused }) => {
       if (!focused) return;
       const started = loadingStartedAtRef.current;
-      // A load that is really talking to the backend (load_csv / replay) is
-      // not "stuck": clearing its overlay would let a second workspace be
-      // clicked mid-load and the two would interleave on the one Rust session.
+      // A load in the backend isn't stuck; clearing its overlay would let a second workspace interleave on the one Rust session.
       if (backendPhaseRef.current > 0) return;
       if (started !== null && Date.now() - started > 2000) {
         clearLoadingState();
@@ -286,13 +215,9 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   const hasFiles = files.length > 0;
   const hasReport = !!report;
   const isStale = dataUpload.isStale;
-  // "Ready" means: parsed report exists AND the current file selection still
-  // matches the snapshot used for that parse. Editing the file list after
-  // parse (add / remove / reorder) demotes the report back to not-ready so
-  // the user is prompted to re-parse before continuing.
+  // Ready = a report exists and the file selection still matches the parse snapshot; editing the files demotes it.
   const isReady = hasReport && !isStale && hasFiles;
-  // Read progress of THIS page's own parse (the event is a global broadcast, so
-  // it is only followed while `Parse files` is running -- see the hook).
+  // Progress of this page's own parse only (the event is a global broadcast).
   const readProgress = useCsvLoadProgress(dataUpload.isLoading);
 
   const handleApplyMapping = async () => {
@@ -300,9 +225,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     await mapping.applyMapping(report.headers);
   };
 
-  // Apply the mapping once dataset report and key column are both available, and
-  // again whenever the report changes: a result from the previous read must not
-  // decide whether THIS data may continue (see tagFileBlockReason).
+  // Re-apply the mapping when the report changes: a previous read's result must not decide whether this data may continue.
   useEffect(() => {
     if (report && mapping.mappingData && mapping.keyColumn) {
       void handleApplyMapping();
@@ -316,11 +239,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     if (!report || continuingRef.current) return;
     continuingRef.current = true;
     setWorkspaceError(null);
-    // The rail stays on screen with step 4 current ("Opening the Dashboard…")
-    // while the new workspace is saved. Saving a fresh workspace's JSON is
-    // near-instant (<50ms), so without a floor the swap flickers past and
-    // reads as abrupt; MIN_TRANSITION_MS is a short bridging pause (not
-    // longer — nothing may get slower).
+    // 500 ms minimum so the swap after a near-instant save doesn't flicker.
     const MIN_TRANSITION_MS = 500;
     setGroupsSkipped(skip);
     setStep(4);
@@ -344,8 +263,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           notes: machine.notes.trim(),
         },
         dataUtcOffsetMin: dataTz,
-        // The Dashboard opens on its Failure Groups tab, where sensors are
-        // assigned to the groups just named (or the first group is created).
+        // Opens on the Failure Groups tab to assign sensors to the groups just named.
         lastRoute: "failure-group",
         dataFilePaths: dataUpload.selectedFiles,
         metadataFilePath: null,
@@ -355,10 +273,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         mappingFilePath: mapping.mappingFilePath,
         mappingKeyColumn: mapping.keyColumn,
       };
-      // Groups built by the same helpers the Dashboard's FG tab uses, so they
-      // are identical in shape to ones created there ("Not in Group" first,
-      // FG-1 … in the order typed). Skip → only "Not in Group": the recent
-      // project then reads "No failure groups" (count 0), not "no chip".
+      // Groups built by the same helpers as the Dashboard FG tab; Skip gives only 'Not in Group'.
       const state = withFailureGroupState(base, {
         groups: buildInitialFailureGroups(skip ? [] : draftGroups),
       });
@@ -402,26 +317,18 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       backendPhaseRef.current += 1;
       inBackendPhase = true;
 
-      // A legacy spreadsheet-style `round($A, 2)` is rewritten to the engine
-      // form `round($A * 100) / 100` BEFORE the replay (pure text, no dataset --
-      // once per open, outside the retry loop), so the sensor restores instead
-      // of being refused. The rewrite (and the models it sends back to
-      // Incomplete) is saved after the loop, in one write.
+      // Rewrite `round($A, 2)` to `round($A * 100) / 100` before replay so the sensor restores; saved once after the loop.
       const { recipes: recipesToReplay, converted } = await convertLegacyFormulaRecipes(
         state.specialSensorRecipes,
         (c, a) => invoke<unknown>(c, a),
       );
       if (!isLatest()) return;
-      // The Rust session is about to become this project's. A parse from step 2 lands
-      // before it (`load_csv` is serialised, oldest first), but its report no longer
-      // describes the session, so it must not reach the screen.
+      // A step-2 parse lands before this session, but its report no longer describes it; keep it off the screen.
       dataUpload.abandonParse();
       const olderLoads = () =>
         [...loadCsvInFlightRef.current.entries()].filter(([k]) => k < seq).map(([, p]) => p);
 
-      // load_csv + replay, retried while the Rust session is replaced under it
-      // (an older, slower load_csv landing after ours). Each attempt is bound
-      // to the generation ITS load_csv returned.
+      // Retry load_csv + replay when an older, slower load_csv replaces the session; each attempt is bound to its own generation.
       const MAX_ATTEMPTS = 3;
       let dataMetadata: CsvMetadata | null = null;
       let noData: string[] = [];
@@ -436,8 +343,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         }
         if (!isLatest()) return;
 
-        // An older load_csv still running will replace the session the moment
-        // it lands. Let it land, then make sure the session is still OURS.
+        // An older load_csv still running replaces the session when it lands; let it land, then check the session is still ours.
         const before = olderLoads();
         if (before.length > 0) {
           await Promise.allSettled(before);
@@ -447,10 +353,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
           if (typeof current === "number" && typeof loaded.generation === "number" && current !== loaded.generation) continue;
         }
 
-        // Must happen before `onDataReady` hands off to Dashboard, so the
-        // very first chart render already has real data for every special
-        // sensor instead of a "ghost" entry that only gets fixed on the next
-        // manual refresh (see `replaySpecialSensorRecipes`'s own comment).
+        // Must run before onDataReady so the first chart render already has data for every special sensor.
         if (recipesToReplay.length) {
           try {
             noData = await restoreSpecialSensors(recipesToReplay, loaded.generation, state.extraSensorMetadata);
@@ -474,11 +377,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       }
       if (!isLatest()) return;
 
-      // Persist the conversion (new formula text + the demotion of every model
-      // trained on a converted sensor, in ONE write against disk), and hand the
-      // Dashboard the WRITTEN state -- its full-overwrite autosave would
-      // otherwise write the old `round($A, 2)` text straight back. Nothing
-      // converted = no write.
+      // Save the conversion in one write and hand the Dashboard that state, or its autosave would write the old text back.
       let opened: WorkspaceState = state;
       let notice: Awaited<ReturnType<typeof saveLegacyFormulaConversion>> = null;
       if (converted.length > 0) {
@@ -499,9 +398,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         roundingWritten = true;
         logToFile('special-sensor-rounding', roundingNotice.text, roundingNotice.trace);
       } else if (converted.length > 0) {
-        // The file could not be written: the replay used the converted text, so
-        // the Dashboard must hold it too (its autosave then saves it -- and
-        // sends the models trained on these sensors back to Incomplete).
+        // The write failed: the Dashboard must still hold the converted text so its autosave saves it.
         opened = { ...state, specialSensorRecipes: recipesToReplay };
         roundingNotice = {
           text: `${legacyConversionMessage(converted, 0)} The change will be saved with the project.`,
@@ -510,9 +407,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       }
       if (converted.length > 0 && !isLatest()) return;
 
-      // A running condition spelled differently from its header: Rust ignored it,
-      // so a model trained on it used all rows. Copy only the slice: `opened` may
-      // hold converted recipes the file does not have yet.
+      // A condition spelled differently from its header was ignored by Rust (all rows used).
+      // Copy only the slice: `opened` may hold converted recipes the file lacks.
       try {
         const headers = await invoke<string[]>("get_all_sensors"); // includes replayed special sensors
         if (!isLatest()) return;
@@ -540,10 +436,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         console.warn("Could not correct running-condition spelling:", err);
       }
 
-      // A project made before the data's time zone existed gets this PC's
-      // offset, once -- the ONE caller of ensureDataUtcOffset. Only after the
-      // data really loaded (a failed open leaves the file untouched), and
-      // never fatal.
+      // A project with no data time zone yet gets this PC's offset once; only after data loaded, never fatal.
       let dataUtcOffsetMin: number | null = null;
       try {
         dataUtcOffsetMin = await ensureDataUtcOffset(id);
@@ -557,11 +450,8 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         : opened;
       if (opened.specialSensorRecipes?.length) {
         if (noData.length > 0) {
-          // A sensor with no column behind it must not stay plotted: its chart
-          // series would be empty (or the scatter/pair cell blank). Its recipe
-          // and metadata are kept so it can still be fixed in Manage. A filter
-          // condition on it goes too: Rust ignores a condition on a missing
-          // column, so the chart would show every row while the tab says filtered.
+          // A sensor with no column must not stay plotted (empty series); its recipe and metadata are kept for Manage.
+          // Its filter condition goes too: Rust ignores a condition on a missing column, so every row would show as filtered.
           const gone = new Set(noData.map(t => t.trim().toLowerCase()));
           const keep = (tags: string[] | undefined) =>
             tags?.filter(t => !gone.has(t.trim().toLowerCase()));
@@ -602,12 +492,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
         } catch { /* ignore */ }
       }
 
-      // `lastRoute === 'failure-group'` renders Dashboard normally, like
-      // `'dashboard'` does; Dashboard itself reads `initialState.lastRoute`
-      // to decide whether to land on the Failure Groups tab — see
-      // Dashboard.tsx.
-      // Only the newest click hands over (a mapping load above may have taken
-      // long enough for another workspace to be clicked).
+      // 'failure-group' renders Dashboard like 'dashboard'; only the newest click hands over.
       if (!isLatest()) return;
       handedOver = true;
       onDataReady(dataMetadata, stateForDashboard, sm);
@@ -620,8 +505,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
       loadingStartedAtRef.current = null;
     } finally {
       if (inBackendPhase) backendPhaseRef.current -= 1;
-      // Also when this load was overtaken or failed after a write. A rounding
-      // conversion that was not written is simply done again on the next open.
+      // Also when this load was overtaken or failed after a write; an unwritten rounding conversion is redone on the next open.
       const rounding = roundingWritten || handedOver ? roundingNotice : null;
       if (rounding && !roundingWritten) logToFile('special-sensor-rounding', rounding.text, rounding.trace);
       if (rounding || conditionNotice) {
@@ -636,10 +520,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     }
   };
 
-  // Deleting a whole workspace also removes its model output folder, which
-  // cannot be undone -- so the UI asks first: the confirmation is IN THE ROW
-  // ("Delete this project? [Delete] [Cancel]", RecentProjectCard /
-  // WorkspaceRow); this handler only runs once the user has confirmed.
+  // Deleting a workspace also removes its output folder (irreversible); this runs only after the in-row confirmation.
   const handleDeleteWorkspace = async (id: string) => {
     try {
       await deleteWorkspace(id);
@@ -649,10 +530,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     refreshWorkspaces();
   };
 
-  // Native File > New Workspace (App bumps `newProjectSignal`): on step 0 it
-  // starts a new project; on steps 1-2 and while a load is running it is a
-  // no-op, same as before. Idempotent with HomeStep's own Ctrl+N handler --
-  // whichever fires first moves to step 1, the other then finds step !== 0.
+  // File > New Workspace: starts a project on step 0; no-op on any other step or while loading; idempotent with HomeStep's Ctrl+N.
   const stepRef = useRef(step);
   stepRef.current = step;
   const loadingWorkspaceRef = useRef(loadingWorkspace);
@@ -665,7 +543,6 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newProjectSignal]);
 
-  /* ----------------- Render ----------------- */
 
   const pageStyle: CSSProperties = {
     width: "100%", height: "100vh", background: T.bg, color: T.text,
@@ -673,10 +550,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     display: "flex", flexDirection: "column", overflow: "hidden",
   };
 
-  // Full-screen loading overlay. Sits on top of EVERYTHING (rail, content,
-  // footer) while a workspace is loading so the user can tell the app is
-  // working, not frozen. The wrapping div absorbs all pointer events (default
-  // for non-transparent divs) and we set cursor: 'wait' for a busy affordance.
+  // Full-screen overlay absorbs pointer events and shows a wait cursor while a workspace loads.
   const loadingOverlay = loadingWorkspace ? (
     <div
       aria-busy="true"
@@ -713,8 +587,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
     </div>
   ) : null;
 
-  // Step 0 ("Get started") is its own full-bleed screen -- no rail or action
-  // bar. Steps 1-2 below share the setup rail + footer.
+  // Step 0 ("Get started") is its own full-bleed screen, no rail or action bar. The later steps share the setup rail + footer.
   if (step === 0) {
     return (
       <div style={pageStyle}>
@@ -769,9 +642,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   return (
     <div style={pageStyle}>
       <div style={{ display: "grid", gridTemplateColumns: "268px minmax(0, 1fr)", background: T.bg, flex: 1, minHeight: 0 }}>
-        {/* The step (content + footer) comes FIRST in DOM order and the rail
-            after it, placed back into the left column by the grid — so on
-            every step Tab reaches the step's own controls before the rail. */}
+        {/* Step content is first in DOM order, the rail after it (placed left by the grid), so Tab reaches the step's controls first. */}
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gridColumn: 2, gridRow: 1 }}>
           <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "34px 40px 24px", display: "flex", flexDirection: "column" }}>
             {workspaceError && (
@@ -853,7 +724,6 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
             )}
           </div>
 
-          {/* Action bar */}
           <div style={{
             display: "flex", alignItems: "center", gap: 12,
             padding: "12px 24px", background: T.surface, borderTop: `1px solid ${T.border}`,
@@ -887,7 +757,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
               </>
             ) : step === 3 ? (
               <>
-                {/* --text-secondary, never green: naming groups is optional. */}
+                {/* Muted, never green: naming groups is optional. */}
                 <span style={{ ...statusStyle, color: groupsInvalid ? T.danger : T.textMuted }} data-testid="fg-step-status">
                   {groupsInvalid
                     ? "Fix the duplicate group name (or press Esc on it) to open the Dashboard"
@@ -917,9 +787,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
             groupsSummary={groupsSummary}
             groupsSkipped={groupsSkipped}
             onStepClick={(s) => {
-              // Only ever navigate BACKWARD by clicking a step — every later
-              // step is gated by its own Continue — and never while the
-              // Dashboard is opening.
+              // Only backward navigation by clicking a step (later steps are gated by Continue), and never while the Dashboard is opening.
               if (s < step && step !== 4) setStep(s);
             }}
             onAllProjects={() => { if (step !== 4) setStep(0); }}

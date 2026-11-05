@@ -17,30 +17,9 @@ import {
   type MachineShape,
 } from '../components/upload/machineShapes';
 
-/*
- * Two features of the Welcome machine art landed one after the other and are tested apart:
- *
- *   - the ‹ › buttons and the dots that pick a machine (`MachineMorphCanvas.test.tsx`
- *     "‹ › buttons and dots") — every one of those tests SKIPS the dot pass and reads the
- *     name chip, the progress dots and the callout texts;
- *   - every machine's rotor train turns (`machineParts.test.ts`, SPEC
- *     docs/design/handoff/welcome-machine-rotation) — its renderer tests draw ONE machine
- *     against itself (`render(ctx, shape, shape, …)`), never a dissolve between two.
- *
- * The seam between them is the dissolve a button starts: the canvas hands the renderer TWO
- * machines (the one on screen, the one asked for) and the renderer must pose each with ITS
- * OWN parts table before blending. Nothing checks that
- *   (a) after ‹ › / a dot, the cloud that is drawn is the machine the name chip says — the
- *       shape object that carries that machine's moving parts — at every frame on the way;
- *   (b) the parts keep turning THROUGH a navigation (the spin clock is never reset or frozen
- *       by it), and stay at rest under reduced motion whichever machine is picked;
- *   (c) a dissolve between two DIFFERENT machines starts as exactly the first and ends as
- *       exactly the second, each with its own parts in motion (a parts table applied to the
- *       other machine's points would show here and nowhere else).
- */
+/* Machine-to-machine dissolve, each posed with its own parts: cloud matches the name chip, parts keep turning, ends exact. */
 
 /* ------------------------------------------------------------------ */
-/* (a) + (b): the canvas → the renderer, through the buttons           */
 /* ------------------------------------------------------------------ */
 
 type RenderArgs = { A: MachineShape; B: MachineShape; e: number; burst: number; spin: number };
@@ -110,8 +89,7 @@ describe('‹ › / dots × turning parts: the cloud that is drawn is the machin
   const activeDot = () => screen.getAllByTestId('machine-dot').findIndex((d) => d.getAttribute('data-active') === 'true');
   const last = () => frames[frames.length - 1];
 
-  /** Advance the clock one step, run the pending frame, and check what EVERY frame must hold:
-   *  the name chip names the nearer end of the dissolve the renderer was just given. */
+  /** Advance the clock, run the pending frame, and check the name chip names the nearer end of the dissolve. */
   const tick = (ms: number) => {
     clockMs += ms;
     const entry = [...rafCallbacks.entries()].pop();
@@ -279,7 +257,6 @@ describe('‹ › / dots × turning parts: the cloud that is drawn is the machin
 });
 
 /* ------------------------------------------------------------------ */
-/* (c): the renderer, between two DIFFERENT machines                    */
 /* ------------------------------------------------------------------ */
 
 describe('DotRenderer between two different machines (what a ‹ › dissolve draws): each end is posed with its OWN parts', () => {
@@ -308,8 +285,7 @@ describe('DotRenderer between two different machines (what a ‹ › dissolve dr
   };
   const isMoving = (s: MachineShape, i: number) => s.pts[i * POINT_STRIDE + 3] >= PART_STEP;
 
-  // The dissolves the buttons start: Next (0 → 1), Previous with wrap (0 → 5), a dot jump
-  // (0 → 3), into and out of the one machine with SLIDING parts (2 → 3, 3 → 4), back (4 → 2).
+  // Dissolves the buttons start: Next, Previous with wrap, a dot jump, into/out of the sliding-parts machine, back.
   const PAIRS: [number, number][] = [[0, 1], [0, 5], [0, 3], [2, 3], [3, 4], [4, 2], [5, 0]];
   const SPIN = 2.3;
 

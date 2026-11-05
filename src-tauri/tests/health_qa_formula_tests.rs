@@ -1,25 +1,9 @@
-//! Health score formulas, validation, bounded-data
-//! helpers and the Relationship cache, attacked through the PUBLIC
-//! `health_score` surface with INDEPENDENT reference implementations written
-//! from the health-score concept, not from the production code:
-//!
-//!   * every kind is a piecewise-linear curve through fixed knots, evaluated
-//!     here with a generic sorted-knot interpolator (`interp`) instead of the
-//!     production per-branch `lerp`s;
-//!   * the Clustering distance is checked against a Mahalanobis distance
-//!     built from an explicitly inverted 2×2 covariance matrix;
-//!   * thousands of generated cases (deterministic xorshift PRNG — no `rand`
-//!     dependency) plus hand-picked knots / ulp neighbours / NaN / inf.
-//!
-//! A known bug is pinned as a test that asserts the CORRECT behaviour and is
-//! marked ignored with a BUG reason (project convention) until fixed.
+//! Health score formulas, validation, bounded-data helpers and Relationship cache, via the PUBLIC `health_score` API against independent references.
+//! Generated cases use a deterministic xorshift PRNG (no `rand`).
 
 use tauri_app_lib::clustering::fit_single_cluster_ellipse;
 use tauri_app_lib::health_score::*;
 
-// ---------------------------------------------------------------------------
-// Deterministic PRNG + helpers
-// ---------------------------------------------------------------------------
 
 struct Rng(u64);
 impl Rng {
@@ -50,9 +34,7 @@ impl Rng {
     }
 }
 
-/// Reference piecewise-linear interpolation through ascending knots `xs`
-/// (strictly increasing) with values `ys`; flat outside. Written as a
-/// binary search, structurally different from the production `lerp` chain.
+/// Reference piecewise-linear interpolation (flat outside the knots `xs`); binary search, unlike the production `lerp` chain.
 fn interp(x: f64, xs: &[f64], ys: &[f64]) -> f64 {
     assert_eq!(xs.len(), ys.len());
     if x <= xs[0] {
@@ -98,8 +80,7 @@ fn codes(v: &[Issue]) -> Vec<String> {
     v.iter().map(|i| i.code.clone()).collect()
 }
 
-/// A random but valid Individual configuration (band built like the INFO
-/// file: boundaries from mean ± k·sd), with independently drawn L/H gaps.
+/// A random valid Individual configuration (band from mean ± k·sd) with independently drawn L/H gaps.
 fn random_individual(rng: &mut Rng) -> (IndividualBand, f64, f64) {
     let scale = 10f64.powf(rng.range(-4.0, 5.0));
     let mean = rng.range(-1000.0, 1000.0) * scale.min(1.0) + rng.range(-5.0, 5.0) * scale;
@@ -124,9 +105,6 @@ fn ind_ref(b: &IndividualBand, l: f64, h: f64, v: f64) -> f64 {
     )
 }
 
-// ===========================================================================
-// 1. Individual vs the spec
-// ===========================================================================
 
 #[test]
 fn individual_matches_independent_reference_on_20k_generated_cases() {
@@ -262,9 +240,6 @@ fn individual_huge_magnitude_configuration_does_not_overflow() {
     close(s, 40.0, 1e-6, "midpoint at 1e300 scale");
 }
 
-// ===========================================================================
-// 1b. Relationship vs the spec
-// ===========================================================================
 
 fn rel_ref(w: f64, l80: f64, u80: f64, l0: f64, u0: f64, r: f64) -> f64 {
     interp(r, &[l0, l80, -w, w, u80, u0], &[0.0, 80.0, 100.0, 100.0, 80.0, 0.0])
@@ -346,13 +321,8 @@ fn relationship_monotonic_and_bounded() {
     }
 }
 
-// ===========================================================================
-// 1c. Clustering vs the spec
-// ===========================================================================
 
-/// Mahalanobis distance from an explicitly inverted covariance
-/// Σ = R·diag(a², b²)·Rᵀ (R = rotation by `angle_deg`), independent of the
-/// production rotate-then-scale formula.
+/// Mahalanobis distance from an explicitly inverted Σ = R·diag(a², b²)·Rᵀ (R = rotation by `angle_deg`); independent of production.
 fn mahalanobis_ref(g: &ClusterGeom, x: f64, y: f64) -> f64 {
     let t = g.angle_deg.to_radians();
     let (s, c) = t.sin_cos();
@@ -451,11 +421,8 @@ fn clustering_n_barely_above_3_is_valid_and_steep_but_bounded() {
     }
 }
 
-/// End to end against the real GMM fit: over the training points of a
-/// 1-cluster fit, the mean of d² must be exactly 2 (the dimension) when d is
-/// the Mahalanobis distance of the fitted (biased) Gaussian. This only holds
-/// if `x_sd` / `y_sd` / `angle_deg` are interpreted with the convention the
-/// fit produced them in — a swapped axis or a wrong rotation sense breaks it.
+/// Over the training points of a 1-cluster fit, mean d² is exactly 2 for the fitted (biased) Gaussian's Mahalanobis distance;
+/// holds only if `x_sd`/`y_sd`/`angle_deg` follow the fit's convention.
 #[test]
 fn fitted_ellipse_convention_gives_mean_d_squared_of_two_at_any_rotation() {
     let mut rng = Rng::new(23);
@@ -548,9 +515,6 @@ fn assign_cluster_edges_overlaps_unsorted_and_missing() {
     assert_eq!(assign_cluster(1.0, &[]), None);
 }
 
-// ===========================================================================
-// 2. Validation — every rule / edge, never panics
-// ===========================================================================
 
 fn band100() -> IndividualBand {
     IndividualBand::from_rounded(100.0, 10.0, [90.0, 110.0], [70.0, 130.0])
@@ -608,12 +572,8 @@ fn individual_validation_degenerate_bands_never_panic() {
     }
 }
 
-/// Individual refuses a non-finite L / H with code `not_finite`, like
-/// Clustering (`outer_sd_not_a_number`): every comparison with NaN is false,
-/// so without the check no rule would fire and scores beyond 3σ would come
-/// back as `Some(NaN)`, breaking the "None = unscored, otherwise 0..=100"
-/// contract. Not reachable from the frontend (JSON cannot carry NaN) but
-/// `train_individual_model` / export rely on it.
+/// Individual refuses a non-finite L/H with `not_finite` (like Clustering); otherwise scores beyond 3σ would be `Some(NaN)`.
+/// Unreachable from the frontend (JSON has no NaN).
 #[test]
 fn bug_individual_validation_must_reject_nan_set_points() {
     let b = band100();
@@ -623,8 +583,7 @@ fn bug_individual_validation_must_reject_nan_set_points() {
     assert!(!v.is_empty(), "NaN H must be an issue");
 }
 
-/// Companion (was `individual_nan_set_point_currently_leaks_nan_scores`, which
-/// pinned the bug): a NaN L / H can no longer reach `score()` at all.
+/// A NaN L/H can no longer reach `score()`.
 #[test]
 fn individual_nan_set_point_is_refused_so_no_nan_score_can_exist() {
     let b = band100();
@@ -633,8 +592,7 @@ fn individual_nan_set_point_is_refused_so_no_nan_score_can_exist() {
     }
 }
 
-/// The stable code and field of every non-finite set point, per kind (each
-/// non-finite value gives exactly one `not_finite` issue and no cascade).
+/// Stable code and field of every non-finite set point, per kind; each gives exactly one `not_finite` issue, no cascade.
 #[test]
 fn non_finite_set_points_get_the_not_finite_code_on_the_right_field() {
     let b = band100();
@@ -862,15 +820,11 @@ fn set_points_wire_formats_are_all_accepted_and_unknown_keys_ignored() {
     assert_eq!((sp.lower, sp.upper), (Some(1.5), None));
     let sp: SetPointsArg = serde_json::from_str(r#"{"kind":"clustering","outerSd":4.5}"#).unwrap();
     assert_eq!(sp.outer_sd, Some(4.5));
-    // JSON cannot carry NaN; an out-of-range literal is rejected, not turned
-    // into inf (so the inf/NaN bugs above are not reachable over IPC).
+    // JSON cannot carry NaN and an out-of-range literal is rejected, so inf/NaN set points are unreachable over IPC.
     assert!(serde_json::from_str::<SetPointsArg>(r#"{"lower":NaN}"#).is_err());
     assert!(serde_json::from_str::<SetPointsArg>(r#"{"lower":1e400}"#).is_err());
 }
 
-// ===========================================================================
-// 4. Bounded data helpers
-// ===========================================================================
 
 fn check_selection(n: usize, max: usize, primary: Option<&[f64]>, score: Option<&[f64]>) -> Vec<usize> {
     let sel = select_indices(n, max, primary, score);
@@ -918,8 +872,7 @@ fn select_indices_bounds_for_many_sizes_and_caps() {
 
 #[test]
 fn select_indices_tiny_caps_are_raised_to_eight() {
-    // Contract note (not a bug, but worth knowing): max_points 0/1/2 do NOT
-    // give 0/1/2 points — the floor is 8 (HealthPreviewRequest also clamps).
+    // Contract: max_points 0/1/2 do NOT give 0/1/2 points; the floor is 8 (`HealthPreviewRequest` also clamps).
     let p: Vec<f64> = (0..1000).map(|i| (i as f64).sin()).collect();
     for m in [0, 1, 2] {
         let sel = select_indices(1000, m, Some(&p), None);
@@ -955,7 +908,7 @@ fn select_indices_adversarial_shapes_keep_dip_spike_and_lowest_score() {
     let nan = vec![f64::NAN; n];
     let sel = check_selection(n, 300, Some(&nan), Some(&nan));
     assert!(sel.len() <= 300);
-    // dip at the very first / last row
+    // dip at the second-to-last row
     let mut s = vec![50.0; n];
     s[n - 2] = 0.0;
     let sel = check_selection(n, 30, None, Some(&s));
@@ -1054,9 +1007,6 @@ fn summarize_shares_partition_scored_rows() {
     assert_eq!((sum.share_80_100.unwrap(), sum.share_40_80.unwrap()), (100.0 / 3.0, 100.0 / 3.0));
 }
 
-// ===========================================================================
-// 6. Relationship cache (public RelCache)
-// ===========================================================================
 
 fn fit(rows: usize, tag: &str, preds: usize) -> RelFit {
     RelFit {
@@ -1074,8 +1024,7 @@ fn fit(rows: usize, tag: &str, preds: usize) -> RelFit {
 
 #[test]
 fn cache_eviction_by_count_is_insertion_order_when_only_peek_is_used() {
-    // The health preview path only ever PEEKs (read lock) — so recency is
-    // never refreshed by reads and eviction is effectively FIFO by insert.
+    // The health preview only PEEKs (read lock), so reads never refresh recency and eviction is effectively FIFO by insert.
     let mut c = RelCache::new(3, usize::MAX);
     for k in ["a", "b", "c"] {
         c.insert(k.into(), fit(10, k, 1));

@@ -1,33 +1,9 @@
-/**
- * Health score command contract — the TypeScript twin of
- * the Rust types in `src-tauri/src/health_preview.rs`, `health_score.rs` and
- * `model_export.rs`.
- *
- * EVERY field name here is exactly what Rust sends / expects (snake_case).
- * Do not camelCase them. The only camelCase set-point shape is the model's own
- * `FailureModel.healthSetPoints` (`HealthSetPoints` in `../types`); it is
- * converted to `HealthSetPointsWire` by `healthSetPointsToWire`
- * (`src/utils/healthRequest.ts`) before it goes over IPC.
- *
- * The command (every call needs an explicit return type):
- *
- *   invoke<HealthPreview>('compute_health_preview', { request: HealthPreviewRequest })
- *
- * Mark complete writes NO files (2026-10-20); Export results is the only
- * writer of the model files.
- *
- * Errors come back as a rejected string `"CODE: message"` — see `HealthErrorCode`
- * and `parseHealthError`.
- */
+/** Wire types for `compute_health_preview` (Rust twin). Keys are Rust's snake_case. Set points go through `healthSetPointsToWire` first; errors are rejected strings 'CODE: message'. */
 
 import type { ModelKind } from '../types';
 
-// ---------------------------------------------------------------------------
-// Shared request pieces
-// ---------------------------------------------------------------------------
 
-/** The training scope, same shape every preview/train command takes. The
- *  builder (`buildPreviewFilterPayload`) returns `null` for "no filter at all". */
+/** Training scope filter; the builder returns `null` for no filter at all. */
 export interface TrainingScopeFilter {
     timestamp_ranges: { start: string | null; end: string | null }[];
     value_filters: {
@@ -44,8 +20,7 @@ export interface HealthClusterRange {
     max: number | null;
 }
 
-/** The model's set points as Rust reads them (all optional; `null`/missing =
- *  "not entered"). Only the keys of the model's own kind are filled. */
+/** Set points as Rust reads them; null/missing = not entered; only the model's own kind is filled. */
 export interface HealthSetPointsWire {
     /** Individual: L / H — health 0 at this value. */
     lower?: number | null;
@@ -59,9 +34,6 @@ export interface HealthSetPointsWire {
     outer_sd?: number | null;
 }
 
-// ---------------------------------------------------------------------------
-// compute_health_preview
-// ---------------------------------------------------------------------------
 
 export interface HealthPreviewRequest {
     kind: ModelKind;
@@ -91,31 +63,19 @@ export interface HealthPreviewRequest {
     include_out_of_scope?: boolean;
     /** Refuse with `STALE_SESSION` when the loaded dataset's generation differs. */
     expected_generation?: number;
-    /** Clear Rust's remembered test-scoring failure for this fit and try the
-     *  Relation-model prediction again. Sent ONLY from the "Try again" button
-     *  (`useHealthPreview.retryTestScoring`), never on ordinary previews. */
+    /** Clears Rust's remembered scoring failure and retries; sent only by the 'Try again' button. */
     retry_test_scoring?: boolean;
-    /** The model's EFFECTIVE scoring periods (the wire key is still
-     *  `test_periods`). Omitted when there are none; when present the response
-     *  carries `test_validation`. Built by `toTestPeriodsWire`. */
+    /** Effective scoring periods (wire key `test_periods`); when present the response carries `test_validation`. */
     test_periods?: TestPeriodWire[];
 }
 
-/** One scoring period on the wire: start → end only (`''` → `null`). Rust
- *  still accepts and ignores a legacy `label` / `event_time`, but they are
- *  not sent. */
+/** start/end only ('' -> null); Rust ignores a legacy `label`/`event_time`. */
 export interface TestPeriodWire {
     start: string | null;
     end: string | null;
 }
 
-/** Train-only summary inside `ValidationResult` — the kind's own metrics are
- *  present (Relationship: r2/rmse/residual_*; Individual: mean/sd/within_3sd_pct;
- *  Clustering: inside_3sd_ring_pct).
- *
- *  Units: `rows` / `days` and every metric here are RAW — the dataset rows the
- *  model was trained on and their running time (rows x the dataset's median
- *  sample interval). Only `hours` counts 1-hour points. */
+/** Train-only summary with the kind's own metrics. `rows`/`days` and metrics are RAW; only `hours` counts 1-hour points. */
 export interface ValidationTrainSummary {
     /** RAW training rows. */
     rows: number;
@@ -133,19 +93,9 @@ export interface ValidationTrainSummary {
     inside_3sd_ring_pct?: number;
 }
 
-/** Results for one scoring period, scored with the TRAIN-only model. Facts
- *  only — no label, no event time, no lead time and no verdict.
- *
- *  Units — the health score is computed on 1-HOUR AVERAGES (one point per
- *  clock hour = the mean of the hour's running rows), so two units live side
- *  by side here:
- *   - RAW rows / raw running time: `rows`, `days`, `train_rows`, `train_days`.
- *   - HOURS (1-hour points): `hours`, `train_hours`, `scored`, `pct_below_80`,
- *     `lowest`, `lowest_at`, and the kind metrics (`r2` … `inside_3sd_ring_pct`),
- *     which are computed over the period's hourly points. */
+/** Results per scoring period from the TRAIN-only model. Raw: `rows`, `days`, `train_rows`, `train_days`. 1-hour points: `hours`, `train_hours`, `scored`, `pct_below_80`, `lowest`, and the kind metrics. */
 export interface TestPeriodResult {
-    /** 1-based position in the request's `test_periods` (S1 = index 1) — Rust
-     *  sends `i + 1`. The UI numbers periods by list position; don't mix the two. */
+    /** 1-based position in the request's `test_periods` (Rust sends `i + 1`); the UI numbers by list position. */
     index: number;
     start: string | null;
     end: string | null;
@@ -174,9 +124,7 @@ export interface TestPeriodResult {
     scored: number;
     /** Share (%) of the scored HOURS whose score is below 80; `null` = nothing was scored. */
     pct_below_80: number | null;
-    /** The lowest HOURLY score of the period (rounded to a whole score), and
-     *  the START of that hour (`2024-01-05T13:00:00`). Each point already is a
-     *  1-hour average, so there is no separate "held for 1 h" window. */
+    /** Lowest hourly score (whole number) and the start of that hour, e.g. `2024-01-05T13:00:00`. */
     lowest: number | null;
     lowest_at: string | null;
 }
@@ -191,9 +139,7 @@ export interface ValidationResult {
 
 export type IssueSeverity = 'error' | 'warning';
 
-/** One validation finding. `code` is stable; `message` is plain English the UI
- *  may show as-is; `field` names the input it belongs to (`lower`, `upper`,
- *  `sd`, `residual_at_80_lower`, `two_rmse`, `outer_sd`, `cluster_<id>`, ...). */
+/** `code` is stable; `message` is plain English; `field` names the input it belongs to. */
 export interface HealthIssue {
     code: string;
     severity: IssueSeverity;
@@ -251,32 +197,13 @@ export interface ClusteringStats {
     cluster_count: number;
     criteria_sensor: string | null;
     clusters: ClusterStat[];
-    /** Share (%) of the training rows with a cluster that sit inside its 3× SD ring
-     *  (score ≥ 80) — sent with or without scoring periods; null when no training row
-     *  has a usable cluster. */
+    /** % of training rows inside their cluster's 3x SD ring (score >= 80); null if no row has a cluster. */
     inside_3sd_ring_pct: number | null;
 }
 
 export type HealthStats = IndividualStats | RelationshipStats | ClusteringStats;
 
-/**
- * One per-kind shape, used TWICE in a `HealthPreview`:
- *
- *  - as `series` — the RAW dataset rows (the Model fit page). One point per
- *    row: `rows` = the 0-based dataset row, `timestamps` = the CSV timestamp
- *    text ('' when the row has none). `score` is ALWAYS `null` here: the health
- *    score is not computed per row (the field stays in the type because the
- *    shape is shared).
- *  - as `hourly` — what the health score is computed on (the Health score
- *    page). One point per CLOCK HOUR: `timestamps` = the hour's START
- *    (`2024-01-05T13:00:00`), `rows` = the FIRST dataset row of that hour, every
- *    value = the MEAN of the hour's running rows, `in_scope` all `true`,
- *    `total_points` = hours before downsampling. `score` is `null` while the
- *    set points are incomplete/invalid ("Set the points above"); otherwise one
- *    entry per hour, `null` where the hour has no score (input missing / in no
- *    cluster / no prediction) — never 0. An hour with no running row has no
- *    point at all.
- */
+/** Per-kind shape used as `series` (RAW rows; `score` always null) and as `hourly` (one point per clock hour). Hourly values are means of the hour's running rows; `score` is null (never 0) when unscored. */
 export interface IndividualSeries {
     kind: 'individual';
     /** `series`: 0-based dataset row of each point. `hourly`: the first dataset
@@ -294,9 +221,7 @@ export interface IndividualSeries {
     total_points: number;
 }
 
-/** See `IndividualSeries` for the `series` / `hourly` split. As `hourly`:
- *  `actual` = the hour's mean target, `predicted` = the model's answer for the
- *  hour's mean predictors, `residual` = that hour's actual − predicted. */
+/** As `hourly`: `actual` = hour's mean target, `predicted` = model on mean predictors, `residual` = actual - predicted. */
 export interface RelationshipSeries {
     kind: 'relationship';
     rows: number[];
@@ -310,30 +235,14 @@ export interface RelationshipSeries {
     total_points: number;
 }
 
-/**
- * See `IndividualSeries` for the `series` / `hourly` split. As `hourly`:
- * `x` / `y` = the hour's means over every row of the hour, `cluster` = the
- * cluster shared by EVERY row of the hour (each row's own cluster, from its
- * own criteria value), `sd_distance` / `score` of the point (mean x, mean y)
- * against that cluster.
- *
- * An hour whose rows do NOT all share one cluster — rows in two different
- * clusters, or any row with no cluster (criteria outside every range, or
- * criteria missing) among them — has no cluster: `cluster`, `sd_distance` and
- * `score` are all `null` for it (never 0). The hour is still a point here with
- * its mean `x` / `y` and still counts as an hour; it is only unscored. (It is
- * NOT the cluster of the hour's mean criteria value: an hour split between
- * two ranges would otherwise be scored against a cluster the machine was not
- * in.) A model with no criteria sensor has one cluster, so every hour has it.
- */
+/** As `hourly`: x/y = hour means; `cluster` = the cluster shared by EVERY row of the hour, else null with null `sd_distance`/`score` (never 0). No criteria sensor = one cluster. */
 export interface ClusteringSeries {
     kind: 'clustering';
     rows: number[];
     timestamps: string[];
     x: number[];
     y: number[];
-    /** 1-based cluster id. `series`: `null` = the row is in no criteria range.
-     *  `hourly`: `null` = the hour's rows do not all share one cluster. */
+    /** 1-based cluster id; null = row in no range (`series`) or hour whose rows don't share one cluster (`hourly`). */
     cluster: (number | null)[];
     /** Distance to the cluster centre in SD units (`null` until the set points
      *  are valid, and for a row / hour with no cluster). */
@@ -346,27 +255,20 @@ export interface ClusteringSeries {
 
 export type HealthSeries = IndividualSeries | RelationshipSeries | ClusteringSeries;
 
-/** The lowest score of a summary. For the hourly summary: `timestamp` = the
- *  START of that hour, `row` = the first dataset row of that hour. */
+/** Lowest score; hourly: `timestamp` = start of that hour, `row` = its first dataset row. */
 export interface MinScorePoint {
     score: number;
     row: number;
     timestamp: string | null;
 }
 
-/**
- * Summary of the HOURLY scores of the TRAINING hours (scoring periods have
- * their own results in `test_validation`). EVERY count and share here is in
- * HOURS (1-hour points) — the keys keep their old `rows` wording on the wire
- * (`total_rows` is a number of hours); nothing was renamed.
- */
+/** Summary of the TRAINING hours' scores. All counts and shares are in HOURS despite the `rows` key names on the wire. */
 export interface ScoreSummary {
     /** HOURS that got a score. */
     scored: number;
     /** HOURS without one (`total_rows - scored`: an input missing / in no cluster). */
     unscored: number;
-    /** The HOURS the shares are measured against: the training hours (hours
-     *  with at least one training row). Not a row count, despite the name. */
+    /** Training hours (hours with at least one training row) the shares are measured against; not a row count. */
     total_rows: number;
     min_score: MinScorePoint | null;
     /** % of SCORED hours with score < 80. */
@@ -374,8 +276,7 @@ export interface ScoreSummary {
     share_80_100: number | null;
     share_40_80: number | null;
     share_0_40: number | null;
-    /** Always `'hour_count'`: every count and share above is in 1-hour points
-     *  (it was `'row_count'` while the score was computed row by row). */
+    /** Always 'hour_count': counts and shares are 1-hour points. */
     share_basis: 'hour_count';
 }
 
@@ -415,10 +316,7 @@ export interface HealthPreview {
     /** The RAW dataset rows, for the Model fit page. `series.score` is ALWAYS
      *  `null` — read scores from `hourly`. */
     series: HealthSeries;
-    /** The HOURLY points the health score is computed on (same per-kind shape
-     *  as `series`, see `IndividualSeries`): one point per clock hour, every
-     *  value the mean of the hour's running rows. Everything on the Health
-     *  score page reads this. */
+    /** Points the score is computed on (per-kind shape, see `IndividualSeries`); the Health score page reads this. */
     hourly: HealthSeries;
     /** The health score's sampling interval in seconds: `3600`. */
     scoring_interval_secs: number;
@@ -435,15 +333,6 @@ export interface HealthPreview {
     test_validation?: ValidationResult | null;
 }
 
-// ---------------------------------------------------------------------------
-// Error codes (prefix of the rejected string, "CODE: message")
-// ---------------------------------------------------------------------------
 
-/** `NOT_FITTED` — Relationship has no fit in Rust's memory (not trained yet,
- *  dataset reloaded, special sensor recomputed, evicted): re-train.
- *  `NO_DATA` — no rows in scope. `BAD_REQUEST` — sensor missing / field missing.
- *  `STALE_SESSION` — `expected_generation` did not match the loaded dataset.
- *  `VALIDATION` — only from the direct `train_*` commands.
- *  `SIDECAR_OUTDATED` — the bundled Relation model engine is too old for the
- *  request (e.g. it cannot predict test rows): reinstall / update the app. */
+/** `NOT_FITTED`: Relation fit not in Rust memory, re-train. `NO_DATA`: no rows in scope. `BAD_REQUEST`: sensor/field missing. `STALE_SESSION`: generation mismatch. `SIDECAR_OUTDATED`: engine too old, update the app. */
 export type HealthErrorCode = 'NOT_FITTED' | 'NO_DATA' | 'BAD_REQUEST' | 'STALE_SESSION' | 'VALIDATION' | 'SIDECAR_OUTDATED';

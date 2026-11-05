@@ -196,7 +196,7 @@ describe('exportReadiness: items', () => {
             .toMatchObject({ ok: true, status: { sensor: 'SPEED', value: 1200 } });
         const w = readyWorkspace();
         w.failureGroupState!.runningConditionFilters = [];
-        // An old export-only line no longer stands in for it.
+        // The separate runningStatus line does not stand in for the workspace running condition.
         w.failureGroupState!.runningStatus = { sensor: 'SPEED', stopAtOrBelow: '5' };
         const r = exportReadiness({ workspace: w, metadata: META, headers: HEADERS });
         expect(itemOf(r.items, 'running')).toMatchObject({ ok: false, blocking: true, status: null });

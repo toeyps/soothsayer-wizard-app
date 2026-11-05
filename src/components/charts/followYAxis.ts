@@ -1,20 +1,4 @@
-/**
- * A time chart whose Y axis follows the ZOOM WINDOW, but never loses the reference
- * lines drawn on it (user decision 2026-10-16, Workbench Model fit + Health score pages).
- *
- * Those charts used to compute their Y range once, from every point plus every reference
- * line (±1SD / ±3SD, L / H, ±2RMSE, the 80 / 0 points), and keep it: zoomed into a quiet
- * stretch the line was a flat trace at the bottom of a tall axis ("ดูยากมากๆ"). The
- * Dashboard's line chart re-fits Y to what is visible, but there a reference line outside
- * the visible values would leave the plot — so here the range is
- *   the values INSIDE the window  ∪  every reference line,
- * the same rule as the unzoomed range, applied to the visible stretch only.
- *
- * The builder hangs a `FollowYSpec` on the option (`withFollowY`, a non-enumerable key, so
- * ECharts and deep-equality checks never see it); `ResponsiveECharts` attaches
- * `attachFollowY` to the instance. The option is only patched when the rounded range
- * changes, so hovering and small pans cost nothing.
- */
+/** Y axis follows the zoom window but keeps the reference lines: range = values inside the window plus every reference line. `withFollowY` hangs a non-enumerable `FollowYSpec` on the option; `ResponsiveECharts` attaches `attachFollowY`. */
 
 export interface FollowYSpec {
     /** Epoch ms of every point, ascending (the time axis' values). */
@@ -38,8 +22,7 @@ export function withFollowY<T extends object>(option: T, spec: FollowYSpec): T {
     return option;
 }
 
-/** A copy of an option (`{ ...opt, … }`) loses the spec — it is not enumerable. Builders that
- *  copy one pass the copy through this to keep it. */
+/** A copy of an option (`{ ...opt }`) loses the non-enumerable spec; builders that copy pass the copy through this. */
 export function keepFollowY<T extends object>(from: unknown, to: T): T {
     const spec = getFollowY(from);
     return spec ? withFollowY(to, spec) : to;

@@ -323,11 +323,7 @@ describe('usePeriodCounts — answers', () => {
     });
 });
 
-/*
- * End to end against the fake Rust (`helpers/fakeHealthRust.ts`, a port of
- * `period_counts.rs`): the hook's two calls, then the caption and the rows the
- * modal prints from them.
- */
+/* End to end against the fake Rust port of `period_counts.rs`: the hook's two calls, then the caption and rows the modal prints. */
 describe('usePeriodCounts + the fake Rust — the numbers the modal shows', () => {
     // 4 days of 10-minute rows; RUN = 1 during 06:00-17:50 (half of every day).
     const ROWS_PER_DAY = 144;
@@ -356,7 +352,7 @@ describe('usePeriodCounts + the fake Rust — the numbers the modal shows', () =
         expect(result.current.train?.union).toEqual({ rows_in_period: 432, running_rows: 216, running_days: 1.5 }); // days 1-3 once, not 288 + 288
         expect(trainRowModels([D12, D23], BOUNDS, result.current).map(r => r.text)).toEqual(['P1 · 2 d · 1 d running', 'P2 · 2 d · 1 d running']);
         const caption = runningConditionCaption({ trainPeriods: [D12, D23], scoringPeriods: [D4], bounds: BOUNDS, counts: result.current });
-        // Days only — the caption never prints the rows it was counted from (user decision 2026-10-14).
+        // Days only: the caption never prints the rows.
         expect(caption.text).toBe('3 d train (about 1.5 d running time) · 1 d scoring · ≥ 30 d recommended');
         expect(caption.belowRecommended).toBe(true);
     });

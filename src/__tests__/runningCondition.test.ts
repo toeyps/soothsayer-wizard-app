@@ -235,7 +235,7 @@ describe('Custom panel copy (workbench redesign §5)', () => {
     it('summary line: "Custom · own running condition · 1 train · 0 scoring"', () => {
         expect(customSummaryText({ allData: false, conditions: 1, trainPeriods: 1, scoringPeriods: 0 })).toBe('Custom · own running condition · 1 train · 0 scoring');
         expect(customSummaryText({ allData: false, conditions: 0, trainPeriods: 0, scoringPeriods: 0 })).toBe('Custom · running condition not set · 0 train · 0 scoring');
-        // An old "Use all rows" flag is ignored: it no longer counts as a condition.
+        // All data needs no condition.
         expect(customSummaryText({ allData: true, conditions: 0, trainPeriods: 1, scoringPeriods: 1 })).toBe('Custom · all data · 1 train · 1 scoring');
     });
     it('empty states and the panel footnote', () => {
@@ -289,7 +289,7 @@ describe('runningConditionApplyBlock (Apply of the Running-condition settings)',
     it('an invalid scoring period blocks; overlap with train does not; no scoring period does not; a legacy event time does not', () => {
         expect(runningConditionApplyBlock(TRAIN, [tp({ start: 'garbage' })]))
             .toEqual({ kind: 'invalid-test', reason: 'S1 has an invalid start date.', footer: 'Fix S1 before applying', periodNumber: 1 });
-        // An old workspace's event time outside its period used to block Apply; it is ignored now.
+        // An event time outside the period (old workspaces) is ignored.
         expect(runningConditionApplyBlock(TRAIN, [tp({ label: 'problem', eventTime: '2024-12-01T00:00' })])).toBeNull();
         expect(runningConditionApplyBlock(TRAIN, LEGACY_TESTS)).toBeNull();
         // Scoring inside train time (may overlap) - fine.

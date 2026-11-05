@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * QA cross-zone test — ONE running condition (2026-10-26, commits cac87ed +
- * b4b520d; spec: docs/handover/2026-10.md "SPEC FINAL: running condition เดียว").
- *
- * The unit tests pin each half on its own: `workspaceMigrations.test.ts` the
- * conversion, `workspaceManager.test.ts` the read path, `BuildModelWindow.test.tsx`
- * the notice / Apply with a MOCKED workspaceManager. What only shows when the
- * pieces run together is checked here, with BOTH real windows (Dashboard + the
- * Build Model window) on ONE old workspace file:
- *   - the real workspaceManager over an in-memory plugin-fs (the read-path
- *     conversion really runs; every write is a JSON round trip);
- *   - one event bus delivering every emit to every listener (Tauri's global
- *     broadcast), with a switch to DROP the Build Model window's broadcasts so
- *     the Dashboard mirror can go stale;
- *   - Dashboard answers `request-build-model-data` for real.
- * Every content that lands in the workspace file is logged, so "the old set is
- * NEVER written back" is checked on every write, not just the last one.
- */
+/* Cross-window test of the single running condition: real Dashboard and Build Model on one old workspace file; every write is logged. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -122,7 +105,6 @@ import { buildWorkspaceExportRequest } from '../utils/exportReadiness';
 import { trainingScopeFilter } from '../utils/trainingScope';
 import { ALL_TIME_TRAIN, ONE_TEST } from './helpers/trainTestFixture';
 
-// ── fixtures ────────────────────────────────────────────────────────────
 
 const WS_FILE = 'workspaces/ws1.json';
 const HEADERS = ['TAG1', 'TAG2'];
@@ -161,12 +143,7 @@ function completeUnder(fg: any, o: Record<string, unknown>) {
     return m;
 }
 
-/**
- * An old (pre-2026-10-26) workspace: a workspace set with OR, "<", "between"
- * and the export's own saved running status; a Complete Workspace-mode model
- * (i1, TAG1); a Complete Custom model whose own condition is a "between" only
- * (c1, TAG2 -> nothing to keep: must be set again); an old legacy-banner flag.
- */
+/** Old workspace: OR, '<', 'between', saved running status; Complete Workspace and Custom models. */
 function oldWorkspace(extraFg: Record<string, unknown> = {}) {
     const fgBase: any = {
         groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }],
@@ -205,12 +182,7 @@ async function settle(ms = 0) {
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
 
-/**
- * Both windows up. `initial` is what the Dashboard starts with: `'read'` = what
- * the app really passes (App.tsx loads it through `loadWorkspaceData`, i.e.
- * already converted); `'raw'` = the worst case, a Dashboard whose mirror still
- * holds the OLD set (e.g. it was opened by an older build's state).
- */
+/** Both windows up. 'read' = already converted (what the app passes); 'raw' = worst case, Dashboard mirror holds the old set. */
 async function mountBoth(initial: 'read' | 'raw' = 'read') {
     const initialState = initial === 'read' ? await loadWorkspaceData('ws1') : readDisk();
     render(
@@ -267,9 +239,6 @@ afterEach(() => {
     cleanup();
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (1) the old workspace opened with BOTH windows
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(1) an old workspace opened with the Dashboard and the Build Model window both mounted', () => {
     const cases: { initial: 'read' | 'raw'; lost: boolean }[] = [
@@ -347,9 +316,6 @@ describe('(1) an old workspace opened with the Dashboard and the Build Model win
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (2) Got it persists across a Dashboard autosave and a reopen
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) "Got it" sticks', () => {
     it('Got it -> a Dashboard autosave (stale mirror) -> reopen: the notice stays gone and the converted condition stays', async () => {
@@ -377,9 +343,6 @@ describe('(2) "Got it" sticks', () => {
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (3) the file was edited by an OLDER build after the conversion
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(3) a file an older build wrote again (marker null + the old shape)', () => {
     it('is normalised silently on open: no notice, the marker stays null, Complete models whose rows change go Incomplete with set points kept', async () => {
@@ -398,9 +361,6 @@ describe('(3) a file an older build wrote again (marker null + the old shape)', 
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (4) the export's running_status and the training filter are the SAME row
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(4) after the conversion, export running_status and the training filter use the one condition', () => {
     const ONE_WIRE = [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }];
@@ -415,8 +375,7 @@ describe('(4) after the conversion, export running_status and the training filte
         expect(i1.filter?.value_filters).toEqual(ONE_WIRE);
         expect(i1.filter?.combine).toBe('and');
         expect(trainingScopeFilter(ws.failureGroupState!.models[0], ws.failureGroupState!, HEADERS)).toEqual(i1.filter);
-        // The Custom model whose own condition could not be kept has no value filter
-        // (it is blocked from training until it is set again, never "all rows" with an old operator).
+        // A Custom model whose condition could not be kept has no value filter: blocked from training until set again.
         const c1 = req.models.find(m => m.id === 'c1')!;
         expect(c1.filter?.value_filters ?? []).toEqual([]);
         // The running-status sensor is listed with the exported sensors' metadata.
@@ -440,9 +399,6 @@ describe('(4) after the conversion, export running_status and the training filte
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (5) the Custom "needs-set" row of the notice survives a workspace Apply
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(5) a workspace Apply in Build Model, then a Dashboard autosave', () => {
     it('keeps only the Custom model that still needs its own condition in the notice, on disk and on screen', async () => {

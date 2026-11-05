@@ -5,25 +5,13 @@ import * as echarts from 'echarts';
 import { formatDateTime } from '../utils/dateFormat';
 
 const capturedOptions: any[] = [];
-/** Fake echarts instance handed to `onChartReady`, exposing just enough of
- *  the real API (getZr/containPixel/convertFromPixel/dispatchAction) for
- *  the Tag Point and Horizontal Zoom click/drag-handling tests below.
- *  `zrClickHandler`/`zrMouseDownHandler`/`zrMouseMoveHandler`/
- *  `zrMouseUpHandler` capture the listeners LineChart registers via
- *  `getZr().on(...)` so tests can invoke them directly, the same way real
- *  zrender canvas events would. */
+/** Fake echarts instance for `onChartReady`; the zr handlers are captured so tests can fire them like canvas events. */
 let zrClickHandler: ((event: any) => void) | null = null;
 let zrMouseDownHandler: ((event: any) => void) | null = null;
 let zrMouseMoveHandler: ((event: any) => void) | null = null;
 let zrMouseUpHandler: ((event: any) => void) | null = null;
 const mockContainPixel = vi.fn(() => true);
-// `convertFromPixel({ seriesIndex: 0 }, pixel)` resolves through the
-// series' own coordinate system and returns `[xValue, yValue]` in the
-// axis's native units (confirmed against the real installed echarts
-// package -- see LineChart.tsx's comment on the click handler) -- a
-// category INDEX before the axis was switched to 'time', a raw ms
-// TIMESTAMP now. Mocked as an array here so these tests actually exercise
-// that return shape.
+// `convertFromPixel` returns `[xValue, yValue]` in the axis's native units (ms timestamp on the time axis).
 const mockConvertFromPixel = vi.fn(() => [0, 0]);
 const mockDispatchAction = vi.fn();
 const mockZr = {
@@ -48,9 +36,7 @@ const mockChartInstance = {
 vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => {
         capturedOptions.push(props.option);
-        // Mirrors the real component's mount-only effect — calling
-        // onChartReady synchronously during render would trip React's
-        // "setState while rendering a different component" guard.
+        // Mount-only effect like the real component (onChartReady during render trips React's setState guard).
         // eslint-disable-next-line react-hooks/rules-of-hooks
         useEffect(() => { props.onChartReady?.(mockChartInstance); }, []);
         return <div data-testid="chart" />;
@@ -72,25 +58,17 @@ function columnarOf(headers: string[], length: number): ColumnarSeries {
     return { timestamps, series };
 }
 
-/** Epoch ms of an ISO timestamp string -- matches how LineChart.tsx itself
- *  converts `xData` entries (`toMs`) for a time-axis series/markArea/coord,
- *  so tests assert against the same value production code computes rather
- *  than a hardcoded epoch number. */
+/** Epoch ms of an ISO timestamp, as LineChart's `toMs`. */
 function msOf(ts: string): number {
     return new Date(ts).getTime();
 }
 
-/** Pairs a plain value array with `columnar`'s own timestamps, the shape a
- *  time-axis series now needs (`[x_ms, y]` per point) instead of the old
- *  category-axis bare-value array. */
+/** Pairs values with `columnar`'s timestamps as `[x_ms, y]` for the time axis. */
 function pairs(columnar: ColumnarSeries, values: (number | null)[]): (number | null)[][] {
     return values.map((v, i) => [msOf(columnar.timestamps[i]), v]);
 }
 
-/** The Tag Point toggle button specifically — found by its stable `title`
- *  prefix rather than array position, since the toolbox also renders a Zoom
- *  button before it (and a Clear-all button after, once tags exist), so
- *  `.line-chart-tool` order alone isn't a reliable way to find it. */
+/** Finds the Tag Point toggle by its `title` prefix; button order is unreliable. */
 function tagToggle(container: HTMLElement): HTMLElement {
     return container.querySelector('[title^="Tag point"]') as HTMLElement;
 }
@@ -145,8 +123,7 @@ describe('LINE_CHART_COLORS', () => {
 describe('LineChart option building', () => {
     const headers = ['A', 'B', 'C'];
 
-    // Real-app bug: with a dense, fast-swinging sensor on the chart the tooltip fell far behind
-    // the cursor, because every mousemove repainted all the series.
+    // A hover must not repaint all series (the tooltip lagged on dense data); the crosshair has its own layer.
     it('the crosshair is on its own canvas layer and a hover never re-emphasises (repaints) the series — at any data size', () => {
         for (const length of [10, 2001]) {
             render(<LineChart data={[]} columnar={columnarOf(headers, length)} sensors={['A', 'B', 'C']} headers={headers} />);
@@ -191,9 +168,7 @@ describe('LineChart option building', () => {
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={headers} />);
         const { grid, dataZoom } = capturedOptions[capturedOptions.length - 1];
         expect(grid.top).toBe(30);
-        // No slider reservation anymore (the dataZoom 'slider' component was
-        // removed in favour of the toolbox's Horizontal Zoom tool) — just
-        // the x-axis label height + its gap.
+        // No slider reservation: just the x-axis label height plus gap.
         expect(grid.bottom).toBe(30); // 24 + 6
         expect(dataZoom).toHaveLength(1); // just 'inside', no 'slider'
     });
@@ -251,9 +226,7 @@ describe('LineChart option building', () => {
     });
 
     it('yAxis label formatter rounds to at most 3 decimals and drops trailing zeros', () => {
-        // Explicit min/max (widened by a markLine, as above) are raw floats,
-        // not "nice" round numbers -- ECharts would otherwise label them at
-        // full precision (e.g. 7.687984495640254).
+        // Explicit min/max are raw floats; the label formatter must round them.
         const columnar: ColumnarSeries = { timestamps: ['t0'], series: [[10]] };
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
         const [yA] = capturedOptions[capturedOptions.length - 1].yAxis;
@@ -305,7 +278,7 @@ describe('LineChart option building', () => {
     });
 
     describe('time-highlight bands (markArea — a distinct mechanism from markLine above)', () => {
-        // columnarOf(headers, 5) → 2026-01-01T00:00 .. 00:04, one minute apart.
+        // columnarOf(headers, 5): 2026-01-01T00:00 .. 00:04, one minute apart.
         const highlight = { id: 'h1', start: '2026-01-01T00:01:00', end: '2026-01-01T00:03:00', label: 'Startup', color: '#ff0000', enabled: true };
 
         it('attaches a markArea to the first series only, snapped to the nearest plotted timestamps', () => {
@@ -402,8 +375,7 @@ describe('LineChart option building', () => {
             expect(option.series[0].lineStyle.width).toBe(0.8);
             expect(option.series[0].silent).toBe(true);
             expect(option.series[0].emphasis).toEqual({ disabled: true });
-            // 'minmax', never 'lttb': ECharts' lttb drew zoomed lines jumping back months
-            // when a series held a null (bug report 2026-10-30).
+            // Must be 'minmax': lttb drew zoomed lines jumping back when a series held a null.
             expect(option.series[0].sampling).toBe('minmax');
         });
     });
@@ -412,9 +384,7 @@ describe('LineChart option building', () => {
         it('a rerender with the SAME time range (identical first/last timestamp and point count) does not force start/end -- an in-progress pan/zoom is left alone', () => {
             const columnar = columnarOf(['A'], 5);
             const { rerender } = render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
-            // Some other, unrelated prop change (mirrors a real re-render
-            // cause like tagging a point or resizing a panel) -- same
-            // columnar object, so the range identity is unchanged.
+            // An unrelated prop change keeps the same columnar object, so the range identity is unchanged.
             rerender(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} hideYSplitLine />);
             const { dataZoom } = capturedOptions[capturedOptions.length - 1];
             expect(dataZoom[0].start).toBeUndefined();
@@ -517,8 +487,7 @@ describe('LineChart option building', () => {
             expect(formatter([])).toBe('');
         });
 
-        // The rows come from the chart's own data at the hovered time (`axisValue`), not from
-        // ECharts' `params` — see 'lists every shown sensor' below.
+        // Rows come from the chart's data at the hovered `axisValue`, not ECharts' `params`.
         const T0 = '2026-01-01T00:00:00';
         const one = (value: number | null): ColumnarSeries => ({ timestamps: [T0, '2026-01-01T00:01:00'], series: [[value, 99]] });
 
@@ -567,9 +536,7 @@ describe('LineChart option building', () => {
             expect(html).not.toMatch(/\(A\)/);
         });
 
-        // Real-app bug: with 3 sensors on the chart the tooltip showed one row. ECharts only
-        // passes the series that still have a point at exactly the hovered time, and the
-        // per-series point thinning keeps a different subset for each sensor.
+        // ECharts passes only series with a point at the exact hovered time, so the tooltip would show one row.
         it('lists every shown sensor at the hovered time, even when ECharts passes only one of them', () => {
             const columnar: ColumnarSeries = {
                 timestamps: [T0, '2026-01-01T00:01:00', '2026-01-01T00:02:00'],
@@ -632,8 +599,7 @@ describe('LineChart option building', () => {
         });
     });
 
-    // Real-app bug: week ticks and month-start ticks of the time axis landed a day or two apart
-    // and their dates were printed on top of each other.
+    // Colliding labels (week and month-start ticks a day or two apart) are hidden.
     it('xAxis labels that would collide are hidden instead of overprinted', () => {
         render(<LineChart data={[]} columnar={columnarOf(['A'], 3)} sensors={['A']} headers={['A']} />);
         expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.hideOverlap).toBe(true);
@@ -643,11 +609,9 @@ describe('LineChart option building', () => {
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
         const { formatter } = capturedOptions[capturedOptions.length - 1].xAxis.axisLabel;
-        // A time axis hands its formatter a numeric ms value, not the raw
-        // date string a category axis' shared `xAxis.data` used to carry.
+        // A time axis passes the formatter a numeric ms value, not a date string.
         expect(formatter(msOf('2026-03-09T00:00:00'))).toBe('2026/03/09');
-        // Zoomed inside a day the ticks are not midnights: each shows its time, so they do not
-        // all read the same date (the same rule as the Workbench charts' axis).
+        // Zoomed inside a day, ticks show their time so they don't all read the same date.
         expect(formatter(msOf('2026-03-09T06:00:00'))).toBe('2026/03/09 06:00');
         expect(formatter(msOf('2026-03-09T06:00:30'))).toBe('2026/03/09 06:00:30');
     });
@@ -670,9 +634,7 @@ describe('LineChart option building', () => {
     });
 
     it('colors the axis with the fixed dark palette', () => {
-        // Visual refresh: recoloured from a leftover slate-blue
-        // palette to match the app's own `--text-secondary` token value —
-        // see LineChart.tsx's matching comment.
+        // Colour matches the app's `--text-secondary` token.
         const columnar = columnarOf(['A'], 3);
         render(<LineChart data={[]} columnar={columnar} sensors={['A']} headers={['A']} />);
         expect(capturedOptions[capturedOptions.length - 1].xAxis.axisLabel.color).toBe('#8c8c94');
@@ -746,10 +708,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(markPoint.data[0].coord[0]).toBe(msOf(columnar.timestamps[2]));
     });
 
-    // The values of a tag are NOT drawn on the chart any more (a box per tag covered the next
-    // tag's box as soon as two tags were close — real-app report 2026-10-12): the chart keeps a
-    // dot in the tag's colour + a dashed line; the values are in the tag table. The dot carries
-    // NO number (user, real app 2026-10-12: the digit could not be read — keep only the colour).
+    // A chart tag is a coloured dot plus a dashed line, no number; values are in the tag table.
     it('on the chart a tag is only a dot in its colour (no number, no value box) plus a dashed line at its time', () => {
         const columnar = columnarOf(headers, 5);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
@@ -920,8 +879,7 @@ describe('Tag Point (click a point on the chart to compare it with others)', () 
         expect(table.textContent).not.toContain('Δ');
     });
 
-    // User decision 2026-10-14: with the number gone a tag is told apart by colour alone, so the
-    // columns run left → right in TIME order — the same order as the dots on the chart.
+    // Table columns run in time order, matching the dots; a tag is told apart by colour alone.
     it('the table columns are in TIME order, not tagging order: a later point tagged FIRST is still the right-hand column, and keeps its colour', () => {
         const columnar = columnarOf(headers, 6);
         const { container } = render(<LineChart data={[]} columnar={columnar} sensors={headers} headers={headers} />);
@@ -1090,8 +1048,7 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
     });
 
     it('each column head names the SAME instant as its marker and its values: the stored timestamp snapped to the nearest plotted point, re-resolved after a refetch', () => {
-        // A tag stored at 00:01:20 (e.g. pinned on a finer aggregation) on a
-        // chart whose points are 00:00, 00:01, ... -> both resolve to 00:01.
+        // A tag stored at 00:01:20 on a chart with points at 00:00, 00:01, ... resolves to 00:01.
         const tag = [{ id: 'tx', timestamp: '2026-01-01T00:01:20', color: '#aa0000' }];
         const { rerender } = render(<LineChart data={[]} columnar={columnarOf(headers, 5)} sensors={headers} headers={headers} lineTaggedPoints={tag} />);
         const rowText = () => within(screen.getByRole('list', { name: 'Tagged points' })).getAllByRole('listitem')[0].textContent;
@@ -1101,8 +1058,7 @@ describe('Tag Point -- removing ONE tag from the tag list (customer request 2026
         expect(markerMs()).toBe(msOf('2026-01-01T00:01:00'));
         expect(firstValue()).toBe((columnarOf(headers, 5).series[0][1] as number).toFixed(3));
 
-        // Refetch onto a coarser 5-minute grid: the marker snaps to 00:00,
-        // and the list must follow it rather than keep the stored 00:01:20.
+        // On a coarser 5-minute grid the marker snaps to 00:00 and the list must follow it, not keep 00:01:20.
         const coarse: ColumnarSeries = {
             timestamps: ['2026-01-01T00:00:00', '2026-01-01T00:05:00', '2026-01-01T00:10:00'],
             series: headers.map(() => [1, 2, 3]),

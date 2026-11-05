@@ -1,10 +1,6 @@
 import { useEffect, useState } from "react";
 
-/**
- * Dynamically detects whether the current OS is macOS.
- * Prefers Tauri's `@tauri-apps/plugin-os` at runtime; falls back to
- * `navigator.userAgentData` / `navigator.platform` / `navigator.userAgent`.
- */
+/** Detects macOS: prefers `@tauri-apps/plugin-os`, falls back to `navigator.userAgentData` / `platform` / `userAgent`. */
 export function useIsMacOS(): boolean {
     const [isMacOS, setIsMacOS] = useState<boolean>(false);
 

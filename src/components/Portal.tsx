@@ -3,28 +3,7 @@ import { createPortal } from 'react-dom';
 
 const PORTAL_ROOT_ID = 'wizard-portal-root';
 
-/**
- * Finds (or lazily creates) the single shared container every `Portal`
- * instance in this window renders into. Appended directly to
- * `document.body` -- a SIBLING of `#root`, not a descendant of it -- so
- * anything rendered through it escapes every ancestor's `overflow`,
- * `transform`/`contain` or `position` context, which is what popovers
- * opened from inside a scrollable list need (colour picker, pin Y-axis,
- * alarm setpoints).
- *
- * This app is a Tauri v2 multi-window app, but each window (`main`,
- * `build-model`, `add-sensor`) is its own separate HTML document with its
- * own `document` / `document.body` (see `src/main.tsx` -- one
- * `ReactDOM.createRoot` per window, picked by a `?window=` URL param), so
- * "append to `document.body`" never reaches across windows -- a Portal
- * used inside the `build-model` window only ever mounts into THAT
- * window's own body, same as `#root` does.
- *
- * One container is reused across every `Portal` instance mounted at the
- * same time (checked by id, not created per-instance) so popovers stack
- * in the DOM in mount order under one single top-level node, instead
- * of each adding its own loose `<div>` directly on `<body>`.
- */
+/** Shared container every `Portal` renders into, a sibling of `#root` in `document.body` so popovers escape ancestors' overflow/transform/position. Each window is its own document; one container is reused (found by id). */
 function getOrCreatePortalRoot(): HTMLElement {
     let el = document.getElementById(PORTAL_ROOT_ID);
     if (!el) {
@@ -39,33 +18,10 @@ interface PortalProps {
     children: ReactNode;
 }
 
-/**
- * Thin wrapper around `ReactDOM.createPortal`. Renders `children` into the
- * shared `#wizard-portal-root` container described above instead of in
- * place in the component tree.
- *
- * Usage:
- * ```tsx
- * {open && (
- *     <Portal>
- *         <div className="popover-surface" style={{ position: 'absolute', top, left }}>
- *             ...
- *         </div>
- *     </Portal>
- * )}
- * ```
- *
- * The portal root is created lazily on first mount (not at module load),
- * so importing this file has no side effect in a non-DOM environment
- * (e.g. a test file that imports other exports from this module without
- * ever rendering `<Portal>`).
- */
+/** Renders `children` into the shared `#wizard-portal-root` via `ReactDOM.createPortal`; the root is created lazily on first mount so importing has no DOM side effect. */
 export default function Portal({ children }: PortalProps) {
     const [container, setContainer] = useState<HTMLElement | null>(null);
-    // Only used to avoid calling getOrCreatePortalRoot() twice if effects
-    // ever re-run (e.g. React StrictMode's dev-only double-invoke) --
-    // getOrCreatePortalRoot() is already idempotent via getElementById, so
-    // this is a belt-and-suspenders guard, not load-bearing correctness.
+    // Guard against calling getOrCreatePortalRoot() twice when effects re-run (StrictMode); it is already idempotent.
     const mountedRef = useRef(false);
 
     useEffect(() => {

@@ -28,10 +28,7 @@ function findColumnIndex(headers: string[], candidates: string[]): number | null
   return null;
 }
 
-/** Parses a mapping-CSV cell as an alarm setpoint. Empty/whitespace-only
- *  cells and anything that doesn't parse as a finite number come back as
- *  `undefined` — "no value", not 0 — so the Dashboard's "only show what
- *  exists" checkbox list has something real to check for. */
+/** Parses a mapping-CSV cell as an alarm setpoint; empty or non-finite = `undefined` ('no value', not 0). */
 function parseAlarmValue(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const trimmed = raw.trim();
@@ -40,8 +37,7 @@ function parseAlarmValue(raw: string | undefined): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-/** Build SensorMetadata[] from mapping data + result. Exported for reuse by the
- *  Recent Workspace click flow in `DataUploadPage.handleLoadWorkspace`. */
+/** Builds `SensorMetadata[]` from mapping data; exported for `DataUploadPage.handleLoadWorkspace`. */
 export function buildSensorMetadataFromMapping(
   mappingData: MappingData,
   mappingResult: MappingResult,
@@ -85,8 +81,7 @@ export function useMappingData(): UseMappingDataReturn {
   const [mappingResult, setMappingResult] = useState<MappingResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Latest apply wins: the result decides whether the Import page may continue,
-  // so one computed for an older dataset or file must never land late.
+  // Latest apply wins: it decides whether Import may continue, so a result for an older dataset or file must not land late.
   const applySeqRef = useRef(0);
   // Latest pick wins: "Remove" stays clickable while a file loads, and a new pick can follow it.
   const fileSeqRef = useRef(0);

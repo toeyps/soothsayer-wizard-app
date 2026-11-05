@@ -11,24 +11,12 @@ import { toTestPeriodsWire } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
 import { trainingScopeFilter } from './trainingScope';
 
-/**
- * Pure builders for the health-score command `compute_health_preview`.
- *
- * They take the model the UI is currently looking at (pass the DRAFT-merged
- * model when there are unsaved edits, exactly like Train does), the workspace
- * slice (for the Workspace/Custom running condition), the dataset headers and
- * the set points the user is editing (a draft; nothing here reads
- * `model.healthSetPoints` unless the caller passes that same value in).
- */
+/** Pure builders for `compute_health_preview`. Pass the draft-merged model when there are unsaved edits, like Train; nothing reads `model.healthSetPoints` unless the caller passes it in. */
 
-/** Default cap on a series' points — same figure the Workbench's Train asks
- *  `preview_relationship_model` for, so Train's bounded `health_preview` and a
- *  later `compute_health_preview` have the same resolution. */
+/** Default cap on a series' points; the same Train asks `preview_relationship_model` for, so both have the same resolution. */
 export const HEALTH_DEFAULT_MAX_POINTS = 4000;
 
-/** Convert the model's camelCase set points into the snake_case object Rust
- *  reads. Only the keys of the model's own kind are filled; a missing /
- *  wrong-kind value gives `{}` (Rust then reports every field as `required`). */
+/** Model camelCase set points -> snake_case for Rust (own kind only); missing or wrong kind gives `{}`, so Rust reports every field `required`. */
 export function healthSetPointsToWire(
     kind: FailureModel['kind'],
     sp: HealthSetPoints | null | undefined,
@@ -49,18 +37,12 @@ export function healthSetPointsToWire(
     }
 }
 
-/** The key a Relationship fit is cached under in Rust. It contains the model's
- *  train fingerprint (target, predictors, stiffness, the effective training
- *  scope ...), so ANY change that would change the fit changes the key — Rust
- *  deliberately ignores `filter` for Relationship, so reusing one key across
- *  different scopes would silently serve stale data. */
+/** Rust cache key of a Relationship fit; includes the train fingerprint because Rust ignores `filter` for Relationship, so a key shared across scopes would serve stale data. */
 export function relationshipCacheKey(model: FailureModel, fg: RunningConditionFg): string {
     return `${model.id}::${computeTrainFingerprint(model, fg)}`;
 }
 
-/** λ for LinearGAM, as the Workbench sends it to `preview_relationship_model`
- *  (`relStiffness` itself; only a missing/non-finite value falls back to the
- *  Standard preset). */
+/** λ sent to `preview_relationship_model`: `relStiffness`, falling back to the Standard preset when missing or non-finite. */
 export function relationshipLambda(model: FailureModel): number {
     return typeof model.relStiffness === 'number' && Number.isFinite(model.relStiffness)
         ? model.relStiffness
@@ -86,9 +68,7 @@ function clusteringFields(model: FailureModel) {
     };
 }
 
-/** Why a model cannot be previewed/exported yet (a required sensor is missing),
- *  or null. Mirrors what Rust would reject with `BAD_REQUEST`, so the UI never
- *  fires a call that cannot succeed. */
+/** Why a model can't be previewed/exported yet (a required sensor is missing), or null; mirrors Rust's `BAD_REQUEST`. */
 export function healthInputsMissing(model: FailureModel): string | null {
     if (model.kind === 'individual') return nonEmpty(model.targetSensor) ? null : 'Pick the target sensor.';
     if (model.kind === 'relationship') {
@@ -101,16 +81,10 @@ export function healthInputsMissing(model: FailureModel): string | null {
     return (model.numClusters ?? 3) > 1 && !nonEmpty(model.criteriaSensor) ? CLUSTERS_NEED_CRITERIA : null;
 }
 
-/** A Clustering model with 2+ clusters needs a criteria sensor to split its rows (Rust rejects
- *  `n_clusters > 1` without one). One message for every place that checks it. */
+/** Clustering with 2+ clusters needs a criteria sensor (Rust rejects `n_clusters > 1` without one); one message for every check. */
 export const CLUSTERS_NEED_CRITERIA = 'Pick a criteria sensor for 2+ clusters (or set Clusters to 1)';
 
-/** The model's EFFECTIVE scoring periods (workspace list in Workspace mode,
- *  its own `customTestPeriods` in Custom mode) as the `test_periods` wire list
- *  — start / end only — or `undefined` when there is none to send (invalid
- *  ones are dropped). Scoring periods are NOT part of the train fingerprint /
- *  Relationship cache key — changing them re-scores against the same cached
- *  fit, no re-train. */
+/** The model's effective scoring periods (workspace list or its own `customTestPeriods`) as the `test_periods` wire list, or `undefined` if none; invalid ones are dropped. Not in the train fingerprint: changing them re-scores the cached fit. */
 export function testPeriodsWireFor(model: FailureModel, fg: RunningConditionFg): TestPeriodWire[] | undefined {
     const wire = toTestPeriodsWire(effectiveRunningCondition(model, fg).testPeriods);
     return wire.length > 0 ? wire : undefined;
@@ -138,11 +112,7 @@ export interface HealthPreviewRequestOptions extends HealthRequestOptions {
     includeOutOfScope?: boolean;
 }
 
-/**
- * Build the `compute_health_preview` request for one model, or `null` when a
- * required sensor is missing. Optional fields that are not set are omitted
- * (not `undefined`-valued keys), so `JSON.stringify(request)` is a stable key.
- */
+/** Builds the `compute_health_preview` request, or `null` if a required sensor is missing. Unset optional fields are omitted so `JSON.stringify(request)` is a stable key. */
 export function buildHealthPreviewRequest(opts: HealthPreviewRequestOptions): HealthPreviewRequest | null {
     const { model, fg, headers } = opts;
     if (healthInputsMissing(model) !== null) return null;

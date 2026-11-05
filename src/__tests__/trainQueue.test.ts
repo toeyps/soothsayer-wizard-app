@@ -39,8 +39,7 @@ const it_ = (id: string, state: TrainQueueItem['state'], over: Partial<TrainQueu
 });
 
 describe('preflightReason', () => {
-    // SPEC workbench-redesign §6: a can't-train reason NAMES the missing setting and
-    // stands on a line of its own (under "Skipped", or as a menu row's state line).
+    // A can't-train reason names the missing setting and stands on its own line.
     it('replaces the generic "required fields above" text with the NAME of the missing setting, then "(+N more)"', () => {
         expect(preflightReason(REQUIRED_FIELDS_BLOCK_REASON, { missing: ['Add at least 1 predictor'] }))
             .toEqual({ text: 'Add at least 1 predictor', fix: 'settings' });
@@ -78,7 +77,7 @@ describe('preflightReason', () => {
 
     it('duplicate model name (project-wide since 2026-10-20) -> named, and Fix goes to the settings', () => {
         expect(preflightReason(WORKSPACE_DUPLICATE_NAME_REASON)).toEqual({ text: 'Model name already used by another model in this project', fix: 'settings' });
-        // the old same-sensor wording is no longer a mapped reason
+        // the same-sensor wording is not a mapped reason
         expect(preflightReason('Model name is already used by another model of this sensor').text).not.toMatch(/already used by another model in this project/);
     });
 
@@ -107,15 +106,13 @@ describe('preflightReason', () => {
 describe('the reason texts mapped above still exist in the Build Model window', () => {
     // The mapping matches on exact text; if a wording changes there, update the map here.
     const src: string = readFileSync('src/components/windows/BuildModelWindow.tsx', 'utf8');
-    // The generic "required fields" text is no longer a second literal there: the window
-    // uses THIS module's constant (and names the missing setting away from the form).
+    // The window uses this module's constant for the generic reason, not its own copy of the text.
     it('the window uses the shared REQUIRED_FIELDS_BLOCK_REASON, not its own copy of the text', () => {
         expect(src).toContain('return REQUIRED_FIELDS_BLOCK_REASON;');
         expect(src).not.toContain(REQUIRED_FIELDS_BLOCK_REASON);
         expect(src).toContain('missingSettingsText(missingItems(m))');
     });
-    // 2026-10-20: model names are unique across the PROJECT; the window uses the shared
-    // `WORKSPACE_DUPLICATE_NAME_REASON` (utils/modelNames.ts), not a copy of its text.
+    // Model names are unique across the project; the window uses the shared `WORKSPACE_DUPLICATE_NAME_REASON`, not a copy.
     it('the window blocks a duplicate name with the shared WORKSPACE_DUPLICATE_NAME_REASON', () => {
         expect(src).toContain('WORKSPACE_DUPLICATE_NAME_REASON');
         expect(src).not.toContain(`'${WORKSPACE_DUPLICATE_NAME_REASON}'`);
@@ -279,7 +276,7 @@ describe('trainButtonsBlockedReason', () => {
     it('stale first, then running condition, then nothing ready', () => {
         expect(trainButtonsBlockedReason({ ...base, stale: true, runningConditionSet: false })).toBe(TRAIN_STALE_MESSAGE);
         expect(trainButtonsBlockedReason({ ...base, runningConditionSet: false })).toBe(TRAIN_NEEDS_RUNNING_CONDITION);
-        // the step bar is gone: the reason no longer ends "(Step 1)"
+        // the reason carries no step number
         expect(TRAIN_NEEDS_RUNNING_CONDITION).toBe('Set the running condition first.');
         expect(trainButtonsBlockedReason({ ...base, readyCount: 0 })).toBe(TRAIN_NOTHING_READY);
         expect(trainButtonsBlockedReason(base)).toBeNull();

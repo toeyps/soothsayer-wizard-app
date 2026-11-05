@@ -5,28 +5,13 @@ import { formatDataStamp } from '../periodDisplay';
 import { TEST_SCORING_ISSUE_CODES } from '../../../utils/trainTestValidation';
 import { scoringIssueMessage } from '../../../utils/timePeriods';
 
-/*
- * Pure helpers of the Health score page:
- * what the Checks card shows, which input is "required" / "error", the
- * Valid / Not valid / Incomplete verdict, whether the saved files are out of date
- * and the hover read-out.
- *
- * The RULES are Rust's (`health_score.rs::validate_*`): nothing here decides
- * whether a set point is acceptable. It only presents the `validation` list
- * `compute_health_preview` returns.
- */
+/* Pure helpers of the Health score page: they present the `validation` list from `compute_health_preview`; the rules are Rust's. */
 
-// ---------------------------------------------------------------------------
-// Verdict
-// ---------------------------------------------------------------------------
 
-/** `valid`  = Rust says the score can be calculated.
- *  `needs`  = nothing wrong yet, but some set point is still empty ("Incomplete").
- *  `bad`    = at least one entered value is rejected ("Not valid"). */
+/** `valid` = Rust says the score can be calculated; `needs` = a set point still empty (Incomplete); `bad` = a value rejected (Not valid). */
 export type HealthVerdict = 'valid' | 'needs' | 'bad';
 
-/** The verdict of a preview, or `null` when there is nothing to judge (no data,
- *  or a not-valid answer that carries no issue to explain it). */
+/** Verdict of a preview, or null when there is nothing to judge (no data, or not valid with no issue to explain). */
 export function healthVerdict(data: HealthPreview | null | undefined): HealthVerdict | null {
     if (!data) return null;
     if (data.valid) return 'valid';
@@ -44,18 +29,8 @@ export function verdictOfIssues(issues: readonly HealthIssue[]): HealthVerdict |
     return blocking.every(i => i.code === 'required') ? 'needs' : 'bad';
 }
 
-// ---------------------------------------------------------------------------
-// Set-point input text
-// ---------------------------------------------------------------------------
 
-/**
- * The text an input shows for a stored set point: the value at its FULL
- * precision (rounding would re-open a stored 4e-7 as "0" while the model and
- * the exported file keep the real number).
- * `Number(formatSetPointText(x)) === x` for every finite `x`: a plain
- * decimal when that round-trips (0.0000004, not "4e-7", reads better in a box
- * a person types in), otherwise the shortest exact form JavaScript gives.
- */
+/** Input text of a stored set point at full precision (`Number(text) === v`): a plain decimal when it round-trips, else the shortest exact form. */
 export function formatSetPointText(v: number): string {
     const s = String(v);
     if (!/e/i.test(s)) return s;
@@ -63,9 +38,6 @@ export function formatSetPointText(v: number): string {
     return Number(plain) === v ? plain : s;
 }
 
-// ---------------------------------------------------------------------------
-// Checks card
-// ---------------------------------------------------------------------------
 
 export interface CheckLine {
     key: string;
@@ -78,9 +50,7 @@ export interface CheckLine {
     warning?: boolean;
 }
 
-/** The four Relation-model points: ONE name per point everywhere the page names it itself
- *  (the score ruler's ticks, its red markers, the collapsed Checks line), listed in RULER
- *  order — low side first, left to right. (Rust's own sentences keep Rust's wording.) */
+/** One name per Relation-model point wherever the page names it, in ruler order (low side first). Rust's sentences keep Rust's wording. */
 export const REL_POINT_LABEL: Record<string, string> = {
     residual_at_0_lower: '0 low',
     residual_at_80_lower: '80 low',
@@ -89,10 +59,7 @@ export const REL_POINT_LABEL: Record<string, string> = {
 };
 const REL_POINT_ORDER = Object.keys(REL_POINT_LABEL);
 
-/** Rust's issues as Checks lines. Relationship: two or more `required` issues for
- *  its four points collapse into ONE line ("Enter 4 empty points: 0 low, 80 low, ...").
- *  `testNumbers` is `testPeriodsWirePlan(...).numbers` of the scoring periods that
- *  were sent (see `scoringIssueMessage`). */
+/** Rust issues as Checks lines; 2+ `required` relationship points collapse into one line. `testNumbers` comes from `testPeriodsWirePlan`. */
 export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly HealthIssue[], testNumbers?: readonly number[] | null): CheckLine[] {
     const tone = (i: HealthIssue): 'need' | 'bad' => (i.code === 'required' || i.severity === 'warning' ? 'need' : 'bad');
     const lines: CheckLine[] = [];
@@ -101,9 +68,7 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
         ? issues.filter(i => i.code === 'required' && i.field in REL_POINT_LABEL)
         : [];
     issues.forEach((i, n) => {
-        // "The health score could not be calculated" is about the score, not the set
-        // points: the chart card shows it (in the score chart's place, or as a notice
-        // above the charts), not Checks.
+        // 'Could not be calculated' is about the score, not the set points: the chart card shows it, not Checks.
         if (TEST_SCORING_ISSUE_CODES.includes(i.code)) return;
         if (relRequired.length > 1 && relRequired.includes(i)) {
             if (collapsed) return;
@@ -119,16 +84,13 @@ export function buildCheckLines(kind: HealthPreview['kind'], issues: readonly He
             });
             return;
         }
-        // An issue about one scoring period names it by the S-number the user sees
-        // (Rust numbers the periods it RECEIVED — invalid ones are not sent).
+        // Name a scoring-period issue by the user's S-number (Rust numbers the periods it received).
         lines.push({ key: `${i.code}:${i.field}:${n}`, tone: tone(i), text: scoringIssueMessage(i, testNumbers), ...(i.severity === 'warning' ? { warning: true } : {}) });
     });
     return lines;
 }
 
-/** How an input should look, from the issues that name it. `required` wins over
- *  `error` only when it is the only kind present (an empty field cannot also be
- *  "wrong"). */
+/** How an input looks from the issues naming it; `required` wins over `error` only when it is the only kind. */
 export type FieldState = 'required' | 'error' | null;
 
 export function fieldState(issues: readonly HealthIssue[], ...fields: string[]): FieldState {
@@ -141,9 +103,6 @@ export function fieldState(issues: readonly HealthIssue[], ...fields: string[]):
  *  definition in `utils/healthSetPoints.ts`. */
 export { sameHealthSetPoints as sameSetPoints } from '../../../utils/healthSetPoints';
 
-// ---------------------------------------------------------------------------
-// Hover read-out
-// ---------------------------------------------------------------------------
 
 /** Index of the point nearest to `t` (epoch ms) in an ASCENDING list. */
 export function nearestIndex(ms: readonly number[], t: number): number {
@@ -169,13 +128,7 @@ function parsedStamps(timestamps: readonly string[]): number[] | null {
     return ms;
 }
 
-/**
- * The index of the point the pointer is on, from an ECharts `updateAxisPointer`
- * event (`axesInfo[].value` = epoch ms on a time axis, the category index
- * otherwise). On the Health score page `timestamps` are the hour starts of
- * `HealthPreview.hourly`. `null` when the event carries no X value (pointer left
- * the chart).
- */
+/** Index of the point under the pointer from an ECharts `updateAxisPointer` event; null when the event has no X value. */
 export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly string[]): number | null {
     const info = (event as { axesInfo?: { axisDim?: string; value?: unknown }[] } | null)?.axesInfo;
     const x = info?.find(a => a.axisDim === 'x') ?? info?.[0];
@@ -188,25 +141,17 @@ export function hoverIndexFromAxisEvent(event: unknown, timestamps: readonly str
 export interface Readout {
     /** The START of the hour, in the app's date format ("2026/02/09 23:00:00"). */
     time: string;
-    /** "1 h avg" (Individual: the hour's mean value) | "residual" (Relation model:
-     *  the hour's residual) | null (Clustering shows no value). */
+    /** '1 h avg' (Individual), 'residual' (Relation model), null (Clustering shows no value). */
     valueLabel: '1 h avg' | 'residual' | null;
     value: number | null;
     score: number | null;
 }
 
-/**
- * What the read-out shows for point `idx` of the HOURLY series
- * (`HealthPreview.hourly`: one point per clock hour, every value the mean of the
- * hour's running rows). `null` for an index outside it.
- */
+/** Read-out for point `idx` of the HOURLY series (one point per clock hour); null when out of range. */
 export function readoutAt(hourly: HealthSeries, idx: number | null): Readout | null {
     if (idx === null || idx < 0 || idx >= hourly.timestamps.length) return null;
     const score = hourly.score ? (hourly.score[idx] ?? null) : null;
-    // The hour's START in the app's one date format ("2026/02/09 23:00:00" — a data
-    // row's time, always with seconds). Rust labels an hour `2026-02-09T23:00:00`
-    // whatever the CSV's own timestamp text looks like; `formatDataStamp` reads that
-    // form from the text's own wall-clock parts (never shifted to another time zone).
+    // Hour start in the app's date format; Rust labels hours `YYYY-MM-DDTHH:00:00`, read from wall-clock parts (no time zone shift).
     const time = hourly.timestamps[idx] ? formatDataStamp(hourly.timestamps[idx]) : `row ${hourly.rows[idx] ?? idx}`;
     if (hourly.kind === 'individual') return { time, valueLabel: '1 h avg', value: hourly.value[idx] ?? null, score };
     if (hourly.kind === 'relationship') return { time, valueLabel: 'residual', value: hourly.residual[idx] ?? null, score };
@@ -217,21 +162,14 @@ export function readoutAt(hourly: HealthSeries, idx: number | null): Readout | n
  *  "2026/02/09 23:00:00 · 1 h avg 4.2 bar · score 93". */
 export function readoutText(r: Readout | null, unit: string): string {
     if (!r) return '';
-    // Every hourly point had running rows (an hour without any has no point), so a missing
-    // score means the hour could not be scored (rows in more than one cluster, no prediction,
-    // set points not valid) — never "not running".
+    // Every hourly point has running rows, so a missing score means the hour could not be scored, never 'not running'.
     if (r.score === null) return `${r.time} · no score`;
     const v = r.valueLabel && r.value !== null ? `${r.valueLabel} ${fmtNum(r.value)}${unit ? ` ${unit}` : ''} · ` : '';
     return `${r.time} · ${v}score ${Math.round(r.score)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Stepper (Clustering outer ring)
-// ---------------------------------------------------------------------------
 
-/** Step of the outer-ring "-" / "+" buttons: half an SD. The ring must stay
- *  above 3 (Rust rejects <= 3), so "-" never goes below 3.5 and an empty field
- *  starts at 4 (the first quick button). */
+/** Outer-ring step is 0.5 SD; the ring must stay above 3 (Rust rejects <= 3), so '-' stops at 3.5 and an empty field starts at 4. */
 export const RING_STEP = 0.5;
 export const RING_QUICK = [4, 5, 6, 7] as const;
 const RING_FLOOR = 3.5;

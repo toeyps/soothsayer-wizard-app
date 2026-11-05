@@ -21,7 +21,7 @@ describe('describeRecipe', () => {
         expect(describeRecipe(single('sqrt', 0))).toBe('sqrt(TAG1)');
     });
 
-    // The decimal count used to be dropped (`round(TAG1)` for every N).
+    // The decimal count is part of the description.
     it('"Round to decimals" includes how many decimals it keeps', () => {
         expect(describeRecipe(single('round', 0))).toBe('round(TAG1) to 0 decimals');
         expect(describeRecipe(single('round', 1))).toBe('round(TAG1) to 1 decimal');

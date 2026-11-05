@@ -6,17 +6,7 @@ import { roundExpression, splitRoundResult, withRoundResult } from './formulaRou
 import { numberValue } from './formulaCheck';
 import { insertPiece, type FormulaEdit } from './formulaFixes';
 
-/**
- * Quick build -- the selection-aware way to START a special-sensor formula.
- * Pure generators: given the picked sensors and the chosen
- * options they return the formula TEXT (shown in the card's footer before
- * anything is committed) or, for Average / Median, the aggregate BLOCK.
- *
- * Every sensor is written by the shared brace rule (`sensorRef`, the same as
- * Rust's `sensor_ref_token`); rounding is the engine form
- * `round(X * 10^N) / 10^N` (`formulaRounding.ts`); a block rounds with
- * `multiOp.decimals`, never a `round()` wrap.
- */
+/** Pure generators returning formula text or, for Average/Median, the aggregate block. Sensors follow Rust `sensor_ref_token` (`sensorRef`); a block rounds via `multiOp.decimals`, not a `round()` wrap. */
 
 export type QuickNumberOp = '+' | '-' | '*' | '/' | '^';
 /** The transforms the card offers (`log10` = log₁₀; `sqrt` = √). */
@@ -31,8 +21,7 @@ export interface QuickFormula {
     /** Has an operator outside every bracket: "Insert at cursor" brackets it
      *  when the editor already has text (`insertQuickPiece`). */
     hasTopLevelOperator: boolean;
-    /** False while an option still needs input (the number, the input sensor):
-     *  the footer shows the text dimmed and the buttons stay disabled. */
+    /** False while an option still needs input: the footer text is dimmed and the buttons stay disabled. */
     ready: boolean;
     /** Why it is not ready (or a note), for the footer. */
     hint: string | null;
@@ -72,8 +61,7 @@ const formula = (text: string, ready = true, hint: string | null = null): QuickF
     kind: 'formula', formula: text, hasTopLevelOperator: hasTopLevelOperator(text), ready, hint,
 });
 
-/** A typed number as a formula operand: a negative one is bracketed so
- *  `$A - (-5)` never reads as `$A --5`. Null when it is not a number. */
+/** A negative number is bracketed so `$A - (-5)` never reads as `$A --5`; null when not a number. */
 export function numberOperand(value: string): string | null {
     const v = value.trim();
     const neg = v.startsWith('-');
@@ -105,8 +93,7 @@ export type QuickCombine = null | 'sum' | 'mean' | 'median' | 'spread' | 'absdif
 export interface QuickMultiChoice {
     /** null = the chain with its per-gap signs. */
     combine: QuickCombine;
-    /** Chain signs, one per gap (`signs[i]` sits between sensor i and i+1);
-     *  missing entries are `+`. Ignored while a combination is chosen. */
+    /** Chain signs, one per gap; missing entries are `+`. Ignored while a combination is chosen. */
     signs?: readonly QuickNumberOp[];
     /** Efficiency %: which picked sensor is the input (= 100 %). */
     inputTag?: string | null;
@@ -165,9 +152,7 @@ export function quickMulti(tags: readonly string[], choice: QuickMultiChoice): Q
     return formula(choice.wrap ? applyTransform(inner, choice.wrap) : inner);
 }
 
-/** The `SensorOperationConfig` an Average / Median block is stored with --
- *  the same shape the existing aggregate path (`calculate_new_sensor`, mode
- *  `multi`) takes, rounding in `multiOp.decimals`. */
+/** Config for an Average/Median block, same shape as `calculate_new_sensor` mode `multi`; rounding in `multiOp.decimals`. */
 export function blockOperationConfig(
     type: 'mean' | 'median' | 'sum',
     decimals: number | null | undefined,
@@ -185,12 +170,7 @@ export function blockPreviewAggregate(block: { type: 'mean' | 'median' | 'sum'; 
     return { type: block.type, sources: [...block.sources], ...(block.decimals !== null && block.decimals !== undefined ? { decimals: block.decimals } : {}) };
 }
 
-/**
- * "Insert at cursor": drop a Quick build piece over the editor selection,
- * bracketed when it has a top-level operator and the editor already has
- * other text (so `2 * ` + `$A + $B` becomes `2 * ($A + $B)`), with the
- * palette's spacing. Into an EMPTY editor the piece goes in as it is.
- */
+/** Insert at cursor: brackets a piece with a top-level operator when the editor has other text (`2 * ($A + $B)`). */
 export function insertQuickPiece(text: string, start: number, end: number, piece: QuickFormula | string): FormulaEdit {
     const f = typeof piece === 'string' ? formula(piece) : piece;
     const rest = (text.slice(0, start) + text.slice(end)).trim();
@@ -198,19 +178,13 @@ export function insertQuickPiece(text: string, start: number, end: number, piece
     return insertPiece(text, start, end, body);
 }
 
-// ---------------------------------------------------------------------------
-// Recipe <-> editor state
-// ---------------------------------------------------------------------------
 
 /** What the editor holds: free formula text + "Round the result", or a block. */
 export type FormulaEditorState =
     | { mode: 'formula'; text: string; roundDecimals: number | null; note: FormulaEditorNote | null }
     | { mode: 'block'; type: 'mean' | 'median' | 'sum'; sources: string[]; decimals: number | null; note: FormulaEditorNote | null };
 
-/** Why an opened recipe looks different from how it was stored:
- *  `legacy-sum` -- a Sum operation opened as `A + B + C` (same result: a row
- *  is missing when any source is); `legacy-operation` -- a one-sensor
- *  operation (`+ 10`, `sqrt`, round to N) opened as its formula. */
+/** Why an opened recipe differs from its stored form: `legacy-sum` (Sum as `A + B + C`), `legacy-operation` (shown as a formula). */
 export type FormulaEditorNote = 'legacy-sum' | 'legacy-operation';
 
 const SINGLE_BINARY: Record<string, QuickNumberOp> = { add: '+', subtract: '-', multiply: '*', divide: '/', power: '^' };
@@ -227,8 +201,7 @@ export function recipeToEditorState(recipe: SpecialSensorRecipe): FormulaEditorS
         const type = cfg.multiOp?.type ?? 'sum';
         const decimals = cfg.multiOp?.decimals ?? null;
         if (type === 'mean' || type === 'median') return { mode: 'block', type, sources: [...sources], decimals, note: null };
-        // A legacy Sum: expanded to editable text. Its decimals (if any) become
-        // "Round the result" -- the same rounding of the same value.
+        // A legacy Sum expands to editable text; its decimals become 'Round the result'.
         return { mode: 'formula', text: sources.map(sensorRef).join(' + '), roundDecimals: decimals, note: 'legacy-sum' };
     }
     const op = cfg.singleOp;
@@ -250,14 +223,7 @@ export function editorStateFormula(state: Extract<FormulaEditorState, { mode: 'f
     return withRoundResult(state.text, state.roundDecimals).formula;
 }
 
-/**
- * The recipe to save for `state`. When `original` is given and the editor
- * still holds exactly what `recipeToEditorState(original)` produced (the user
- * only edited description / unit / component), the ORIGINAL recipe is returned
- * unchanged -- so opening a legacy operation and saving its metadata never
- * turns it into a formula, recomputes it, or reads as a recipe change that
- * sends the models trained on it back to Incomplete.
- */
+/** Returns the ORIGINAL recipe while the editor still matches `recipeToEditorState(original)`. So a metadata-only save never turns an operation into a formula or sends trained models back to Incomplete. */
 export function editorStateToRecipe(state: FormulaEditorState, tag: string, original?: SpecialSensorRecipe | null): SpecialSensorRecipe {
     if (original && sameEditorState(state, recipeToEditorState(original))) return original;
     if (state.mode === 'block') {

@@ -1,31 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
-/*
- * "No data to train on" guards, rules R1–R5 of 88f15cc (QA close-out,
- * The commit that was NOT code-reviewed again). Real Dashboard +
- * real Build Model window + real `workspaceManager` on in-memory workspace
- * files, the fake Rust backend with its real `get_dataset_time_bounds`,
- * `count_period_rows` and train commands.
- *
- *   R1  the data's range belongs to the dataset ON SCREEN — a window re-pointed
- *       at another project judges nothing until that project's range has landed;
- *   R2  a period that is NEW / CHANGED in a draft and lies outside the data
- *       blocks Apply / Save changes ("Fix P1 before applying / saving");
- *   R3  a period exactly as it was SAVED only warns (amber) — an unrelated
- *       Apply and a Custom model's rename + Save still work;
- *   R4  Train is blocked, with the named reason, only when NO train period is
- *       inside the data or the settled count is zero — and a train the window
- *       could not foresee is answered in the app's own words;
- *   R5  nothing that READS a model is touched: a trained and a Complete model
- *       keep their charts, Health score page, Mark incomplete / Mark complete
- *       again, dots and words — and the workspace file is not written.
- *
- * In one window with mocked storage these rules are covered by
- * `BuildModelWindow.test.tsx` ("Guards against no data to train on") and
- * `RunningConditionDataGuards.test.tsx`; this file is the two-window,
- * real-file, real-count version.
- */
+/* 'No data to train on' guards R1-R5: real Dashboard, Build Model, workspaceManager; fake Rust backend. R1 range = dataset on screen; R2 new/changed outside period blocks Apply/Save; R3 saved one only warns; R4 Train blocked when no rows. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -89,7 +65,7 @@ const RANGE_26 = '2026/01/01 00:00 – 2026/01/03 11:00';
 const SP1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_WIDE = { kind: 'individual', lower: -500, upper: 500, masterLower: null, masterUpper: null };
 const EMPTY_SP = { kind: 'individual', lower: null, upper: null };
-// (`scoringIntervalSecs`: a record as THIS build writes it — the saved results use 1-hour averages; one without it gets the footer's "earlier row-by-row scoring" hint, covered in BuildModelWindow.test.tsx)
+// scoringIntervalSecs: as this build writes it (1-hour averages); without it the 'earlier row-by-row scoring' hint shows.
 const record = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints, scoringIntervalSecs: 3600 });
 
 const wsWrites = (id = WS) => env.writes.filter(w => w.path === wsFile(id)).length;
@@ -98,8 +74,7 @@ const modelsBytes = (id = WS) => JSON.stringify(readDisk(id).failureGroupState.m
 const card = () => bmw().getByTestId('rc-card');
 /** Running rows Rust answered for the LAST `count_period_rows` (the card's verdict reads it). */
 const lastCountRows = () => (env.backend!.cmds('count_period_rows').slice(-1)[0]?.result as { union: { running_rows: number } } | undefined)?.union.running_rows;
-/** User decision 2026-10-14: the card never says how many data rows are used — no "N rows · x%",
- *  no "Counting rows…", no "— rows", no share meter; only its two warnings stay, in words. */
+/** The card never shows a row count, percentage or meter; only its two warnings stay. */
 const expectCardHasNoRowCount = () => {
     for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(card()).queryByTestId(id)).toBeNull();
     expect(card().querySelector('.rcc-meter')).toBeNull();
@@ -133,9 +108,6 @@ const never = (state: any, ids: string[]) => {
 };
 const bmwBroadcasts = () => env.emitted.filter(e => e.event === 'failure-group-state-changed' && e.payload?.origin === 'build-model');
 
-// ---------------------------------------------------------------------------
-// R1 — the bounds belong to the dataset on screen
-// ---------------------------------------------------------------------------
 
 describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 one', () => {
     it('nothing is judged while the 2027 range is on its way (never against 2025); once it lands the 2027 period is inside, the leftover 2025 period warns, and Train works', async () => {
@@ -157,15 +129,13 @@ describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 o
         expect(trainBtn().disabled).toBe(false);
         expect(env.backend!.cmds('get_dataset_time_bounds')).toHaveLength(1);
 
-        // ── the main window loads the 2027 CSV and re-points this window at ws2 ──
         env.backend!.loadDataset('d27');
         const hold = env.backend!.gate('get_dataset_time_bounds');
         await sendBuildModelData('ws2');
         await waitFor(() => expect(hold.entered).toBe(true));
         await settle(400);
         expect(bmw().getByTestId('sensor-list-row-fg:1-tag3')).toBeTruthy();
-        // the new range is not known yet: NOTHING is judged — against 2025 the 2027 period
-        // would be "outside the data" and the 2025 one would look fine
+        // The new range isn't known yet, so nothing is judged (against 2025 the 2027 period would look outside the data).
         expect(card().getAttribute('data-norows')).toBeNull();
         expect(bmw().queryByTestId('rc-card-outside')).toBeNull();
         expect(footReason()).toBeNull();
@@ -180,7 +150,6 @@ describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 o
         }
         fireEvent.click(bmw().getByTestId('rc-cancel'));
 
-        // ── the 2027 range lands ────────────────────────────────────────────
         await act(async () => { hold.release(); });
         await waitFor(() => expect(bmw().getByTestId('rc-card-outside').textContent)
             .toBe('⚠ P1 is outside the data (2027/01/01 00:00 – 2027/01/03 11:00) — it is not used'));
@@ -198,7 +167,6 @@ describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 o
         expect(bmw().queryByTestId('rc-apply-block')).toBeNull();
         fireEvent.click(bmw().getByTestId('rc-cancel'));
 
-        // ── and it trains, on the 2027 rows of ws2 only ─────────────────────
         await act(async () => { fireEvent.click(trainBtn()); });
         await waitFor(() => expect(freshOnDisk('j1', 'ws2')).toBe(true), { timeout: 8000 });
         const stats = env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG3').slice(-1)[0];
@@ -209,14 +177,9 @@ describe('R1 — a Build Model window re-pointed from a 2025 project to a 2027 o
     });
 });
 
-// ---------------------------------------------------------------------------
-// R2 + R3 — draft vs. saved
-// ---------------------------------------------------------------------------
 
 describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANGED = a block', () => {
-    /** Workspace: [inside, saved-outside] train + [inside, saved-outside] scoring.
-     *  i1 = Individual TAG1 (Workspace mode, trained). c5 = Individual TAG5 on its OWN
-     *  lists — again [inside, saved-outside]. */
+    /** Train periods [inside, outside], scoring [outside, inside] (all saved); i1 Workspace mode, trained; c5 on its own lists. */
     const OWN_IN = { id: 'o1', start: '2026-01-01T00:00', end: '2026-01-02T12:00' };
     const OWN_OUT = { id: 'o2', start: '2027-05-01T00:00', end: '2027-05-05T00:00' };
     const start = () => wsTrained({ runningConditionTimePeriods: [P_IN, P_OUT], runningConditionTestPeriods: [S_OUT, S_IN] }, [
@@ -236,7 +199,6 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         selectSensor('tag1');
         await waitForCharts();
 
-        // ── the card: green, "set", counted — plus ONE amber line ────────────
         expect(card().getAttribute('data-state')).toBe('set');
         expect(card().getAttribute('data-norows')).toBeNull();
         expect(card().className).toContain('rcc-card--ok');
@@ -253,7 +215,6 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
         expect(footReason()).toBeNull();
 
-        // ── the modal: amber rows, Apply only waits for an edit ──────────────
         const dlg = openRc();
         expect(dlg.getByTestId('period-row-2').getAttribute('data-outside')).toBe('true');
         expect(dlg.getByTestId('period-row-2').getAttribute('data-invalid')).toBeNull();
@@ -278,7 +239,6 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         expect(fg.runningConditionTimePeriods).toEqual([P_IN, P_OUT]);
         expect(fg.runningConditionTestPeriods).toEqual([S_OUT, S_IN]);
 
-        // ── the Custom model: its own saved period outside the data only warns; rename + Save works ──
         selectSensor('tag5', 2);
         await waitForCharts();
         expect(pill()).toBe('Trained');
@@ -304,7 +264,6 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         await waitForCharts();
         const bytes = fgBytes();
 
-        // ── the workspace modal: P1 moved to 2025 ────────────────────────────
         const dlg = openRc();
         type(dlg.getByLabelText('P1 start'), '2025-06-01T00:00');
         type(dlg.getByLabelText('P1 end'), '2025-06-10T00:00');
@@ -333,7 +292,6 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
         fireEvent.click(bmw().getByTestId('rc-cancel'));
         expect(fgBytes()).toBe(bytes);
 
-        // ── the Custom model's own list: P1 moved to 2025 → Save changes is blocked ──
         selectSensor('tag5', 2);
         await waitForCharts();
         openSettings();
@@ -354,16 +312,12 @@ describe('R2 / R3 — a period outside the data: SAVED = a warning, NEW or CHANG
     });
 });
 
-// ---------------------------------------------------------------------------
-// R4 — Train is blocked only when there is truly nothing to train on
-// ---------------------------------------------------------------------------
 
 describe('R4 — "nothing to train on" blocks Train, with the named reason', () => {
     const NO_DATA_REASON = `No train period is inside the data (${RANGE_26}) — nothing to train on. Move a train period inside the data (Running condition → Edit).`;
     const NO_ROWS_REASON = 'No rows match — nothing to train on. Widen a train period or relax the condition (Running condition → Edit).';
 
-    /** TAG1: i1 Individual (Workspace mode) + r1 Relation model TAG1 <- TAG3 on its OWN lists
-     *  (inside the data, all rows). TAG4: i4 Individual (Workspace mode). None was ever trained. */
+    /** TAG1: i1 Individual (Workspace mode) + r1 Relation model on own lists (inside, all rows). TAG4: i4 Individual. None trained. */
     const untrained = (fg: Record<string, unknown>, r1: Record<string, unknown> = {}) => never(wsTrained(fg, [
         model({ id: 'i1', name: 'Pressure band', targetSensor: 'TAG1', healthSetPoints: EMPTY_SP }),
         model({
@@ -381,7 +335,6 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         expectCardHasNoRowCount();
         expect(bmw().getByTestId('rc-card-open').textContent).toBe('Edit'); // not "Fix period": nobody just picked it
 
-        // ── TAG4: its only model is blocked ──────────────────────────────────
         selectSensor('tag4', 2);
         await settle(300);
         // the model's own page: the footer and the board, once each
@@ -396,7 +349,6 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         expect(trainWhy()).toBe("Can't train · see below");
         expect((bmw().getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
 
-        // ── TAG1: the Workspace-mode Individual is blocked, the Custom Relation model is not ──
         selectSensor('tag1');
         await settle(300);
         expect(trainBtn().disabled).toBe(false);
@@ -409,7 +361,6 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         expect((bmw().getByTestId('train-menu-only-relationship') as HTMLButtonElement).disabled).toBe(false);
         fireEvent.keyDown(window, { key: 'Escape' });
 
-        // ── Train all: amber "Skipped" + the reason + Fix → for both; the Custom model is Ready ──
         await act(async () => { fireEvent.click(bmw().getByTestId('train-all')); });
         for (const id of ['i1', 'i4']) {
             expect(bmw().getByTestId(`train-row-status-${id}`).textContent, id).toBe('Skipped');
@@ -468,7 +419,6 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         expect(footReason()).toBeNull();
         expect(trainBtn().textContent).toBe('▶ Train sensor · 1 of 1');
 
-        // ── [inside, outside]: a warning, never a block ──────────────────────
         const dlg2 = openRc();
         fireEvent.click(dlg2.getByTestId('period-add'));
         type(dlg2.getByLabelText('P2 start'), P_OUT.start);
@@ -495,8 +445,7 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
     });
 
     it('at RUN time: a Custom model the window never counted has no rows — the engine\'s "no rows" answer is shown as "No rows to train on …" (queue row, board), never the raw sentence; nothing is written for it', async () => {
-        // The OWN condition of r1 and c5 keeps no row (TAG2 > 1000). Neither is the open model, so
-        // their rows were never counted: the preflight says Ready and Rust is the one that finds out.
+        // r1 and c5 are not the open model, so their rows aren't counted: preflight says Ready and Rust finds out.
         const OWN_COND = { id: 'oc', sensor: 'TAG2', operation: 'greater_than', value1: '1000', value2: '' };
         const own = { customRunningConditionNoneConfirmed: false, customRunningConditionFilters: [OWN_COND] };
         const s = untrained({ runningConditionTimePeriods: [P_IN], runningConditionTestPeriods: [S_IN] }, own) as any;
@@ -534,8 +483,7 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
         expect(bmw().getByTestId('train-row-status-i1').textContent).toBe('✓ Trained · set points needed');
         fireEvent.click(bmw().getByTestId('train-all-close'));
 
-        // the model's own page: now that it is the open model its own rows ARE counted, and the
-        // page says the same thing in the guard's words (one item to fix, in its Model settings)
+        // Once it is the open model its own rows are counted, and the page reports it as one item to fix in Model settings.
         selectSensor('tag5', 2);
         await waitFor(() => expect(bmw().getByTestId('results-incomplete').textContent)
             .toBe('1 item to fix before trainingOwn running condition: no rows to train on. Fix it in Model settings'), { timeout: 4000 });
@@ -551,9 +499,6 @@ describe('R4 — "nothing to train on" blocks Train, with the named reason', () 
     });
 });
 
-// ---------------------------------------------------------------------------
-// R5 — the read paths
-// ---------------------------------------------------------------------------
 
 describe('R5 — the guards never touch what READS a model', () => {
     it('[inside, outside] train periods: a trained and a Complete model keep charts, Health score, dots and words; opening both writes nothing to the models; a set-point change, Mark complete and "Mark incomplete" work', async () => {
@@ -567,7 +512,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
 
-        // ── the trained model ────────────────────────────────────────────────
         selectSensor('tag1');
         await waitForCharts();
         expect(pill()).toBe('Trained');
@@ -580,7 +524,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(markBtn().disabled).toBe(false);
 
-        // ── the Complete model ───────────────────────────────────────────────
         selectSensor('tag3');
         await settle(400);
         fireEvent.click(bmw().getByTestId('page-tab-model')); // make sure its Model fit page is the one open (tab ① is always there)
@@ -594,14 +537,13 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect((bmw().getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
         await settle(400);
 
-        // ── looking at both changed NOTHING: status, train record, verdict, export record ──
         expect(modelsBytes()).toBe(bytes);
         expect(bmwBroadcasts()).toEqual([]);
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
 
-        // ── a set-point change makes it Incomplete (export round 2026-10-20): Mark complete, then "Mark incomplete" ──
+        // A set-point change makes it Incomplete; then Mark complete, then Mark incomplete.
         await enterSp({ 'sp-upper': '400' });
         expect(diskModel('i3').status).toBe(false);
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
@@ -631,8 +573,7 @@ describe('R5 — the guards never touch what READS a model', () => {
             detail: b.querySelector('.wbx-msg-d')!.textContent,
         };
     };
-    /** A workspace saved on the 2025 data (i1 trained, i3 Complete, i4 never trained) — and the
-     *  CSV loaded today is 2027: every saved train period lies outside the data. */
+    /** Saved on 2025 data while the loaded CSV is 2027, so every saved train period is outside the data. */
     function seedOtherYear() {
         newBackend({ d27: plantOf(2027) });
         writeDisk(never(wsTrained({ runningConditionTimePeriods: [P25], runningConditionTestPeriods: [S25] }, [
@@ -652,7 +593,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         const RANGE_27 = '2027/01/01 00:00 – 2027/01/03 11:00';
         const REASON = `No train period is inside the data (${RANGE_27}) — nothing to train on. Move a train period inside the data (Running condition → Edit).`;
 
-        // ── the card says it; the never-trained model cannot train ───────────
         expect(card().getAttribute('data-norows')).toBe('true');
         expect(card().getAttribute('data-state')).toBe('set');
         expect(bmw().getByTestId('rc-card-use').textContent).toBe('Nothing to train on');
@@ -664,12 +604,10 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(trainWhy()).toBe("Can't train · see below");
         expect(bmwDot('i4').state).toBe('blocked');
 
-        // ── the Complete model stays Complete, here and on the Dashboard ──────
         expect(bmwDot('i3').state).toBe('complete');
         expect(dashDot(1, 'tag3', 'individual')).toBe('complete');
         selectSensor('tag3');
-        // its data is not in this file: ONE board says exactly that — not "Couldn't load
-        // the model · Load it again", which could never work
+        // Its data isn't in this file: one board says so, not 'Couldn't load the model', which could never work.
         await waitFor(() => expect(bmw().getByTestId('results-no-data')).toBeTruthy(), { timeout: 4000 });
         await settle(400);
         expect(noDataBoard()).toEqual({
@@ -698,7 +636,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect((bmw().getByTestId('mark-incomplete') as HTMLButtonElement).disabled).toBe(false);
         fireEvent.click(bmw().getByTestId('page-tab-model'));
 
-        // ── the trained model: still trained on disk, on the Dashboard AND here — never "Training failed" ──
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
         selectSensor('tag1');
         await settle(600);
@@ -714,7 +651,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(bmwEl().textContent).not.toMatch(/No valid numeric values|dropping nulls|Couldn't load|Training failed/);
         expect(trainBtn().disabled).toBe(true);
         expect(trainWhy()).toBe("Can't train · No train period inside the data");
-        // Mark complete could only fail (the export needs the data): disabled, with that reason
+        // Mark complete needs the model's data: disabled, with that reason
         fireEvent.click(bmw().getByTestId('page-tab-health'));
         await settle(400);
         expect(noDataBoard().title).toBe(NO_DATA_TITLE);
@@ -723,8 +660,7 @@ describe('R5 — the guards never touch what READS a model', () => {
         fireEvent.click(bmw().getByTestId('page-tab-model'));
         expect(dashDot(1, 'tag1', 'individual')).toBe('trained');
 
-        // ── opening changed nothing on disk, nothing was broadcast, and the engine was never asked
-        //    for a model that has no row in this file (no silent load, no preview, no export) ──
+        // Opening changed nothing on disk, broadcast nothing, and the engine was never asked for a model missing from this file.
         expect(fgBytes()).toBe(bytes);
         expect(bmwBroadcasts()).toEqual([]);
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
@@ -732,7 +668,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         expect(env.backend!.cmds('compute_health_preview')).toHaveLength(0);
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
-        // ── repair through Edit: the saved row only warns, moving it into the data applies ──
         const dlg = openRc();
         expect(dlg.getByTestId('period-data-note-1').textContent).toBe(`P1 is outside the data (${RANGE_27}) — it is not used`);
         expect(dlg.queryByTestId('period-invalid-1')).toBeNull();
@@ -754,7 +689,6 @@ describe('R5 — the guards never touch what READS a model', () => {
         // the saved scoring period is still outside the data: one amber line, not a block
         expect(bmw().getByTestId('rc-card-outside').textContent).toBe('⚠ S1 is outside the data — nothing is scored there');
 
-        // ── and now Train works for the model that could not ─────────────────
         selectSensor('tag4');
         await settle(300);
         expect(footReason()).toBeNull();
@@ -764,15 +698,8 @@ describe('R5 — the guards never touch what READS a model', () => {
         await waitFor(() => expect(dashDot(1, 'tag4', 'individual')).not.toBe('none'));
     });
 
-    // -----------------------------------------------------------------------
-    // A board never offers a link to a control that is disabled. The state is
-    // described truthfully — ONE "No data for this model in the loaded file"
-    // board whose only link is the place where it is fixed.
-    //
-    // Scenario (both): a workspace whose saved train periods all lie outside
-    // the loaded data (saved on a 2025 CSV, opened with a 2027 CSV) holding a
-    // model that already has results. Open Build Model and select that model.
-    // -----------------------------------------------------------------------
+    // A board never links to a disabled control: its only link is where the problem is fixed.
+    // Scenario: saved train periods all outside the loaded data, a model with results selected.
     /** Every link of `board` leads somewhere: none is disabled, and none points at Train. */
     const expectOnlyTheRcLink = (board: HTMLElement) => {
         const links = within(board).getAllByRole('button') as HTMLButtonElement[];

@@ -1,11 +1,4 @@
-/**
- * Pearson correlation coefficient over paired, pairwise-complete
- * observations (rows where BOTH series have a finite value — matches how
- * PairPlotCell itself filters rows before pushing them to WebGL).
- *
- * Returns `null` when there are fewer than 2 valid pairs, or either series
- * has zero variance (a constant series has no defined correlation).
- */
+/** Pearson correlation over pairwise-complete rows (both finite). `null` with fewer than 2 pairs or a zero-variance series. */
 export function pearsonCorrelation(xs: number[], ys: number[]): number | null {
     const n = Math.min(xs.length, ys.length);
     let count = 0;

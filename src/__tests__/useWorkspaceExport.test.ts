@@ -3,7 +3,6 @@ import { renderHook, act } from '@testing-library/react';
 import { mk } from './helpers/failureModelFixture';
 import type { WorkspaceState } from '../types';
 
-// ---- Tauri event bus fake: listeners by event name ------------------------
 type Handler = (e: { payload: unknown }) => void;
 const listeners = new Map<string, Set<Handler>>();
 const mockListen = vi.fn(async (event: string, cb: Handler) => {

@@ -6,16 +6,7 @@ import { layoutTooltipRow } from '../../utils/tooltipLayout';
 
 export { sameNameLoosely };
 
-/**
- * The data every sensor label, picker row and tooltip needs, resolved from the tag
- * (DESIGN_SYSTEM §4 "Sensor label"; spec: `docs/design/handoff/customer-batch-2026-10/README.md` §1).
- *
- * Metadata reaches the components through React context (`SensorMetaProvider`), never through a
- * module-level registry: each window wraps its tree once, and a panel that receives its own
- * `sensorMetadata` prop nests another provider (own entries win, everything else is inherited).
- * A component with no provider above it still renders — every tag then reads as "no description"
- * (the tag alone), which is also the shipped fallback for a tag missing from the Tag names file.
- */
+/** Sensor data for labels, pickers and tooltips, resolved from the tag via `SensorMetaProvider` context; nested providers win. */
 export interface SensorInfo {
     tag: string;
     /** Undefined when the Tag names file has none, or when it only repeats the tag. */
@@ -24,8 +15,7 @@ export interface SensorInfo {
     component?: string;
     /** Special sensor badge: 'f' = formula (ƒ), 's' = aggregate / operation (Σ). */
     special?: 'f' | 's';
-    /** Rule 3b: the tag only re-spells the description, so it is not printed beside it (it stays in
-     *  `title`, search and the hover card). Undefined when the tag is printed. */
+    /** The tag only re-spells the description, so it isn't printed beside it (it stays in `title`, search and the hover card). */
     tagHidden?: boolean;
 }
 
@@ -36,8 +26,7 @@ const clean = (s: string | undefined | null): string | undefined => {
     return t ? t : undefined;
 };
 
-/** The provider-less lookup: every tag is "tag only". Cached so a repeated lookup returns the
- *  same object (cheap to compare in memoised children). */
+/** Provider-less lookup (tag only), cached so a repeat lookup returns the same object. */
 const plainCache = new Map<string, SensorInfo>();
 export const plainSensorLookup: SensorLookup = (tag) => {
     let hit = plainCache.get(tag);
@@ -49,13 +38,7 @@ export const plainSensorLookup: SensorLookup = (tag) => {
     return hit;
 };
 
-/**
- * Builds a lookup over `metadata` / `special`, falling back to `parent` for anything they do not
- * cover. `metadata === undefined` (or `special === undefined`) means "inherit the parent's";
- * an explicit array — even an empty one — replaces it for the tags it contains only. Results are
- * cached per tag for the lifetime of the returned function (i.e. until an input changes), so the
- * per-call cost in render loops and tooltip formatters is one Map read.
- */
+/** Lookup over `metadata`/`special` falling back to `parent`: undefined inherits, an explicit array replaces for its tags. */
 export function buildSensorLookup(
     parent: SensorLookup | null,
     metadata?: SensorMetadata[] | null,
@@ -98,17 +81,14 @@ export function buildSensorLookup(
 
 export const SensorMetaContext = createContext<SensorLookup>(plainSensorLookup);
 
-/** Rule 3 inside a set: the sensors printed next to it on the same card (a model's target / Y sensor).
- *  They count in the set's distinct-rows rule, so a chip can never read like the target. */
+/** Sensors printed next to a set on the same card (a model's target / Y); they count in the set's distinct-rows rule. */
 export const SensorSetExtraContext = createContext<readonly string[]>([]);
-/** Rule 2: the start shared by the surrounding set, active only while one of its names is really cut
- *  at the current width; '' otherwise. */
+/** Start shared by the surrounding set, active only while one of its names is cut at the current width; '' otherwise. */
 export const SensorSetContext = createContext<string>('');
 /** Rule 3: the names of the surrounding set, and its id for the cut measurement ('' = not measured). */
 export interface SensorNamesValue { names: readonly string[]; run: string }
 export const SensorNamesContext = createContext<SensorNamesValue>({ names: [], run: '' });
-/** The start a row's run shares: its name without the distinguishing end. A name whose end is too long to split
- *  still joins its run (its start = all but its last segment). */
+/** The start a row's run shares: its name without the distinguishing end (all but the last segment when it can't be split). */
 export function runKeyOf(name: string): string {
     let head = splitName(name).head;
     if (!head) {
@@ -125,8 +105,7 @@ export interface NameRun {
     prefix: string;
 }
 
-/** Rule 2 for a long list: consecutive rows with the same start are one run. A list group holds several families
- *  ("… (P-P Trend) …", "Frame …"), so the group as a whole usually shares nothing while each run shares a lot. */
+/** Consecutive rows with the same start form a run; a group holds several families, so each run shares a start, not the group. */
 export function nameRuns(tags: readonly string[], nameOf: (tag: string) => string): NameRun[] {
     const out: NameRun[] = [];
     let i = 0;
@@ -146,8 +125,7 @@ export const SensorSetDropContext = createContext<boolean>(false);
 /** The list's search text: matches are marked, and a match in the cut-off head moves next to the tail. */
 export const SensorSearchContext = createContext<string>('');
 
-/** A lookup over `metadata` / `special` layered on the nearest provider's — for a component that
- *  both provides it to its children (`<SensorMetaContext.Provider value={…}>`) and reads it itself. */
+/** Lookup layered on the nearest provider's, for a component that both provides it to children and reads it. */
 export function useLayeredSensorLookup(
     metadata?: SensorMetadata[] | null,
     special?: Pick<SpecialSensorRecipe, 'tag' | 'kind'>[] | null,
@@ -190,16 +168,7 @@ const HUGE = 1e15;
 /** Strips trailing zeros of a fraction ("0.000120" → "0.00012", "1.20e-7" → "1.2e-7"). */
 const trimZeros = (s: string): string => s.replace(/(\.\d*?)0+(?=$|e)/, '$1').replace(/\.(?=$|e)/, '');
 
-/**
- * The ONE display number formatter for COMPUTED values (tooltips, the tag-point box,
- * stats): en-US, thousands separators, up to 3 decimals (`fixed3` = always 3,
- * for value columns that must line up). Never for a value the user typed (`fmtNumText` /
- * `fmtNumExact`), `<input>` values or CSV.
- *  - 0 < |v| < 0.001 → 3 significant digits (`toPrecision(3)`), so a non-zero value never shows
- *    as 0 ("0.00012"; `fixed3` keeps the padded "0.000120").
- *  - |v| ≥ 1e9 → whole number with separators ("12,345,678,901").
- *  - |v| ≥ 1e15 → scientific, 4 significant digits ("1.235e+15").
- */
+/** Format a COMPUTED value (not typed text): up to 3 decimals (`fixed3` = exactly 3). < 0.001: 3 significant digits; >= 1e9: whole number; >= 1e15: scientific. */
 export function fmtNum(v: number | null | undefined, fixed3 = false): string {
     if (v == null || !Number.isFinite(v)) return '–';
     const a = Math.abs(v);
@@ -212,8 +181,7 @@ export function fmtNum(v: number | null | undefined, fixed3 = false): string {
     return (fixed3 ? NF3 : NF).format(v);
 }
 
-/** Decimal places written in a plain or scientific number literal ("0.0005" → 4, "1.50" → 2,
- *  "1e-4" → 4, "12" → 0); null when the text is not such a literal. */
+/** Decimal places in a plain or scientific number literal ('1e-4' is 4); null when the text is not such a literal. */
 function typedDecimals(t: string): number | null {
     const m = /^[+-]?(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(t);
     if (!m || (m[1] === '' && !m[2])) return null;
@@ -226,12 +194,7 @@ function groupExact(n: number, decimals: number): string | null {
     return new Intl.NumberFormat('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(n);
 }
 
-/**
- * A number the USER TYPED, as text (a condition's `value1`, a filter value): thousands
- * separators only — every decimal the user typed is kept, nothing is rounded ("> 0.0005" stays
- * "> 0.0005", "1.50" stays "1.50"). Non-numbers, and literals that can't be shown exactly
- * (> 20 decimals, ≥ 1e15), pass through as typed.
- */
+/** A typed number as text: separators only, every decimal kept; non-numbers and unshowable literals pass through. */
 export function fmtNumText(v: string): string {
     const t = v.trim();
     if (t === '') return v;
@@ -241,8 +204,7 @@ export function fmtNumText(v: string): string {
     return groupExact(n, d) ?? t;
 }
 
-/** `fmtNumText` for a typed value already parsed to a number (a highlight range's min/max):
- *  every decimal of its shortest form is kept. */
+/** fmtNumText for a typed value already parsed to a number: every decimal of its shortest form is kept. */
 export function fmtNumExact(v: number | null | undefined): string {
     if (v == null || !Number.isFinite(v)) return '–';
     const s = String(v);
@@ -278,19 +240,12 @@ export function tooltipColourClass(colour: string | undefined): string {
     return name;
 }
 
-/** The class of a tooltip row: a row that would pass the tooltip's limit wraps its name (rule 4). A row
- *  that fits is plain `tt-row`, exactly as before. For a React row, pass what it prints. */
+/** Tooltip row class: a row that would pass the limit wraps its name (rule 4); otherwise plain `tt-row`. */
 export function ttRowClass(info: SensorInfo, valueText?: string, distinct?: string): string {
     return layoutTooltipRow({ ...info, valueText, distinct }).wraps ? 'tt-row tt-row--wrap' : 'tt-row';
 }
 
-/**
- * HTML for one tooltip row (ECharts HTML formatter): swatch, inline label (description then tag,
- * no brackets), value + unit right-aligned in the series colour. Everything is escaped.
- * `.tt-row` is a grid with the value in its own column, so a long name can never run under it. The
- * description gets the room first: the tag takes what is left and is dropped when that is nothing.
- * `distinct`: what tells the row from one with the same description (`tooltipDistinctEnds`).
- */
+/** One ECharts tooltip row as HTML, all escaped; `.tt-row` is a grid so a long name can't run under the value. `distinct` tells it from a row with the same description. */
 export function sensorInlineHtml(info: SensorInfo, colour?: string, valueText?: string, distinct?: string): string {
     const c = tooltipColourClass(colour);
     const row = layoutTooltipRow({ ...info, valueText, distinct });

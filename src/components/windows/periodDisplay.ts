@@ -4,19 +4,11 @@ import { formatYearMonth } from '../../utils/dateFormat';
 import { dateText, formatDataStamp, formatStamp, parseLocal } from '../../utils/workbenchDate';
 import { fmtNumText } from '../sensor/sensorInfo';
 
-/*
- * Pure display maths for the Running Condition / Training periods UI
- * (chips, coverage bar, day counts, the "Row is used when ..." rule line).
- * Kept out of the components so the numbers are unit-testable; the visual
- * spec is the approved time-ranges.html mockup.
- */
+/* Pure display maths for the Running Condition / Training periods UI (chips, coverage bar, day counts, rule line). */
 
 export const DAY_MS = 86_400_000;
 
-// The date helpers and the local-time parser live in `utils/workbenchDate.ts`
-// (the pure period helpers in `utils/` print dates with them too) and print in
-// the app's one date format (`utils/dateFormat.ts`); re-exported here so
-// components keep importing them from this file.
+// Date helpers live in `utils/workbenchDate.ts` and print in `utils/dateFormat.ts`; re-exported so components import from here.
 export { parseLocal, formatStamp, formatDataStamp };
 
 export interface DataBounds {
@@ -26,37 +18,21 @@ export interface DataBounds {
 
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
 
-/**
- * Is this what a `datetime-local` field reports once its date is COMPLETE?
- * The period editors commit a typed date to their parent on change only when
- * this is true:
- *  - `''` is what the field reports while a segment is missing (or was just
- *    cleared) — never a value to commit;
- *  - a year below 1000 is a year still being typed (the field reports
- *    "0002-…", "0020-…", "0202-…" on the way to "2026-…"): committing those
- *    would flash the row red and count rows for a date nobody meant.
- */
+/** True when a `datetime-local` value is a complete date. `''` means a segment is missing; a year below 1000 is still being typed ('0002-…'). */
 export function isCompleteDateInput(v: string | null | undefined): boolean {
     const t = (v ?? '').trim();
     const m = /^(\d{4,6})-\d{2}-\d{2}T\d{2}:\d{2}/.exec(t);
     return !!m && Number(m[1]) >= 1000 && parseLocal(t) !== null;
 }
 
-/**
- * What a period date field settles to on blur / Enter, given what is typed in
- * it and the value last committed. Typing never EMPTIES a bound that was set
- * (a cleared segment makes the field report `''`): the committed value comes
- * back, and opening a bound stays the explicit "Start of data" / "End of data"
- * action. Anything else that was typed is kept as it is.
- */
+/** Settles a date field on blur/Enter: an unparseable or cleared value returns to the committed date (if set). */
 export function settleDateInput(typed: string, committed: string | null | undefined): string {
     const saved = committed ?? '';
     if (typed === saved || parseLocal(typed) !== null) return typed;
     return saved.trim() ? saved : typed;
 }
 
-/** One typed bound of a period: "2025/11/03 06:00" — always date + time, on a
- *  whole-day edge too. Text that is not a date is shown as typed. */
+/** One typed bound as '2025/11/03 06:00' (always date + time); non-dates shown as typed. */
 function boundText(raw: string): string {
     const ms = parseLocal(raw);
     return ms === null ? raw : formatStamp(ms);
@@ -69,13 +45,7 @@ export function boundsMs(b: DataBounds | null | undefined): { t0: number; t1: nu
     return t0 === null || t1 === null || t1 <= t0 ? null : { t0, t1 };
 }
 
-/**
- * Chip / row label: "2025/01/01 00:00 – 2025/02/28 23:59" — always the full
- * date and the time on both sides (a whole-day edge too, and the year on both
- * sides even when they share it). An open side keeps its words: "Start of data –
- * 2025/02/28 23:59", "2025/11/01 00:00 – end of data"; "All data" when both
- * sides are open. Unparseable text is shown as typed.
- */
+/** Chip/row label '2025/01/01 00:00 – 2025/02/28 23:59'; an open side keeps its words, 'All data' when both are open. */
 export function formatPeriod(p: TimePeriod): string {
     const sBlank = isBlank(p.start);
     const eBlank = isBlank(p.end);
@@ -83,11 +53,7 @@ export function formatPeriod(p: TimePeriod): string {
     return `${sBlank ? 'Start of data' : boundText(p.start)} – ${eBlank ? 'end of data' : boundText(p.end)}`;
 }
 
-/**
- * Step-1 card / rule-sentence chip: "2026/01/01 00:00 → 2026/03/31 23:59" —
- * always the full date and the time on both sides. An open side reads "Start" /
- * "End"; both open reads "Whole dataset". Unparseable text is shown as typed.
- */
+/** Step-1 card/rule chip '2026/01/01 00:00 → 2026/03/31 23:59'. An open side reads 'Start'/'End'; both open 'Whole dataset'. */
 export function formatPeriodChip(p: TimePeriod): string {
     const sBlank = isBlank(p.start);
     const eBlank = isBlank(p.end);
@@ -139,11 +105,7 @@ export interface Coverage {
     axisRight: string;
 }
 
-/**
- * Coverage of the dataset by the periods: used days (union of valid periods,
- * clamped to the dataset, open ends run to the edge) and one drawable segment
- * per period. Null when the dataset bounds are unknown (no bar is drawn).
- */
+/** Dataset coverage by the periods: used days (union of valid periods) and one segment per period; null when bounds are unknown. */
 export function computeCoverage(periods: TimePeriod[], bounds: DataBounds | null | undefined): Coverage | null {
     const b = boundsMs(bounds);
     if (!b) return null;
@@ -195,13 +157,7 @@ export interface TestCoverageSegment {
     label: string;
 }
 
-/**
- * Scoring periods on the dataset timeline: one segment per scoring period with
- * a parseable range (clamped to the dataset; open ends run to the edge) and
- * the days of the dataset inside at least one of them (overlap counted once).
- * Null when the dataset bounds are unknown. Only start / end are read — a
- * legacy label on an old workspace's period changes nothing here.
- */
+/** Scoring periods on the timeline: a segment per parseable period and the dataset days inside any; null if bounds are unknown. */
 export function computeTestCoverage(tests: TimePeriod[], bounds: DataBounds | null | undefined): { usedDays: number; segments: TestCoverageSegment[] } | null {
     const b = boundsMs(bounds);
     if (!b) return null;
@@ -251,8 +207,7 @@ export interface ConditionChipParts {
     rest: string;
 }
 
-/** Condition chip for the Step-1 card and the rule sentence. `label` / `unit`
- *  resolve a tag to its description / unit (both optional). */
+/** Condition chip for the Step-1 card and rule sentence; `label`/`unit` resolve a tag to its description/unit (optional). */
 export function conditionChipParts(
     f: WorkspaceSensorFilter,
     label?: (tag: string) => string,

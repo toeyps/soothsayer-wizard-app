@@ -2,27 +2,7 @@ import type { FormulaIssue, FormulaPreviewAggregate } from '../types/formula';
 import { excelRoundCalls, isFormulaAtom, tokenizeFormula, type FormulaToken } from './formulaTokens';
 import { roundPlaces } from './formulaRounding';
 
-/**
- * The cheap FRONT-END check of a special-sensor formula: instant feedback on
- * every keystroke, with the SAME stable
- * codes and, where it can, the same ranges as Rust's gate
- * (`formula_gate` in `src-tauri/src/lib.rs`, classified by
- * `formula_diagnostics.rs`). It runs Rust's rules in Rust's order:
- *
- *   size limits (too_long / too_deep) -> references (constant_only,
- *   unknown_sensor) -> structure (locate_syntax_issue's codes, left to right)
- *   -> names (unknown_function, fn_no_bracket) -> round_excel ->
- *   div_zero (CREATE only, like Rust's `create_only_formula_issue`).
- *
- * Rust has the last word: the editor sends the text to `preview_formula`
- * anyway (`usePreviewFormula`) and shows ITS verdict once it lands for the
- * current text (`resolveFormulaVerdict`). This pass never flags anything
- * Rust's structural scan would not, and it leaves out what it cannot know for
- * sure (argument counts; unknown functions before Rust has sent its function
- * list) -- a miss here only means the red line appears ~220 ms later.
- *
- * O(n) per call (one tokenize, a few linear scans).
- */
+/** Cheap front-end check of a special-sensor formula: per-keystroke feedback with the same stable codes (and ranges where possible) as Rust's gate (`formula_gate`, `formula_diagnostics.rs`), in Rust's order: size limits, references, structure, names, round_excel, div_zero (CREATE only). Rust has the last word (`preview_formula`, `resolveFormulaVerdict`); this never flags what Rust wouldn't and skips what it can't know (argument counts, function names before Rust sends its list). O(n) per call. */
 
 export const DEFAULT_MAX_FORMULA_LEN = 4096;
 export const DEFAULT_MAX_FORMULA_DEPTH = 64;
@@ -37,15 +17,12 @@ export const DIV_ZERO_MESSAGE =
 export const ZERO_ARG_FUNCTIONS: ReadonlySet<string> = new Set(['pi', 'e']);
 
 export interface FormulaCheckContext {
-    /** Does this name resolve to a column of the loaded dataset? Omitted = not
-     *  checked. Build it with `sensorResolver` (Rust's `resolve_sensor`:
-     *  exact, else trimmed + case-insensitive). */
+    /** Does this name resolve to a dataset column? Omitted = not checked. Build with `sensorResolver`. */
     isKnownSensor?: (name: string) => boolean;
     /** The engine's function names, AS RUST SENT THEM (`preview_formula`'s
      *  `functions`). Omitted / null = names are not checked yet. */
     functions?: readonly string[] | null;
-    /** `create` (default) also applies the create-only refusal `div_zero`;
-     *  `edit` (Save of an existing sensor / repair, `replace: true`) skips it. */
+    /** `create` (default) also applies the create-only `div_zero`; `edit` (Save of an existing sensor / repair) skips it. */
     mode?: 'create' | 'edit';
     maxLength?: number;
     maxDepth?: number;
@@ -227,8 +204,7 @@ export function numberValue(text: string): number | null {
     return Number(body) * scale;
 }
 
-/** Unknown function names and functions written without a bracket. Needs
- *  Rust's function list; a call's argument count is left to Rust. */
+/** Unknown function names and functions without a bracket; needs Rust's function list. Argument counts are left to Rust. */
 function nameIssue(toks: FormulaToken[], ctx: FormulaCheckContext): FormulaIssue | null {
     const fns = ctx.functions;
     if (!fns || fns.length === 0) return null;

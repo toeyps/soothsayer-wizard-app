@@ -45,8 +45,7 @@ describe('validatePeriods', () => {
     });
 });
 
-// Workbench redesign §5: a period is named by its list number — "P1", "S1" — never "Period 1";
-// the row's own reason line has no full stop and says what to do where that is known.
+// A period is named by its list number ('P1', 'S1'), never 'Period 1'; the row line has no full stop and says what to do where known.
 describe('period reasons say P<n> / S<n> (workbench redesign §5)', () => {
     it('no train-period reason says "Period N" any more', () => {
         const all = validatePeriods([

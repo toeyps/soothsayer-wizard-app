@@ -11,15 +11,7 @@ import { RECOMMENDED_TRAIN_DAYS, SLOW_TEST_SCORING_TEXT, TEST_SCORING_FAILED_TEX
 
 afterEach(cleanup);
 
-/*
- * The notices both Workbench pages share (train running time, scoring periods
- * changed, slow scoring, "the health score could not be calculated").
- *
- * The Health score page's "Scoring results" card (`TestResultsCard` — one tile
- * per scoring period) was removed on 2026-10-12 (user decision: not used), after
- * the Model fit page's "Train and scoring periods" table (`TrainTestCard`,
- * 2026-10-11). `HealthScorePage.test.tsx` asserts the page renders neither.
- */
+/* Notices both Workbench pages share; the removed Scoring results cards must not render (see HealthScorePage.test.tsx). */
 
 describe('removed pieces', () => {
     it('the "Scored · N" pill is gone from the module (and the page no longer says "scored on N periods" anywhere)', () => {

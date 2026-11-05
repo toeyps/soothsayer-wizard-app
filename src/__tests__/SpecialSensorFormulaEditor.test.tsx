@@ -18,12 +18,7 @@ import type { FormulaPreviewResult } from '../types/formula';
 import { findPickerRow, pickMulti } from './helpers/sensorPicker';
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
-/**
- * The special-sensor Formula editor + Quick build against the
- * REAL logic (tokenizer, front-end check, fixes, Quick build generators, usePreviewFormula) with
- * only `invoke` mocked: the painted mirror, autocomplete keys, fix buttons, wrap / unwrap,
- * Quick build per pick count, block vs formula, "Round the result", and the Locked / Repair states.
- */
+/** Special-sensor Formula editor + Quick build against the real logic, with only `invoke` mocked. */
 
 const SENSORS = ['A', 'B', 'C', 'Flow (m3/h)', 'อุณหภูมิ'];
 const META: SensorMetadata[] = [
@@ -205,7 +200,7 @@ describe('the check line and the report', () => {
         expect(screen.getByRole('img', { name: 'Preview of the result' })).toBeTruthy();
     });
 
-    // One date format in the whole app (2026-10-12): it read "2024-01-01 → 2024-03-01".
+    // The preview header uses the app's one date format.
     it('the preview header names the first → last row DATE in the one date format', async () => {
         setup();
         type('$A + $B');

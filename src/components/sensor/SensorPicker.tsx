@@ -6,22 +6,7 @@ import { SensorInline, SensorSetProvider, SetPrefixLine } from './SensorLabel';
 import { SensorNamesContext, sensorHaystack, sensorTitle, useSensorLookup, type SensorNamesValue } from './sensorInfo';
 import { displayedName } from '../../utils/sensorNames';
 
-/**
- * The ONE sensor picker (DESIGN_SYSTEM §4 "Sensor picking — ONE picker").
- *  - `SensorPickerSingle`: a select-like trigger; opens an anchored popover (min(420px, 92vw),
- *    flips up near the bottom) with search + collapsible component groups; one click picks and
- *    closes; no OK button.
- *  - `SensorPickerMulti`: chips with × plus a dashed "Add…" button opening a 520 px modal with
- *    checkboxes; nothing changes until OK; Cancel / Esc / scrim discard.
- * Labels come from the nearest `SensorMetaProvider`. A list that is not "all sensors" must say
- * which list it is through `scope` ("Sensors on the chart · 4").
- *
- * Rendering cost: groups start collapsed (only the group of the current value opens), so opening
- * the picker on a ~130-tag workspace renders a handful of headers; the search text per sensor
- * is built once per open. Over `PICKER_WINDOW_ABOVE` visible rows (a search over thousands of
- * sensors, a project with no components) the list renders only the rows in view, 30 px each, with
- * the component of the top row on an opaque sticky line.
- */
+/** The one sensor picker: Single (popover, one click picks) and Multi (chips + modal, applied on OK); long lists are windowed. */
 
 export const UNCATEGORIZED_GROUP = 'Uncategorized';
 export const PICKER_SEARCH_PLACEHOLDER = 'Search description, tag, unit or component…';
@@ -43,8 +28,7 @@ type Row =
     | { type: 'item'; tag: string; set?: SensorNamesValue }
     | { type: 'none' };
 
-/** The groups' sets of one open list. A group whose tags did not change keeps its set, and with it its names array:
- *  a keystroke that leaves a group alone costs its rendered rows nothing (`splitInSet` caches per array). */
+/** Group sets of one open list; an unchanged group keeps its set, so a keystroke costs rendered rows nothing. */
 interface GroupSets {
     lookup: unknown;
     byGroup: Map<string, { tags: string[]; set: SensorNamesValue }>;
@@ -78,8 +62,7 @@ interface PickerListProps {
     getComponent?: (tag: string) => string;
     /** The search box. */
     inputRef?: RefObject<HTMLInputElement | null>;
-    /** Focus the search box on mount (default). The anchored single picker turns this off and
-     *  focuses it from `AnchoredPopover`'s `onPlaced`, after the popover has been positioned. */
+    /** Focus the search box on mount; the anchored single picker instead focuses from `AnchoredPopover`'s `onPlaced`. */
     focusOnMount?: boolean;
 }
 
@@ -88,8 +71,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
     const lookup = useSensorLookup();
     const ownInput = useRef<HTMLInputElement>(null);
     const searchRef = inputRef ?? ownInput;
-    // Not `autoFocus`: that focuses during commit, and WebView2's focus-scroll can fire the
-    // capture-phase scroll listener that dismisses an anchored popover. `preventScroll` never scrolls.
+    // Not `autoFocus`: WebView2's focus-scroll can fire the scroll listener that dismisses an anchored popover.
     useLayoutEffect(() => {
         if (focusOnMount) searchRef.current?.focus({ preventScroll: true });
         // Mount only.
@@ -201,9 +183,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
             // Nothing highlighted but exactly one sensor matches → Enter picks it.
             act(cur ?? (itemCount === 1 ? rows.find(r => r.type === 'item') : undefined));
         } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); onEscape(); }
-        // Single popover: the rows are not tab stops, so Tab leaves the picker — close it and hand
-        // focus back to the trigger (the next Tab moves on from there) instead of losing focus to
-        // the end of the document where the portal lives.
+        // Single popover: rows aren't tab stops, so Tab closes it and refocuses the trigger rather than the document end.
         else if (e.key === 'Tab' && !multi) { e.preventDefault(); onEscape(); }
     };
 
@@ -212,8 +192,7 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
         const id = `${baseId}-r${ix}`;
         if (r.type === 'group') {
             return (
-                // Inside role="listbox" only options / groups are allowed: the header is
-                // a group label row (still clickable; ← → / Enter toggle it from the search box).
+                // Inside role="listbox" only options/groups are allowed, so the header is a group label row (still clickable).
                 <button
                     key={`g-${r.comp}`} id={id} data-ix={ix} type="button" tabIndex={-1} role="group"
                     aria-label={`${r.comp}, ${r.count} sensor${r.count === 1 ? '' : 's'}`}
@@ -333,18 +312,12 @@ export function PickerList({ sensors, query, setQuery, isOn, onPick, noneRow, no
     );
 }
 
-/** True while a shared sensor picker (popover or multi modal) or colour picker is open. A
- *  surrounding owner that closes on Esc (a modal, a sheet, an expanded chart) must skip that Esc
- *  then — the picker takes it, and one Esc must not close both. */
+/** True while a shared sensor/colour picker is open; an Esc-closing owner (modal, sheet, expanded chart) must skip that Esc. */
 export function isPickerSurfaceOpen(): boolean {
     return typeof document !== 'undefined' && document.querySelector('.pk-pop, .pk-scrim, .cp-pop, .dt24-pop') !== null;
 }
 
-/** Closes on a mousedown outside the trigger and the picker's own surface, and on an Esc that
- *  reached the document (focus somewhere other than the search box — the search box handles its
- *  own Esc and stops it). A surrounding owner must ignore that Esc while the picker is open
- *  (`isPickerSurfaceOpen` — the Running condition modal, ChartCard, FailureGroupAssignSheet and
- *  SubModelsModal check it). */
+/** Closes on outside mousedown and on an Esc that reached the document; owners ignore that Esc while `isPickerSurfaceOpen`. */
 export function usePopoverDismiss(open: boolean, trigger: RefObject<HTMLElement | null>, surfaceClass: string, close: (focusTrigger: boolean) => void) {
     const closeRef = useRef(close);
     closeRef.current = close;
@@ -425,9 +398,7 @@ export function SensorPickerSingle({
     const empty = !value;
     const isOn = useCallback((t: string) => t === value, [value]);
     const title = disabled && disabledReason ? disabledReason : value ? sensorTitle(lookup(value)) : undefined;
-    // An optional picker (`allowNone`) with a value gets a visible × on the trigger, so clearing
-    // does not need opening the list and finding "None". It is a SIBLING of the trigger (a button
-    // cannot hold a button), laid over the trigger's right side by `.pk-trigger-wrap`.
+    // The × is a sibling of the trigger (a button can't hold a button), laid over it by `.pk-trigger-wrap`.
     const clearable = !!allowNone && !empty && !disabled;
     const cls = [
         'pk-trigger',
@@ -465,8 +436,7 @@ export function SensorPickerSingle({
     return (
         <>
             {allowNone ? (
-                // Always wrapped when `allowNone` (not only while there is a value), so picking a
-                // sensor never re-mounts the trigger and loses its focus.
+                // Always wrapped when `allowNone`, so picking a sensor never re-mounts the trigger and loses focus.
                 <span className={`pk-trigger-wrap${compact ? ' pk-trigger-wrap--sm' : ''}`}>
                     {trigger}
                     {clearable && (
@@ -487,8 +457,7 @@ export function SensorPickerSingle({
                     anchorRect={rect}
                     onRequestClose={() => close(false)}
                     width={alignRight ? width : undefined}
-                    // `.pk-pop`'s max-height: reserved when it opens above the trigger, so the
-                    // search box stays put while the list shrinks (typing) or grows (groups).
+                    // Reserves `.pk-pop`'s max-height when opening above the trigger, so the search box stays put while the list resizes.
                     reserveHeight={pickerMaxHeight()}
                     onPlaced={() => searchRef.current?.focus({ preventScroll: true })}
                     style={{ width, padding: 0, maxHeight: 'none', overflow: 'visible' }}
@@ -550,8 +519,7 @@ export function SensorPickerMulti({
     const isOn = useCallback((t: string) => pendingSet.has(t), [pendingSet]);
     return (
         <div className="pk-multi">
-            {/* The chips are one set (with the card's own target, `SensorSetExtraContext`): each reads differently,
-                never below start + "…" + end (the row wraps), and a start they share prints once while a chip is cut. */}
+            {/* Chips are one set (with the card's target, `SensorSetExtraContext`); a shared start prints once while a chip is cut. */}
             <SensorSetProvider tags={hideChips ? NO_CHIPS : selected} drop>
                 <SetPrefixLine className="pk-chip-prefix" testid="chip-prefix" />
                 {!hideChips && selected.map(t => {

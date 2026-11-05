@@ -2,16 +2,7 @@ import { Check, Minus, X } from 'lucide-react';
 import type { HealthIssue, HealthPreview } from '../../../types/health';
 import { buildCheckLines, type HealthVerdict } from './healthChecks';
 
-/*
- * The Checks of the Health score page. They live INSIDE the "Health set points"
- * card, under the score ruler (one card, no second header) — `ScoreRuler` renders
- * this as its children, and every ruler input points at it (`aria-describedby`).
- * It shows what Rust's
- * `validation` list says (`compute_health_preview` re-validates on every call,
- * including once more when Mark complete is pressed) - the page
- * never re-implements a rule. Valid: one green line. Otherwise: one line per
- * problem; for Relationship several empty points collapse into ONE line.
- */
+/* Checks of the Health score page, inside the 'Health set points' card under the ruler. Shows Rust's `validation` list; no rule is re-implemented here. Valid: one green line. Otherwise one line per problem; for Relationship, several empty points collapse into one line. */
 
 export interface ChecksCardProps {
     kind: HealthPreview['kind'];
@@ -19,9 +10,7 @@ export interface ChecksCardProps {
     verdict: HealthVerdict | null;
     /** The health score could not be loaded: say nothing is being checked. */
     unavailable?: boolean;
-    /** S-number of each scoring period that was SENT
-     *  (`testPeriodsWirePlan(...).numbers`), so an issue about one of them names
-     *  the period the user sees. */
+    /** S-number of each sent scoring period (`testPeriodsWirePlan(...).numbers`), so an issue names the period the user sees. */
     testNumbers?: readonly number[] | null;
 }
 

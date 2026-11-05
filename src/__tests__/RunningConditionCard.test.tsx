@@ -41,11 +41,7 @@ function detailsCard(over: Partial<React.ComponentProps<typeof RunningConditionC
     return onOpen;
 }
 
-/**
- * User decision 2026-10-14: the Build Model window never says how many data rows
- * are used. The card shows NO count — no "N rows · x%", no "Counting rows…", no
- * "— rows", no share meter — in the one line and in the Details view alike.
- */
+/** The card shows no row count or share meter, in the line and the Details view alike. */
 function expectNoRowCount() {
     const c = screen.getByTestId('rc-card');
     for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) {
@@ -169,14 +165,13 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 2 periods');
         expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when GENERATOR ACTIVE POWERPOWER is above 4,000 kW');
         expect(screen.getByTestId('rc-card-cond').querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
-        // No count of rows (2026-10-14): the slot that holds the two warnings is empty, so the
-        // line ends with the conditions (an empty `.rcc-line-item` is hidden by the stylesheet).
+        // No row count: the warnings slot is empty, so the line ends with the conditions (CSS hides an empty `.rcc-line-item`).
         expectNoRowCount();
         expect(screen.getByTestId('rc-card-use').textContent).toBe('');
         expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
         expect(screen.getByTestId('rc-card-use').className).toBe('rcc-line-item');
         expect(c.querySelector('.rcc-line-main')!.textContent).toBe('Running conditionTrain 2 periods 2026/01/01 00:00 → 2026/06/30 23:59Scoring 2 periodsRunning when GENERATOR ACTIVE POWERPOWER is above 4,000 kW');
-        // No period strip on the line (user decision 2026-10-11) — it is in the Details view.
+        // No period strip on the line; it is in the Details view.
         expect(within(c).queryByTestId('period-coverage')).toBeNull();
         expect(c.querySelector('.rcc-line-strip')).toBeNull();
         // the full chips are NOT on the line
@@ -254,7 +249,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         const openGroup = group(hide);
         expect(openGroup).toEqual(['rc-card-details:rcx-btn rcx-btn--sm rcc-line-more', 'rc-card-open:rcx-btn rcx-btn--sm']);
         expect(c.lastElementChild).toBe(hide.closest('.rcc-acts')); // the group ends the card, as it ends the line
-        expect(c.querySelector('.rcc-kicker')!.contains(hide)).toBe(false); // not a text link in the heading any more
+        expect(c.querySelector('.rcc-kicker')!.contains(hide)).toBe(false); // not a text link in the heading
         fireEvent.click(screen.getByTestId('rc-card-open'));
         expect(onOpen).toHaveBeenCalledTimes(1);
         fireEvent.click(hide);
@@ -265,8 +260,7 @@ describe('RunningConditionCard — Set: ONE line (workbench redesign §1)', () =
         expectNoRowCount();
     });
 
-    // "Details" / "Hide details" are two elements in two
-    // trees, so the focus used to drop to <body> on every toggle.
+    // Details / Hide details are two elements in two trees: focus must move to the new one on each toggle.
     it('"Details" is ONE control to the keyboard: after each toggle the focus is on it, with aria-expanded flipped', () => {
         card({ bounds: B });
         const details = screen.getByTestId('rc-card-details') as HTMLButtonElement;
@@ -343,8 +337,7 @@ describe('RunningConditionCard — Set', () => {
     it('"Running when": ONE chip "<sensor> is above <value unit>" and the note that it is also the export\'s running status', () => {
         detailsCard();
         const chips = screen.getAllByTestId('rc-card-cond-chip');
-        // Inline label (description then tag) + "is above" + the value in mono, with
-        // thousands separators; the whole sentence in the title.
+        // Inline label (description, tag) + 'is above' + mono value with thousands separators; whole sentence in the title.
         expect(chips.map(x => x.textContent)).toEqual(['GENERATOR ACTIVE POWERPOWER is above 4,000 kW']);
         expect(chips[0].querySelector('.sl-desc')!.textContent).toBe('GENERATOR ACTIVE POWER');
         expect(chips[0].querySelector('.sl-tag')!.textContent).toBe('POWER');
@@ -402,7 +395,7 @@ describe('RunningConditionCard — Set', () => {
             expect(cov().textContent).not.toMatch(/Jan|Jul/);
             expect(within(cov()).getByTestId('period-coverage-days').textContent).toBe('198 d train · 0 d scoring'); // Jan1-Mar31 2026 (90 d) + Apr15 2026-end of data (108 d)
             expect(screen.getByTestId('rc-card-use').contains(cov())).toBe(true);
-            // the strip is the column's only content: the rows-used count, % and bar are gone
+            // the strip is the column's only content: no rows-used count, % or bar
             expect(screen.getByTestId('rc-card-use').firstElementChild).toBe(cov());
             expect(screen.getByTestId('rc-card-use').childElementCount).toBe(1);
             expect(screen.queryByTestId('rc-card-rows')).toBeNull();
@@ -464,9 +457,7 @@ describe('RunningConditionCard — Set', () => {
         });
     });
 
-    // The gate's verdict (`countedNoTrainRows`, passed as `noRows`) is all the card gets of
-    // the count: while it is not "nothing to train on" the card says nothing about rows —
-    // counting, counted, failed or not asked all look the same.
+    // The card gets only the gate's verdict (`noRows` = `countedNoTrainRows`) of the count; otherwise it says nothing about rows.
     it('says nothing about rows while there is something to train on, in both views', () => {
         card({ noRows: false });
         expectNoRowCount();

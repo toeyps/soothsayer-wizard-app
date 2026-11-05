@@ -133,7 +133,6 @@ describe('normalizeSensorCategories', () => {
     });
 });
 
-// Moved from the deleted modelOutputFiles.test.ts (2026-10-20: deletes no longer remove files).
 describe('modelsOnlyIn / groupDeleteCounts', () => {
     it('modelsOnlyIn: the models whose every group is that one', () => {
         const ms = [{ id: 'a', groupNos: [1] }, { id: 'b', groupNos: [1, 2] }, { id: 'c', groupNos: [2] }, { id: 'd', groupNos: [] as number[] }];

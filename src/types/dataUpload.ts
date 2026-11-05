@@ -1,15 +1,12 @@
-/** Extended report returned by load_csv (replaces CsvMetadata) */
+/** Extended report returned by load_csv */
 export interface CsvLoadReport {
   headers: string[];
   total_rows: number;
   columns: ColumnInfo[];
   warnings: string[];
-  /** Generation of the session this load installed (see `CsvMetadata.generation`).
-   *  Optional only for hand-built fixtures; the backend always sends it. */
+  /** Generation of the session this load installed (see `CsvMetadata.generation`); optional only for hand-built fixtures. */
   generation?: number;
-  /** Per-file facts, in the order the paths were given. Every field below is
-   *  optional: old fixtures/saved reports lack them, and `null` means "unknown" — the UI must
-   *  hide the matching card instead of showing a made-up value. */
+  /** Per-file facts in path order; every field is optional and `null` means unknown: hide the matching card instead of showing a made-up value. */
   files?: CsvFileInfo[];
   /** Merged dataset period, "YYYY-MM-DD HH:MM:SS" (Buddhist-Era years already converted to CE). */
   period_start?: string | null;

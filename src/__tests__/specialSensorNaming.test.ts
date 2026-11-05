@@ -2,15 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { nameProblem, sameTag, sensorRef } from '../utils/specialSensorNaming';
 import { quickMulti } from '../utils/quickBuild';
 
-/**
- * `sensorRef` is the TypeScript twin of Rust's `sensor_ref_token`
- * (`src-tauri/src/lib.rs`): a bare `$Name` only when the name is non-empty and
- * every character is alphanumeric or `_`, `${Name}` for everything else. The
- * two tables below are the same names the Rust tests
- * (`token_is_bare_only_for_alphanumeric_underscore_names`,
- * `token_round_trips_through_extract_sensor_refs`) use, so a change to either
- * side that makes them disagree fails here.
- */
+/** `sensorRef` twins Rust's `sensor_ref_token`: bare `$Name` only for non-empty alphanumeric/`_` names, else `${Name}`; tables match the Rust tests. */
 describe('sensorRef (twin of Rust sensor_ref_token)', () => {
     const bare = [
         'plain_1',

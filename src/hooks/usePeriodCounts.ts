@@ -15,9 +15,7 @@ export const PERIOD_COUNT_DEBOUNCE_MS = 300;
 const CACHE_LIMIT = 24;
 
 export interface UsePeriodCountsOptions {
-    /** Count only while this is true — pass "the Running-condition settings are
-     *  open" (and the window has finished loading). While false NOTHING is
-     *  called, and the answers of the last open are dropped. */
+    /** Count only while true (the settings are open and loaded); while false nothing is called and old answers are dropped. */
     enabled: boolean;
     /** The workspace on screen; `null` = nothing is counted. */
     workspaceId: string | null;
@@ -25,13 +23,9 @@ export interface UsePeriodCountsOptions {
     trainPeriods: TimePeriod[];
     /** The DRAFT's scoring periods, in list order (S1, S2 …). */
     scoringPeriods: TestPeriod[];
-    /** The DRAFT's running condition: what `buildPreviewFilterPayload(draft,
-     *  headers)` returns (its time ranges are ignored — only `value_filters`
-     *  and `combine` are used). Since 2026-10-26 that is the ONE "sensor > value"
-     *  condition; `null` = the running condition is not set (nothing filters). */
+    /** The DRAFT's running condition from `buildPreviewFilterPayload(draft, headers)`; only `value_filters` and `combine` are used. null = not set. */
     filter: CountFilterInput | null;
-    /** The Rust dataset generation this window was opened on — a window left
-     *  over from another dataset gets `STALE_SESSION` instead of its numbers. */
+    /** Rust dataset generation this window opened on; a window left over from another dataset gets `STALE_SESSION`. */
     expectedGeneration?: number | null;
     /** Default `PERIOD_COUNT_DEBOUNCE_MS`. */
     debounceMs?: number;
@@ -53,47 +47,16 @@ function isCounts(v: unknown): v is PeriodCounts {
         && !!c.union && typeof c.union.running_rows === 'number';
 }
 
-/**
- * Per-period running-row counts for the Running-condition settings' DRAFT
- * (`count_period_rows`) — feed the result to `runningConditionCaption`,
- * `trainRowModels` and `scoringRowModels` (`src/utils/periodCounts.ts`).
- *
- * Cost (nothing may get slower):
- *  - nothing is called while `enabled` is false (modal closed);
- *  - a changing draft is debounced — no call per keystroke; the first count
- *    after the modal opens goes out at once;
- *  - a settled draft costs AT MOST two calls: one with all its valid train
- *    periods, one with all its valid scoring periods (never one per period).
- *    A side with no valid period makes no call, and a side whose periods and
- *    condition did not change is answered from memory — so moving a scoring
- *    date re-counts the scoring periods only;
- *  - a draft the user goes back to (within one open modal) is answered from
- *    memory.
- *
- * Correctness:
- *  - a late answer of an older draft never replaces a newer one (sequence
- *    guard), and nothing is set after unmount;
- *  - while a new count is on its way the previous numbers stay (`status:
- *    'loading'`) — no flicker;
- *  - every call is pinned to `expectedGeneration`; a failure gives `status:
- *    'error'` with no numbers (`errorCode` = `STALE_SESSION` / `NO_DATA` /
- *    `BAD_REQUEST` when Rust said so);
- *  - periods the editors flag as invalid are not sent (their rows show the
- *    reason instead), so `train.union` is exactly what Apply would train on.
- */
+/** Per-period running-row counts (`count_period_rows`) for the settings DRAFT. Debounced; unchanged sides and revisited drafts come from memory; a sequence guard drops late answers; old numbers stay while loading; calls are pinned to `expectedGeneration`. */
 export function usePeriodCounts(opts: UsePeriodCountsOptions): PeriodCountsState {
     const { enabled, workspaceId, trainPeriods, scoringPeriods, filter, expectedGeneration } = opts;
     const debounceMs = opts.debounceMs ?? PERIOD_COUNT_DEBOUNCE_MS;
-    // What was counted, and for WHICH request (`key`): the value handed out is
-    // derived from both, so a draft that changed in this very render is already
-    // "loading" — the numbers of the previous draft are never called "ok".
+    // Counted value and the request it was for (`key`); a draft changed in this render reads 'loading', never old numbers called 'ok'.
     const [held, setHeld] = useState<{ key: string | null; value: PeriodCountsState }>({ key: null, value: PERIOD_COUNTS_IDLE });
     // Every effect run takes a new number; an answer only lands if it is still
     // the latest one.
     const seq = useRef(0);
-    // Answers of this open modal, by request. Dropped when the modal closes, so
-    // every opening shows numbers counted then (the dataset's columns can
-    // change under one generation — e.g. a special sensor's formula).
+    // Answers of this open modal by request, dropped on close: columns can change under one generation.
     const cache = useRef(new Map<string, PeriodCounts>());
     const cacheEpoch = useRef(0);
     // A count has gone out since the modal opened (the first one is not debounced).
@@ -136,8 +99,7 @@ export function usePeriodCounts(opts: UsePeriodCountsOptions): PeriodCountsState
             setHeld({ key: requestKey, value: { status: 'ok', train: trainHit, scoring: scoringHit, error: null, errorCode: null } });
             return () => { seq.current++; };
         }
-        // Keep the previous numbers on screen until the new ones land; a side that
-        // is already known (remembered, or without a valid period) shows at once.
+        // Keep the previous numbers until the new ones land; a known side (remembered, or no valid period) shows at once.
         setHeld(prev => ({
             key: requestKey,
             value: {
@@ -157,8 +119,7 @@ export function usePeriodCounts(opts: UsePeriodCountsOptions): PeriodCountsState
             }
             const answer = await countPeriodRows(periods, req.cond, req.gen);
             if (!isCounts(answer)) throw new Error('count_period_rows returned no counts');
-            // A correct answer for its own request is worth keeping even when the
-            // draft has moved on — unless the modal was closed in between.
+            // Keep a correct answer for its own request even if the draft moved on, unless the modal closed.
             if (cacheEpoch.current === epoch) {
                 cache.current.set(keyOf(periods), answer);
                 while (cache.current.size > CACHE_LIMIT) cache.current.delete(cache.current.keys().next().value as string);
@@ -179,8 +140,7 @@ export function usePeriodCounts(opts: UsePeriodCountsOptions): PeriodCountsState
         };
         const timer = setTimeout(run, issued.current ? Math.max(0, debounceMs) : 0);
         return () => {
-            // A monotonic race-guard counter, not a DOM node: the cleanup must see
-            // (and bump) its live value so an in-flight answer is ignored.
+            // Race-guard counter, not a DOM node: cleanup must see its live value so an in-flight answer is ignored.
             // eslint-disable-next-line react-hooks/exhaustive-deps
             seq.current++;
             clearTimeout(timer);

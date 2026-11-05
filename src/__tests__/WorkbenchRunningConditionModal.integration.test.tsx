@@ -1,31 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
-/*
- * Spec:
- * docs/design/handoff/workbench-redesign/README.md §5 (running-condition modal),
- * with the real Dashboard + real Build Model window + real
- * `workspaceManager` on one in-memory workspace file, the fake Rust backend
- * with its REAL `count_period_rows`:
- *
- *   1. Apply across windows: the impact line's N is the number of models whose
- *      dot actually changes after Apply — in the Build Model list AND on the
- *      Dashboard's Failure Groups tab; Custom-mode models are untouched; the
- *      retrain notice counts down as models are trained (Train sensor, then
- *      Train all) and goes away; a scoring-only change asks for Mark complete
- *      again and re-trains nothing.
- *   2. Period counts: how many `count_period_rows` calls the window makes, and
- *      that the one-line card always counts what is ON DISK.
- *   3. Date entry against the real counts: a complete date takes effect before
- *      Apply, a half-typed one never reaches the disk.
- *
- * Covered elsewhere and NOT repeated here:
- *   - what the workspace file and both windows look like AFTER a scoring-only
- *     Apply (testsChangedAt, the notice text, Mark complete again, restart):
- *     `ScoringPeriodsLegacyWorkspace.integration.test.tsx`, steps 4–6;
- *   - every wording / state of the modal in one window with mocked storage:
- *     `BuildModelWindow.test.tsx` ("change warnings…", "settings modal: structure…").
- */
+/* Real Dashboard + Build Model + workspaceManager on one in-memory workspace, fake Rust with the REAL `count_period_rows`. Covers Apply across windows (impact N = dots that really change), `count_period_rows` call counts, date entry before Apply. Scoring-only Apply: ScoringPeriodsLegacyWorkspace.integration.test.tsx. */
 
 const fsHold = vi.hoisted(() => ({ gate: null as null | { path: string; wait: Promise<void>; entered: boolean } }));
 
@@ -34,8 +10,7 @@ vi.mock('@tauri-apps/plugin-fs', async () => {
     const m = (await import('./helpers/healthEnv')).fsModule();
     return {
         ...m,
-        // A workspace save is "write a temp sibling, rename it over the file": the test can
-        // hold the rename of ONE workspace file (a slow disk) and release it later.
+        // A workspace save is write-temp-then-rename: the test can hold the rename of one file (slow disk) and release it later.
         rename: async (from: string, to: string) => {
             const g = fsHold.gate;
             if (g && g.path === to) { g.entered = true; await g.wait; }
@@ -88,23 +63,17 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-// The plant dataset: 60 hourly rows, 2026-01-01 00:00 … 2026-01-03 11:00. TAG2 = the row number,
-// so "TAG2 > 10" keeps rows 11..59.
+// Dataset: 60 hourly rows, 2026-01-01 00:00 to 2026-01-03 11:00; TAG2 = row number, so 'TAG2 > 10' keeps rows 11..59.
 const P1 = { id: 'p1', start: '2026-01-01T00:00', end: '2026-01-02T23:00' }; // rows 0..47 → 37 running
 const S1 = { id: 's1', start: '2026-01-03T00:00', end: '2026-01-03T11:00' }; // rows 48..59 → 12 running
 const OWN_TRAIN = [{ id: 'ct', start: '2026-01-01T00:00', end: '2026-01-02T00:00' }];
 const OWN_TEST = [{ id: 'cs', start: '2026-01-02T06:00', end: '2026-01-02T20:00' }];
 const SP1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_WIDE = { kind: 'individual', lower: -500, upper: 500, masterLower: null, masterUpper: null };
-// (`scoringIntervalSecs`: a record as THIS build writes it — the saved results use 1-hour averages; one without it gets the footer's "earlier row-by-row scoring" hint, covered in BuildModelWindow.test.tsx)
+// `scoringIntervalSecs`: a record as this build writes it (1-hour averages); without it the 'earlier row-by-row scoring' hint shows.
 const record = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints, scoringIntervalSecs: 3600 });
 
-/**
- * FG-A: i1 (Individual TAG1, trained) + r1 (Relation model TAG1 <- TAG3, trained),
- *       i3 (Individual TAG3, COMPLETE).
- * FG-B: i5 (Individual TAG5, COMPLETE, on its OWN running condition),
- *       i4 (Individual TAG4, never trained).
- */
+/** FG-A: i1 (Individual TAG1, trained), r1 (Relation TAG1 <- TAG3, trained), i3 (Individual TAG3, Complete). FG-B: i5 (Individual TAG5, Complete, own running condition), i4 (Individual TAG4, never trained). */
 function fiveModels(fg: Record<string, unknown> = {}) {
     return wsTrained({ runningConditionTimePeriods: [P1], runningConditionTestPeriods: [S1], ...fg }, [
         model({ id: 'i1', name: 'Pressure band', targetSensor: 'TAG1', healthSetPoints: SP1, healthVerdict: 'valid' }),
@@ -144,19 +113,14 @@ const wsWrites = (id = WS) => env.writes.filter(w => w.path === wsFile(id)).leng
 const counts = () => env.backend!.cmds('count_period_rows');
 /** Running rows Rust answered for the LAST count (what the card's "nothing to train on" verdict reads). */
 const lastCountRows = () => (counts().slice(-1)[0]?.result as { union: { running_rows: number } } | undefined)?.union.running_rows;
-/**
- * User decision 2026-10-14: the Build Model window never says how many data rows are used.
- * The card prints NO count whatever `count_period_rows` answered — no "N rows · x%", no
- * "Counting rows…", no "— rows", no share meter.
- */
+/** The card prints no row count whatever `count_period_rows` answered: no 'N rows', 'Counting rows…', '— rows' or meter. */
 const expectCardHasNoRowCount = () => {
     const c = bmw().getByTestId('rc-card');
     for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(c).queryByTestId(id)).toBeNull();
     expect(c.querySelector('.rcc-meter')).toBeNull();
     expect(c.textContent).not.toMatch(/\d[\d,]*\s*rows?\b|Counting rows|— rows|%/);
 };
-/** "M" of the caption's "(about M d running time)" — the only thing the settings print of a
- *  count; null while no running time is claimed. The caption has NO rows part. */
+/** The 'M' of '(about M d running time)', the only count the settings print; null while no running time is claimed. */
 const runningTime = (dlg: ReturnType<typeof within>) => {
     expect(dlg.queryByTestId('rc-caption-rows')).toBeNull();
     expect(dlg.getByTestId('rc-caption').textContent).not.toMatch(/rows|%/);
@@ -178,9 +142,6 @@ const freshOnDisk = (mid: string) => {
 };
 const stripPhase = () => bmw().queryByTestId('train-run-strip')?.getAttribute('data-phase') ?? null;
 
-// ---------------------------------------------------------------------------
-// 1. Apply across windows
-// ---------------------------------------------------------------------------
 
 describe('1. Apply across windows: the impact line is what really happens', () => {
     it('a train period changed: "sets 3 models back to Incomplete" = exactly the 3 dots that change in the Build Model list and on the Dashboard; the Custom and the untrained model are untouched; the notice counts down with Train sensor and Train all', async () => {
@@ -196,7 +157,6 @@ describe('1. Apply across windows: the impact line is what really happens', () =
         expect(dash0).toMatchObject({ i3: 'complete', i5: 'complete', i4: 'none' });
         expect(bmw().queryByTestId('rc-retrain-notice')).toBeNull();
 
-        // ── the modal: a train period is shortened ──────────────────────────
         const dlg = openRc();
         expect(apply().disabled).toBe(true);
         type(dlg.getByLabelText('P1 end'), '2026-01-02T12:00'); // typed, no blur
@@ -213,7 +173,6 @@ describe('1. Apply across windows: the impact line is what really happens', () =
         await settle(100);
         expect(readDisk().failureGroupState.runningConditionTimePeriods).toEqual([{ ...P1, end: '2026-01-02T12:00' }]);
 
-        // ── N = the dots that changed, in BOTH windows ──────────────────────
         const list1 = listDots();
         expect(changed(list0, list1).sort()).toEqual(['i1', 'i3', 'r1']);
         await waitFor(() => expect(changed(dash0, dashDots()).sort()).toEqual(['i1', 'i3', 'r1']));
@@ -227,14 +186,12 @@ describe('1. Apply across windows: the impact line is what really happens', () =
         expect(diskModel('i5')).toEqual(before.i5);
         expect(diskModel('i4')).toEqual(before.i4);
 
-        // ── the notice under the running-condition line ─────────────────────
         const notice = () => bmw().getByTestId('rc-retrain-notice').textContent;
         expect(notice()).toBe('Running condition changed — 3 models need training again. Use Train all, or Train sensor on each one; the amber dots in the list show which.');
         expect(bmw().queryByTestId('tests-changed-notice')).toBeNull();
         // session-only: nothing about it is in the file
         expect(JSON.stringify(readDisk())).not.toMatch(/retrain/i);
 
-        // ── Train sensor on TAG1 (Individual + Relation model) → 1 left ─────
         expect(bmw().getByTestId('train-sensor').textContent).toBe('▶ Train sensor · 2 of 2');
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await waitFor(() => expect(stripPhase()).toBe('done'), { timeout: 8000 });
@@ -243,7 +200,6 @@ describe('1. Apply across windows: the impact line is what really happens', () =
         expect(freshOnDisk('r1')).toBe(true);
         expect(notice()).toBe('Running condition changed — 1 model needs training again. Use Train all, or Train sensor on it; the amber dot in the list shows which.');
 
-        // ── Train all: the last one (and the never-trained model) → the notice is gone ─
         await act(async () => { fireEvent.click(bmw().getByTestId('train-all')); });
         expect(bmw().getByTestId('train-row-status-i3').textContent).toBe('Ready');
         expect(bmw().getByTestId('train-row-status-i4').textContent).toBe('Ready');
@@ -304,9 +260,6 @@ describe('1. Apply across windows: the impact line is what really happens', () =
     });
 });
 
-// ---------------------------------------------------------------------------
-// 2. Period counts
-// ---------------------------------------------------------------------------
 
 describe('2. count_period_rows: how often it is asked, and that the card counts what is on disk', () => {
     /** The persisted workspace condition as the card must have counted it. */
@@ -322,13 +275,12 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         await waitForCharts();
         await settle(600);
 
-        // ── the card: ONE call, for the persisted train period + condition ──
         expect(counts()).toHaveLength(1);
         expect(counts()[0].args.periods).toHaveLength(1);
         expect(counts()[0].args.expected_generation).toBe(env.backend!.generation());
         expect(counts()[0].error).toBeUndefined();
         expect((counts()[0].result as any).union.running_rows).toBe(37);
-        // …and the card prints none of it ("37 rows · 62%" is gone): it stays the plain green line
+        // …and the card prints none of it: it stays the plain green line
         expectCardHasNoRowCount();
         expect(bmw().getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
         expect(bmw().getByTestId('rc-card-use').textContent).toBe('');
@@ -336,7 +288,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         await settle(900);
         expect(counts()).toHaveLength(1);
 
-        // ── open: the draft's train + scoring counts (two calls) ────────────
         const dlg = openRc();
         // 37 running rows, one per hour = 1.5 d of running time — days, never "37 of 60 rows (62%) …"
         await waitFor(() => expect(runningTime(dlg)).toBe('1.5'));
@@ -344,7 +295,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         expect(counts()).toHaveLength(3);
         expect(dlg.getByTestId('period-running-1').textContent).toMatch(/1\.5 d running/);
 
-        // ── a settled draft: two more, however many keystrokes it took ──────
         const value = dlg.getByLabelText('Running above this value');
         type(value, '2');
         type(value, '20');
@@ -357,7 +307,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         // the card behind is still the PERSISTED condition — and still says nothing about rows
         expectCardHasNoRowCount();
 
-        // ── Apply: the card counts the new on-disk state, once ──────────────
         const n = counts().length;
         await act(async () => { fireEvent.click(apply()); });
         await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe('20'));
@@ -369,7 +318,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         expect(cardCallFor([P1], 20)).not.toHaveLength(0);
         expect(counts().slice(n)[0].args.periods).toHaveLength(1); // train only: the card reads no scoring count
 
-        // ── a Custom model: its own counts on Model fit, NONE on Health score ─
         selectSensor('tag5', 2);
         await waitForCharts();
         await settle(600);
@@ -381,7 +329,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
         await settle(600);
         expect(counts().slice(onFit).map(c => c.args.periods)).toEqual([]);
 
-        // ── another writer changes the condition; the Dashboard's next write carries it ─
         const { updateWorkspaceData } = await import('../workspaceManager');
         const { withFailureGroupState } = await import('../utils/failureGroupState');
         await act(async () => {
@@ -488,9 +435,6 @@ describe('2. count_period_rows: how often it is asked, and that the card counts 
     });
 });
 
-// ---------------------------------------------------------------------------
-// 3. Date entry
-// ---------------------------------------------------------------------------
 
 describe('3. typing a date in a period row', () => {
     it('a complete date moves the timeline, the caption (with the running time of Rust\'s new count) and the impact line BEFORE Apply; a half-typed date shows the grey line and is never written; a cleared bound keeps its date through Apply', async () => {
@@ -503,7 +447,6 @@ describe('3. typing a date in a period row', () => {
         const tl0 = dlg.getByTestId('rc-tl-P1').getAttribute('style');
         const train0 = dlg.getByTestId('rc-caption-train').textContent;
 
-        // ── a complete date, no blur ────────────────────────────────────────
         const end = dlg.getByLabelText('P1 end') as HTMLInputElement;
         end.focus();
         type(end, '2026-01-02T00:00'); // rows 0..24 → running 11..24 = 14
@@ -516,7 +459,7 @@ describe('3. typing a date in a period row', () => {
         expect(document.activeElement).toBe(end); // the row never moved under the cursor
         expect(readDisk().failureGroupState.runningConditionTimePeriods).toEqual([P1]);
 
-        // ── half-typed (a datetime-local reports '' while a segment is missing) ──
+        // half-typed: a datetime-local reports '' while a segment is missing
         type(end, '');
         const pending = bmw().getByTestId('rc-pending-date');
         expect(pending.textContent).toBe('Finish the date in P1 to see what this changes');
@@ -526,7 +469,7 @@ describe('3. typing a date in a period row', () => {
         await settle(600);
         expect(runningTime(dlg)).toBe('0.6');
 
-        // ── Apply with the field still half-typed: the last complete date is written, never '' ──
+        // Apply with the field still half-typed: the last complete date is written, never ''
         const writes = wsWrites();
         const countsBeforeApply = counts().length;
         await act(async () => { fireEvent.click(apply()); });
@@ -539,7 +482,7 @@ describe('3. typing a date in a period row', () => {
         expect(counts().slice(-1)[0].args.periods).toEqual([{ start: P1.start, end: '2026-01-02T00:00' }]);
         expectCardHasNoRowCount();
 
-        // ── a SET bound cleared in the field, then Apply (with another edit): the date stays ──
+        // a SET bound cleared in the field, then Apply (with another edit): the date stays
         const again = openRc();
         const start = again.getByLabelText('P1 start') as HTMLInputElement;
         start.focus();

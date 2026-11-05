@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 
-// The real picker lives in SensorPickers.tsx (tested in SensorPickers.test.tsx); this panel
-// only needs "a sensor field with a label" (its own behaviour is tested there).
-// The stand-in records the props it is given so the test can assert the panel
-// still uses the REAL single-select picker (not a native <select>) and what it
-// does on selection.
+// Stand-in for `SensorPickers.tsx`; records props to assert the panel uses the single-select picker, not a native <select>.
 const pickerProps: any[] = [];
 vi.mock('../components/windows/SensorPickers', () => ({
     SensorPickerModal: (props: any) => {
@@ -25,15 +21,7 @@ import type { TestPeriod, TimeHighlight, WorkspaceSensorFilter } from '../types'
 
 afterEach(() => { cleanup(); pickerProps.length = 0; });
 
-/*
- * The Running-condition settings body (workbench redesign SPEC §5): ONE column —
- * timeline hero, then Train periods · Scoring periods · When the machine is
- * running (ONE line, "Machine is running when [sensor] is above [value]" —
- * 2026-10-26), each with one eyebrow line. No right-hand preview column, no callout
- * boxes. The same panel is a Custom model's own running condition
- * (`scope="custom"`). The rows are tested in TimePeriodsEditor / TestPeriodsEditor,
- * the hero in RunningConditionTimeline.
- */
+/* One-column running-condition body (timeline, periods, 'Machine is running when' line); also `scope="custom"`. */
 
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-05-01 00:00:00' };
 const p = (id: string, start: string, end: string) => ({ id, start, end });
@@ -114,12 +102,11 @@ describe('RunningConditionPanel — one column (workbench redesign §5)', () => 
         expect(within(screen.getByTestId('rc-timeline-score')).getByTestId('rc-tl-S1')).toBeTruthy();
         expect(within(screen.getByTestId('rc-periods')).getByTestId('time-periods-editor')).toBeTruthy();
         expect(within(screen.getByTestId('rc-scoring')).getByTestId('test-periods-editor')).toBeTruthy();
-        // the old coverage strip is gone from the modal (the hero replaces it)
+        // no coverage strip in the modal
         expect(screen.queryByTestId('period-coverage')).toBeNull();
     });
 
-    // User decision 2026-10-14: the count is read as running DAYS only — the number of rows
-    // (14,391 of 25,880, 56%) is never printed in the settings.
+    // The count is read as running DAYS only; the number of rows is never printed in the settings.
     it('the counts feed the caption AND every row as running DAYS ("30 d · 26 d running") — no number of rows anywhere in the panel', () => {
         setup({ counts: COUNTED });
         expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
@@ -330,7 +317,7 @@ describe('RunningConditionPanel — scope="custom" (a model\'s own running condi
         ]);
         expect(screen.getByTestId('custom-rc-footnote').textContent).toBe('Only this model · the workspace default is untouched · saved with Save changes');
         expect(within(screen.getByTestId('custom-periods')).getByTestId('period-days-1').textContent).toBe('30 d · 26 d running');
-        // …and, like the workspace settings, no number of rows (2026-10-14)
+        // No number of rows, like the workspace settings.
         expect(screen.getByTestId('rc-caption').textContent).toBe('60 d train (about 50 d running time)15 d scoring≥ 30 d recommended');
         expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
         expect(panel.textContent).not.toMatch(/14,391|25,880|56%|\d rows|rows \(/);

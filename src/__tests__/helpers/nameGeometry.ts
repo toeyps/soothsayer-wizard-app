@@ -1,7 +1,4 @@
-/**
- * jsdom has no layout, so every name reads as "fits". `stubNamesCut` makes every element report less room than its
- * content, which is how long names measure when they are really cut; `restoreNames` puts it back.
- */
+/** jsdom has no layout, so every name fits. `stubNamesCut` makes elements report less room than content; `restoreNames` undoes it. */
 const origClient = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
 const origScroll = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
 
@@ -10,8 +7,7 @@ export function stubNamesCut() {
     Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 500 });
 }
 
-/** Measured and fits: every element has room to spare. Unlike no stub at all (`clientWidth` 0 = not rendered), this
- *  takes a name through the fit branch of the measuring hooks. */
+/** Measured and fits: takes a name through the fit branch (no stub means width 0 = not rendered). */
 export function stubNamesFit() {
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 500 });
     Object.defineProperty(HTMLElement.prototype, 'scrollWidth', { configurable: true, value: 400 });

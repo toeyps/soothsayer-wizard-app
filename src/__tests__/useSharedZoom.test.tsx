@@ -8,12 +8,7 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({ default: () => null }
 import { useSharedZoom } from '../components/windows/workbench/HealthScorePage';
 import { HEALTH_SYNC_GROUP, HEALTH_SYNC_GROUP_EXPANDED } from '../components/windows/workbench/healthPageCharts';
 
-/*
- * The Health score page's two time charts show ONE zoom window (real-app request
- * 2026-10-12: the charts are the same width, so the same window puts a moment in time
- * at the same X in both — "no need to line the point up by eye"). A chart redrawn from a
- * new option starts unzoomed; the hook puts the window back.
- */
+/* The Health score page's two time charts share ONE zoom window so a moment sits at the same X in both. A chart redrawn from a new option starts unzoomed; the hook puts the window back. */
 
 /** A stand-in for an ECharts instance: it only knows its zoom window. */
 function fakeChart(opts: { inModal?: boolean } = {}) {
@@ -151,8 +146,7 @@ describe('useSharedZoom', () => {
     });
 });
 
-// The stacked card's Expand overlay holds BOTH charts: that enlarged pair is linked to itself —
-// its own cursor group, its own zoom window — and never to the pair under the backdrop.
+// The Expand overlay's enlarged pair links only to itself (own cursor group and zoom window).
 describe('useSharedZoom — the enlarged pair (scope "expanded")', () => {
     const setupExpanded = (key = 'm1') => renderHook(({ k }) => useSharedZoom(k, 'expanded'), { initialProps: { k: key } });
 
@@ -223,8 +217,7 @@ describe('useSharedZoom — the enlarged pair (scope "expanded")', () => {
         expect(b.actions).toEqual([]);
     });
 
-    // Code review 2026-10-12: the overlay kept its window for as long as the page was mounted,
-    // so the second opening started zoomed.
+    // The overlay must open on the whole range every time; it must not keep its window while the page stays mounted.
     it('the enlarged copy opens on the whole range EVERY time: closing it (its charts are disposed) forgets its window', () => {
         const { result } = setupExpanded();
         const a = fakeChart({ inModal: true });

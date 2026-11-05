@@ -12,18 +12,11 @@ import {
     type ParsedExportError,
 } from '../utils/workspaceExport';
 
-/*
- * Export results, as a hook. It reads the workspace FROM DISK every time it
- * needs it (another window may have changed it since this one last looked),
- * builds the request with `buildWorkspaceExportRequest`, and drives the Rust
- * commands. Nothing it does is written to the workspace; only the last export
- * folder is remembered (app-wide, plugin-store `lastExportDir`).
- */
+/* Export results hook: reads the workspace FROM DISK each time (another window may have changed it) and drives the Rust commands. Writes nothing to the workspace except remembering `lastExportDir`. */
 
 export type WorkspaceExportPhase = 'idle' | 'planning' | 'ready' | 'running' | 'done' | 'failed' | 'cancelled';
 
-/** What the request needs besides the workspace on disk. Read when `plan` /
- *  `start` run (the latest values), never captured at mount. */
+/** Extra request inputs, read when `plan` / `start` run (latest values), never captured at mount. */
 export interface WorkspaceExportContext {
     metadata: readonly SensorMetadata[] | null | undefined;
     headers: string[] | null;
@@ -121,8 +114,7 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
         if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     }, []);
 
-    // Rust answers false until the command has claimed its slot, which happens on a
-    // worker thread after the call: keep asking while that call is unanswered.
+    // Rust answers false until the command has claimed its slot (on a worker thread), so keep asking while that call is unanswered.
     const askRustToCancel = useCallback(async (id: string) => {
         for (let i = 0; i < CANCEL_TRIES && invokingRef.current.has(id); i++) {
             if (await cancelWorkspaceExport(id)) return;
@@ -208,8 +200,7 @@ export function useWorkspaceExport(workspaceId: string | null, context: Workspac
             if (seq !== seqRef.current) { finish(); return null; }
             if (!fresh) { finish(); setError(NO_WORKSPACE); setPhase('failed'); return null; }
             stopIfCancelled();
-            // The request carries no status, so Rust cannot refuse a model another
-            // window made Incomplete (or added) after this window last looked.
+            // The request carries no status, so Rust can't refuse a model another window made Incomplete (or added) since; re-check readiness here.
             const c = ctxRef.current;
             const notReady = exportReadiness({
                 workspace: fresh.ws, metadata: c.metadata, headers: c.headers, recipes: c.recipes, order: c.order,

@@ -1,23 +1,4 @@
-/**
- * Special sensors — "are the values right after an EDIT?"
- *
- *
- * Cross-zone seams covered here (each worker's own tests cover their half):
- *
- *  1. Quick build -> Rust formula contract: the formula strings `quickMulti`
- *     BUILDS for combinations / chains / "then wrap" must be exactly the ones
- *     `src-tauri/tests/fixtures/special_sensor_formulas.json` lists — the Rust
- *     side (`tests/internal/qa_special_sensor_internal.rs` e01) proves each of
- *     those evaluates to the intended math on every row.
- *  2. The Formula editor (fe-ui) -> runSpecialSensorEdit (fe-logic) -> the fake
- *     Rust session that holds real column values (`helpers/fakeRustSession.ts`):
- *     an edit typed into the real editor recomputes the sensor AND everything
- *     built on it, checked row by row against an independent JS calculation;
- *     a rename keeps every value; a failed edit rolls the NUMBERS back; and
- *     the recipe list that would be saved, replayed onto a fresh load (the
- *     workspace reopen), reproduces exactly the values that were on screen.
- *  3. Regressions ("regression:").
- */
+/** Special sensors after an EDIT: Quick build formulas match the Rust fixture; the real editor's edits give the right values. */
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
@@ -35,7 +16,6 @@ import { pickMulti } from './helpers/sensorPicker';
 // The editor's preview is not what these tests look at: no answer = "no information".
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }));
 
-// ── 1. Quick build -> Rust formula contract ───────────────────────────────
 
 /** The fixture speaks the old builder's ids; Quick build has the same option sets. */
 const COMBINE: Record<string, QuickCombine> = { abs_diff: 'absdiff', temp_spread: 'spread', efficiency_pct: 'efficiency' };
@@ -56,7 +36,6 @@ describe('Quick build builds exactly the formulas the Rust engine is verified ag
     }
 });
 
-// ── 2. Editor -> edit flow -> values ─────────────────────────────────────
 
 const N = 48;
 /** Deterministic data with missing values, zeros and negatives. */
@@ -120,11 +99,7 @@ async function sessionWithChain(): Promise<FakeRust> {
     return rust;
 }
 
-/**
- * Open the REAL Formula editor on `recipe`, apply `edit`, and build the recipe to save the way
- * the window does (`AddSensorWindow.handleSaveFromEditor`): the maths untouched -> the stored
- * recipe (under `newTag` on a rename); changed -> `editorStateToRecipe(state, tag)`.
- */
+/** Open the real Formula editor on `recipe`, apply `edit`, build the recipe to save as `handleSaveFromEditor` does. */
 function editInEditor(
     recipe: SpecialSensorRecipe,
     edit: () => void,
@@ -267,16 +242,9 @@ describe('editing a special sensor after creation: every value equals a fresh ca
     });
 });
 
-// ── 3. Regressions ─────────────────────────────────────────────────────────
 
 describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
-    /**
-     * An aggregate block stays a block when its sources change: open an
-     * "Average all" sensor, add one more source, Save — it must stay an Average
-     * (not fall back to a `+` chain, which would roughly triple the values with
-     * no warning). Same for Sum/Median, and for removing a source from a
-     * 3-source average.
-     */
+    /** An aggregate block (Average/Sum/Median) stays a block when sources are added or removed; a `+` chain would change values. */
     it('regression: adding a source to an "Average all" sensor keeps it an average (not a silent switch to A + B + C)', () => {
         const avg: SpecialSensorRecipe = {
             kind: 'operation', tag: 'Avg', sourceSensors: ['A', 'B'],
@@ -291,11 +259,7 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
         });
     });
 
-    /**
-     * The "Referenced sensors" chips agree with the Rust tokenizer:
-     * `$11PT1214A.PV` is ONE sensor (not `11PT1214A`, a DIFFERENT real sensor)
-     * and a bare Thai name is listed.
-     */
+    /** 'Referenced sensors' chips follow the Rust tokenizer: `$11PT1214A.PV` is ONE sensor, and a bare Thai name is listed. */
     it('regression: the Sensors row under the formula follows the Rust grammar (dotted and Thai bare names)', () => {
         render(
             <SpecialSensorFormulaEditor
@@ -308,10 +272,7 @@ describe('known bugs, fixed 2026-10-08 (were it.fails)', () => {
         expect(chips.map(c => c.textContent)).toEqual(['11PT1214A.PV', 'อุณหภูมิ']);
     });
 
-    /**
-     * "Round to decimals" is described WITH its decimal count, so the Manage
-     * list and the locked editor can tell "round to 0" from "round to 3".
-     */
+    /** 'Round to decimals' shows its decimal count so 'round to 0' and 'round to 3' differ in the Manage list and locked editor. */
     it('regression: describeRecipe shows how many decimals a "Round to decimals" sensor keeps', () => {
         const r: SpecialSensorRecipe = {
             kind: 'operation', tag: 'R', sourceSensors: ['TAG1'],

@@ -1,24 +1,5 @@
-//! The TS <-> Rust contract for the training/preview filter
-//! (`timestamp_ranges`, value conditions, AND/OR `combine`).
-//!
-//! The real `PreviewFilter` / `DataFilter` / `TimeRangeArg` structs are
-//! private to `lib.rs`, so an integration test cannot deserialize into them
-//! directly. Instead this file pins the contract from both ends against ONE
-//! shared fixture (`tests/fixtures/filter_contract.json`), which the frontend
-//! tests also read:
-//!
-//!   1. The field lists in the fixture must equal the field names declared in
-//!      `lib.rs`'s real structs (read from the source text) — so a rename on
-//!      either side fails here instead of being silently ignored by serde
-//!      (serde drops unknown keys, which would turn a misnamed
-//!      `timestamp_ranges` into "no time gate at all").
-//!   2. Every payload the frontend is pinned to send deserializes into
-//!      strict mirrors of those structs (`deny_unknown_fields`), with JSON
-//!      `null` and missing bounds both reading as an open side.
-//!   3. Every non-null bound the frontend can send parses with the SAME
-//!      `csv_processor::parse_timestamp` the real filter uses — the real
-//!      resolver turns an unparseable bound into an error, so a format the
-//!      frontend produces but Rust can't read would break every model query.
+//! TS <-> Rust contract for the preview filter, pinned on `tests/fixtures/filter_contract.json` (lib.rs structs are private).
+//! Checks: fixture fields match lib.rs struct fields; payloads fit strict mirrors; every bound parses with `parse_timestamp`.
 
 use serde::Deserialize;
 use std::collections::BTreeSet;
@@ -50,8 +31,7 @@ struct PmPayload {
     json: serde_json::Value,
 }
 
-// Strict mirrors of lib.rs's private structs. Field names are checked
-// against the real source by `fixture_field_lists_match_the_real_rust_structs`.
+// Strict mirrors of lib.rs's private structs; field names are checked against the source.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct TimeRangeMirror {
@@ -105,8 +85,7 @@ fn fixture() -> Fixture {
     serde_json::from_str(FIXTURE).expect("filter_contract.json must parse")
 }
 
-/// Field names declared inside `struct <name> { ... }` in lib.rs (attributes
-/// and comments skipped). Panics if the struct is not found exactly once.
+/// Field names of `struct <name>` in lib.rs; panics unless found exactly once.
 fn struct_fields(name: &str) -> BTreeSet<String> {
     let header = format!("struct {name} {{");
     let starts: Vec<_> = LIB_SRC.match_indices(&header).collect();
@@ -197,9 +176,7 @@ fn every_pm_payload_the_frontend_sends_is_accepted_strictly() {
             "chart" => {
                 let f: DataFilterMirror = serde_json::from_value(p.json.clone())
                     .unwrap_or_else(|e| panic!("chart payload '{}' rejected: {e}", p.name));
-                // The chart sends explicit nulls for the legacy pair (the TS type
-                // requires the keys); null/null must read as "not given" so the
-                // real resolver does not report "both legacy and ranges".
+                // The chart sends explicit nulls for timestamp_start/end; null/null must read as not given.
                 assert!(f.timestamp_start.is_none() && f.timestamp_end.is_none(), "{}", p.name);
             }
             other => panic!("unknown payload kind {other}"),
@@ -209,9 +186,7 @@ fn every_pm_payload_the_frontend_sends_is_accepted_strictly() {
 
 #[test]
 fn a_bound_string_and_a_csv_timestamp_with_the_same_text_land_on_the_same_instant() {
-    // The filter compares bounds against `ts_parsed`, which `from_parts` fills
-    // at load. Both must go through the same parser, or an inclusive bound
-    // would miss the row it names.
+    // Bounds are compared against `ts_parsed`; both must use the same parser or an inclusive bound misses its row.
     let texts = ["2026-01-31T23:59", "2026-03-01T00:00", "2026-01-01T00:00:30"];
     let data = ColumnarData::from_parts(
         vec!["timestamp".into(), "A".into()],

@@ -14,8 +14,7 @@ export interface TagCompareRow {
     color?: string;
     /** A short lead before the name — the axis ("X" / "Y") on the Scatter chart. */
     lead?: string;
-    /** One ready-to-print NUMBER per tag, in the order of `items` ("—" when there is none).
-     *  The unit is not in it: it is printed once per row, beside the sensor's name. */
+    /** One ready-to-print number per tag, in `items` order ('—' if none); the unit is printed once per row. */
     cells: string[];
 }
 
@@ -27,31 +26,11 @@ interface TagCompareTableProps {
     onRemove: (id: string) => void;
     /** Where keyboard focus goes when the last tag is removed (the table unmounts). */
     emptyFocusRef?: RefObject<HTMLElement | null>;
-    /** `panel` = fills the Dashboard's "Tagged points" tab (no height cap, no fold button);
-     *  `docked` (default) = a strip under the chart. */
+    /** `panel` fills the Dashboard's Tagged points tab; `docked` (default) is a strip under the chart. */
     variant?: 'docked' | 'panel';
 }
 
-/**
- * The values of every tagged point, side by side: one column per tag (a rule and
- * a dot in its colour, the date over the time, its own ×), one row per sensor with
- * its unit printed once. Line and Scatter. Layout: SPEC
- * docs/design/handoff/dashboard-tagged-points/README.md (2026-10-12).
- *
- * The values used to be drawn ON the chart, one box per tag at the tagged
- * point. With five sensors a box is about 330 px wide, so two tags closer than
- * that covered each other (and the lines) and neither could be read. On the
- * chart a tag is now only a dot in its colour; the numbers live here, where
- * any count of tags and sensors fits — the columns scroll sideways, the rows
- * scroll down — and two tags can be compared along one row.
- *
- * Where it shows: in the Dashboard it is rendered into the "Tagged points" tab
- * of the panel under the chart (`TagTableSlot` with a host element), so the
- * chart keeps its full height; with no host it docks under the chart itself.
- *
- * The column heads ARE `TaggedPointList` (a list of tags with one × each, and
- * its focus rule when a tag is removed), laid out as cells of the same grid.
- */
+/** Tagged points side by side: one column per tag, one row per sensor with its unit once. */
 export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, variant = 'docked' }: TagCompareTableProps) {
     const [folded, setFolded] = useState(false);
     const setNames = useMemo(() => rows.map(r => displayedName(r.info)), [rows]);
@@ -60,16 +39,12 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
     const open = panel || !folded;
 
     return (
-        // Rule 2 + 3: the rows are one set. While a name is cut, the start they share is printed once in the
-        // corner and the rows print the rest. A name that fits changes nothing.
+        // The rows are one set: while a name is cut, the shared start prints once in the corner and rows print the rest.
         <SensorSetProvider names={setNames} drop>
         <section className={`tag-table${panel ? ' tag-table--panel' : ''}`} data-testid="tag-table" aria-label="Values at the tagged points">
             <div
                 className="tag-table-grid"
-                // The names stay next to their values (capped columns), and a last, empty column
-                // takes the rest of the width, so the head band and the row lines cross the whole
-                // tab instead of the table floating in a corner. Many tags: the columns shrink to
-                // 124 px, then the table scrolls sideways under the fixed name column.
+                // Capped columns plus a last 1fr one so the head band and row lines span the tab; many tags shrink to 124 px, then scroll.
                 style={{ gridTemplateColumns: `minmax(220px, 400px) repeat(${items.length}, minmax(124px, 152px)) minmax(0, 1fr)` }}
             >
                 <div className="tag-table-corner">
@@ -99,7 +74,7 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
                             {row.color && <i className="tag-table-swatch" style={{ background: row.color }} aria-hidden="true" />}
                             {row.lead && <span className="tag-table-lead">{row.lead}</span>}
                             <SensorInline tag={row.info.tag} info={row.info} size="sm" fit />
-                            {/* The unit, ONCE per row (it used to be repeated in every cell). */}
+                            {/* The unit prints once per row, not in every cell. */}
                             {row.info.unit && <span className="tag-table-unit" data-testid="tag-table-unit">{row.info.unit}</span>}
                         </div>
                         {items.map((item, c) => {
@@ -131,19 +106,14 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
     );
 }
 
-/**
- * Where a chart puts its tag table. `host` undefined = nobody offers a place: dock it under the
- * chart. `host` null = the Dashboard's "Tagged points" tab is not open right now: draw nothing.
- * Otherwise it is rendered INTO that tab.
- */
+/** `host` undefined: dock under the chart. `host` null: Tagged points tab closed, draw nothing. Otherwise render into it. */
 export function TagTableSlot({ host, ...props }: TagCompareTableProps & { host?: HTMLElement | null }) {
     if (host === undefined) return <TagCompareTable {...props} />;
     if (!host) return null;
     return createPortal(<TagCompareTable {...props} variant="panel" />, host);
 }
 
-/** A value cell: the number as the tooltips print it; "—" when there is none. The unit is NOT
- *  part of the cell — the table prints it once per row, beside the sensor's name. */
+/** The number as tooltips print it, '—' if none; the unit isn't part of the cell. */
 export function tagCell(text: string | null): string {
     return text == null ? '—' : text;
 }

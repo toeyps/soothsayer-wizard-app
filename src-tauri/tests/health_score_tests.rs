@@ -1,8 +1,4 @@
-//! Health score — contract tests through the PUBLIC `health_score`
-//! surface (what any outside consumer of the model files can rely on):
-//! the knots of every score, the validation codes the UI keys on, and the
-//! JSON shape of the issues / summary. The heavier flows (session cache,
-//! preview, export) are covered by the in-crate tests next to their code.
+//! Contract tests through the public health_score API: score knots, validation codes the UI keys on, JSON shape of issues/summary.
 
 use tauri_app_lib::health_score::{
     assign_cluster, has_errors, select_indices, summarize_hours, validate_clustering,
@@ -14,7 +10,7 @@ fn approx(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-9, "expected {b}, got {a}");
 }
 
-/// A consumer that only has `INDV_INFO` numbers: mean 50, sd 5.
+/// Band from rounded numbers: mean 50, sd 5.
 fn indv_band() -> IndividualBand {
     IndividualBand::from_rounded(50.0, 5.0, [45.0, 55.0], [35.0, 65.0])
 }

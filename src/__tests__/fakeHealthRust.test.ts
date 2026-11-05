@@ -1,16 +1,5 @@
 // @vitest-environment node
-/**
- * The TypeScript mirror of Rust's set-point validation messages
- * (`helpers/fakeHealthRust.ts`) must print numbers the way Rust does, or every
- * integration test built on it pins text the real app never shows.
- *
- * Rust (`health_score.rs`, commit a3c854d): a set point the USER typed is echoed
- * exactly (`fmt_typed`: the shortest text that reads back as the same number —
- * "-2", never "-2.000"; "4.61234", never "4.612"; "-0" as "0"); only values Rust
- * COMPUTED (SD, 2RMSE, band edges) keep the INFO-file rounding (`fmt_num`).
- * The vectors below are the ones of Rust's own
- * `fmt_typed_is_the_shortest_exact_text` test.
- */
+/** Mirrors Rust's number text: typed set points echo exactly (`fmt_typed`), computed values use `fmt_num` rounding. */
 import { describe, it, expect } from 'vitest';
 import {
     createFakeHealthRust, fileResidual, fmtTyped, groupHours, hourLabel, plantDataset, scoreClusterDistance, scoreIndividual, scoreRelationship,
@@ -56,7 +45,7 @@ describe('fakeHealthRust — messages echo a typed set point exactly; computed v
         const ordering = msg(validateIndividual(BAND, { lower: 9.25, upper: -2 }), 'ordering');
         expect(ordering).toBe('The lower set point (L = 9.25) must be below the upper set point (H = -2).');
         const inside = validateIndividual(BAND, { lower: 4.61234, upper: 4.75 });
-        // typed 4.61234 stays (it used to come back as "4.612"); the band edge keeps its rounding
+        // typed 4.61234 is echoed exactly; the band edge keeps its rounding
         expect(msg(inside, 'lower_inside_3sd')).toBe('The lower set point (L = 4.61234) must be below the lower 3σ boundary (2).');
         expect(msg(inside, 'upper_inside_3sd')).toBe('The upper set point (H = 4.75) must be above the upper 3σ boundary (8.001).');
         expect(msg(validateIndividual(BAND, { lower: -0, upper: 9 }), 'lower_inside_3sd')).toBeUndefined(); // -0 is below 2
@@ -79,7 +68,7 @@ describe('fakeHealthRust — messages echo a typed set point exactly; computed v
         expect(msg(order, 'point0_equals_point80')).toBe('0 low (-2) equals 80 low, so the score would drop from 80 to 0 instantly. Move 0 low further from zero.');
         expect(msg(order, 'point0_inside_point80')).toBe('0 high (4.5) must be further from zero than 80 high (4.61234).');
         for (const i of [...sign, ...band, ...order]) expect(i.message).not.toMatch(/\d\.\d*0\b|-2\.0/); // nothing padded
-        // The sentences name a point the way the score ruler does (2026-10-14) — never "lower 80-point".
+        // Messages name a point the way the score ruler does, never 'lower 80-point'.
         const empty = validateRelationship(1, {});
         expect(empty.filter(i => i.code === 'required').map(i => i.message)).toEqual([
             'Enter 80 low (the residual where the score is 80 on the low side, negative).',
@@ -98,12 +87,7 @@ describe('fakeHealthRust — messages echo a typed set point exactly; computed v
     });
 });
 
-/*
- * `count_period_rows` — the Running-condition modal's per-period counts. The
- * vectors are the ones of Rust's own tests in `src-tauri/src/period_counts.rs`
- * (4 days of 10-minute rows; RUN = 1 during 06:00-17:50, LOAD = the row number),
- * so a component test built on this fake sees the numbers the real app shows.
- */
+/* `count_period_rows` vectors are Rust's own (period_counts.rs): 4 days of 10-minute rows. */
 describe('fakeHealthRust — count_period_rows mirrors period_counts.rs', () => {
     const ROWS_PER_DAY = 144;
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -229,13 +213,9 @@ describe('fakeHealthRust — count_period_rows mirrors period_counts.rs', () => 
     });
 });
 
-// ---------------------------------------------------------------------------
-// Health score on 1-hour averages (health_hourly.rs / build_hourly)
-// ---------------------------------------------------------------------------
 
 const HOUR = 3_600_000;
 const MIN = 60_000;
-/** 2024-03-01T00:00:00Z — hour 0 of every dataset below. */
 const T0 = Date.UTC(2024, 2, 1, 0, 0, 0);
 const H0 = T0 / HOUR;
 /** CSV timestamp text of the row `i` five-minute steps after T0. */
@@ -365,12 +345,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
     const preview = (rust: ReturnType<typeof createFakeHealthRust>, request: Record<string, unknown>) =>
         rust.invoke('compute_health_preview', { request }) as Promise<any>;
 
-    // ---- Individual: 7 hours of 5-minute rows ----
-    //   hours 0-2  running, V = 50..61 within the hour (mean 55.5)
-    //   hour  3    only its first 6 rows running (V 50..55, mean 52.5); the stopped rows read 9999
-    //   hour  4    running, V alternates 25.5 / 85.5 (every ROW is far out, the MEAN is 55.5)
-    //   hour  5    only its first 3 rows running (V = 70); the stopped rows read 9999
-    //   hour  6    stopped for the whole hour
+    // 7 hours of 5-minute rows; stopped rows read 9999; hour 4 alternates 25.5/85.5 (mean 55.5); hour 6 stopped.
     const hourOfRow = (i: number) => Math.floor(i / 12);
     const running = (i: number) => {
         const h = hourOfRow(i);
@@ -417,8 +392,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.hourly.value).toEqual([55.5, 55.5, 55.5, 52.5, 55.5, 70]);
         expect(p.hourly.in_scope).toEqual([true, true, true, true, true, true]);
 
-        // The score of the MEAN, not the mean of row scores: in hour 4 every single row is far
-        // outside the 3σ band, the hour's mean is dead centre -> 100.
+        // Score of the MEAN, not the mean of row scores: hour 4 rows are all outside 3σ but its mean is centred -> 100.
         const band = rust.individualBand('V', TRAIN);
         expect(scoreIndividual(band, 20, 90, 85.5)!).toBeLessThan(40);
         expect(scoreIndividual(band, 20, 90, 25.5)!).toBeLessThan(40);
@@ -546,12 +520,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.score_summary).toMatchObject({ scored: 60, total_rows: 60, share_basis: 'hour_count' });
     });
 
-    // ---- Clustering: 6 hours of 5-minute rows, two clusters split by MODE ----
-    //   hours 0-1  MODE 10 -> cluster 1 around (10, 20)
-    //   hours 2-3  MODE 90 -> cluster 2 around (30, 60)
-    //   hour  4    half its rows in each mode (every ROW sits on a cluster centre)
-    //   hour  5    MODE 55: in the gap between the two ranges (outer edges are open, so only
-    //              an inner gap leaves a row in no range)
+    // 6 hours, two clusters split by MODE; hour 4 has rows in both, hour 5 sits in the gap between the ranges.
     const wobX = (i: number) => (((i * 7) % 5) - 2) * 0.5;
     const wobY = (i: number) => (((i * 3) % 7) - 3) * 0.5;
     const modeOf = (i: number) => {
@@ -595,23 +564,19 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         // "Inside 3× SD" is in the stats: the train block's share with scoring periods ...
         expect((p.stats as any).inside_3sd_ring_pct).toBe(p.test_validation.train.inside_3sd_ring_pct);
         expect((p.stats as any).inside_3sd_ring_pct).toBe(100);
-        // ... and still there WITHOUT any (the Model fit tile used to read "—" then)
+        // ... and still there WITHOUT any scoring periods
         const noPeriods = await preview(rust, { ...CLU_REQ, test_periods: [] });
         expect(noPeriods.test_validation).toBeNull();
         expect((noPeriods.stats as any).inside_3sd_ring_pct).toBe(100);
         expect(p.cluster_scatter.total).toBe(48);
 
-        // HOURLY: hour 4 has rows in BOTH clusters -> no cluster (its mean MODE, 50, lies in
-        // the gap between the ranges); hour 5
-        // (MODE 55, the inner gap) has no row in any range.
+        // Hour 4 has rows in both clusters and hour 5 is in the inner gap: neither gets a cluster.
         expect(p.hourly.total_points).toBe(6); // both are still hourly points
         expect(p.hourly.timestamps).toEqual([0, 1, 2, 3, 4, 5].map(hourStart));
         expect(p.hourly.rows).toEqual([0, 12, 24, 36, 48, 60]);
         expect(p.hourly.cluster).toEqual([1, 1, 2, 2, null, null]);
         expect([p.hourly.x[4], p.hourly.y[4]]).toEqual([20, 40]); // still the mean of its rows: midway between the two centres
-        // Row by row hour 4 is perfect (every row sits on its own cluster's centre). Scored
-        // against cluster 2 its hourly point would be far outside -> 0: a healthy machine
-        // would read as failed. It is NOT scored: null, never 0.
+        // Hour 4 is not scored (null, never 0): scoring it against cluster 2 would read a healthy machine as failed.
         expect(p.hourly.score.slice(0, 4)).toEqual([100, 100, 100, 100]);
         expect(p.hourly.score[4]).toBeNull();
         expect(p.hourly.score[5]).toBeNull();
@@ -630,18 +595,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(v.tests[0]).not.toHaveProperty('inside_3sd_ring_pct');
     });
 
-    // ---- Clustering, three criteria ranges: A [0, 30) · B [30, 60) · C [60, 90) ----
-    // B's centre (20, 40) is exactly midway between A's (10, 20) and C's (30, 60), and B's
-    // range holds the mean of an A-row and a C-row criteria value (10 and 75 -> 42.5): an
-    // hour split A / C, judged by its MEAN criteria value, would land in B and score 100
-    // against a cluster the machine was never in.
-    //   hours 0-1  MODE 10 -> A        hours 2-3  MODE 45 -> B        hours 4-5  MODE 75 -> C
-    //   hour  6    TRAINING hour split A / C (each row wobbles around its own centre)
-    //   hour  7    split A / C, every row exactly on its own centre
-    //   hour  8    every row in C, far from C's centre
-    //   hour  9    C, but one row's criteria value is MISSING (that row's X is 42, not 30)
-    //   hour 10    C, but one row's criteria value (65) is in the inner gap between B and C
-    //   hour 11    every row in B, on B's centre
+    // An A/C-split hour judged by its mean criteria value would land in B and score 100 against a cluster the machine was never in.
     const A = [10, 20], B = [20, 40], C = [30, 60];
     const mixMode = (i: number): number | null => {
         const h = hourOfRow(i);
@@ -687,8 +641,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(h.total_points).toBe(12); // every hour is still an hourly point
         expect(h.timestamps).toEqual(Array.from({ length: 12 }, (_, i) => hourStart(i)));
 
-        // RAW rows keep their OWN cluster: the split hours are two clusters row by row, the
-        // row with no usable criteria value is in none.
+        // Raw rows keep their own cluster; a row with no usable criteria value is in none.
         expect(p.series.cluster.slice(84, 96)).toEqual([1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3]);
         expect([p.series.cluster[9 * 12 + 4], p.series.cluster[10 * 12 + 4]]).toEqual([null, null]);
         expect(p.series.cluster[9 * 12 + 5]).toBe(3);
@@ -702,8 +655,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(h.sd_distance[7]).toBeNull();
         expect(h.score[7]).toBeNull();       // not 100, and not 0
 
-        // hour 9 — one row with no criteria value among rows of C: that row still enters the
-        // means (x = (11 x 30 + 42) / 12), but the hour has no cluster.
+        // Hour 9: the row with no criteria value still enters the means, but the hour has no cluster.
         expect([h.x[9], h.y[9]]).toEqual([31, 60]);
         expect([h.cluster[9], h.sd_distance[9], h.score[9]]).toEqual([null, null, null]);
         // hour 10 — one row whose criteria value is in the inner gap (no range) among rows of C.
@@ -750,10 +702,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(p.test_validation.tests[0]).toMatchObject({ hours: 5, scored: 5 });
     });
 
-    // ---- Relation model: T = 2·P + 1 (+ a small wobble), 6 hours of 5-minute rows ----
-    //   hours 0-3  training
-    //   hour  4    scoring: T reads 5 higher than the model expects
-    //   hour  5    scoring: only its first 3 rows running (P = 100, T = 206); the stopped rows read 9999
+    // Relation T = 2P + 1; hour 4 reads T 5 high; hour 5 has only 3 running rows; stopped rows read 9999.
     const relRunning = (i: number) => hourOfRow(i) <= 4 || i % 12 < 3;
     const pOf = (i: number) => (!relRunning(i) ? 9999 : hourOfRow(i) === 5 ? 100 : i % 12);
     const tOf = (i: number) => {
@@ -796,8 +745,7 @@ describe('fakeHealthRust — compute_health_preview scores 1-hour averages', () 
         expect(h.rows).toEqual([0, 12, 24, 36, 48, 60]);
         // mean target: the wobble cancels over 12 rows -> 2 x 5.5 + 1 = 12 (hour 4: + 5); hour 5: 206
         expect(h.actual).toEqual([12, 12, 12, 12, 17, 206]);
-        // the prediction is the model's answer at the hour's mean predictor: equal hours predict equally,
-        // and hour 5 is predicted at P = 100 (its 3 running rows), not at the stopped rows' 9999
+        // Prediction uses the hour's mean predictor: hour 5 at P = 100, not the stopped rows' 9999.
         expect(h.predicted[1]).toBe(h.predicted[0]);
         expect(h.predicted[4]).toBe(h.predicted[0]);
         expect(h.predicted[0]).toBeCloseTo(12, 6);

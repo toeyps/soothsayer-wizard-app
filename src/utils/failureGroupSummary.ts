@@ -7,9 +7,7 @@ import type { RunningConditionFg } from './runningCondition';
  *  `WorkspaceMetadata.failureGroupNos` never holds more. */
 export const FG_CHIP_MAX_SWATCHES = 3;
 
-/** The user's own Failure Groups: the permanent group 0 ("Not in Group")
- *  sentinel removed, ordered by number — the order the Failure Groups panel
- *  lists them in. Tolerates a missing/corrupt list (returns `[]`). */
+/** Real Failure Groups (group 0 removed), ordered by number as the panel lists them; a missing/corrupt list gives `[]`. */
 export function realFailureGroups(groups: readonly FailureGroup[] | null | undefined): FailureGroup[] {
     if (!Array.isArray(groups)) return [];
     const list: readonly FailureGroup[] = groups;
@@ -18,12 +16,7 @@ export function realFailureGroups(groups: readonly FailureGroup[] | null | undef
 
 export type FailureGroupMetaFields = Required<Pick<WorkspaceMetadata, 'failureGroupCount' | 'failureGroupNos'>>;
 
-/**
- * The recent-project fields for a workspace whose `failureGroupState.groups`
- * is `groups`. `null` when the workspace has no Failure Group slice at all —
- * the caller must then leave the entry's fields as they were (`undefined` for
- * a project saved before these fields existed: no chip), never write a 0.
- */
+/** Recent-project fields for `groups`. `null` when there is no slice: the caller leaves the entry's fields as they were (`undefined` = no chip) and never writes a 0. */
 export function failureGroupMetaFields(groups: readonly FailureGroup[] | null | undefined): FailureGroupMetaFields | null {
     if (!Array.isArray(groups)) return null;
     const real = realFailureGroups(groups);
@@ -33,10 +26,7 @@ export function failureGroupMetaFields(groups: readonly FailureGroup[] | null | 
     };
 }
 
-/** What the recent-project card shows for an entry:
- *   - `null`  — saved before the fields existed: no chip at all
- *   - count 0 — the neutral dashed "No failure groups" chip (never amber)
- *   - count n — "n failure group(s)" with a swatch per number in `nos` */
+/** Recent-project card chip: `null` = saved before the fields existed (no chip); count 0 = neutral 'No failure groups'; count n = 'n failure group(s)' with a swatch per number in `nos`. */
 export interface RecentProjectFgChip {
     count: number;
     /** Group numbers to draw swatches for (colour via `getFgGroupColor`). */
@@ -61,14 +51,9 @@ export function recentProjectFgChip(
 export interface FailureGroupSummary {
     /** Real groups (no "Not in Group"). */
     groupCount: number;
-    /** Distinct sensors with at least one model in at least one real group.
-     *  A sensor is keyed the way the panel groups rows (`modelSensorKey`:
-     *  Clustering by X, the others by target), so a sensor in three groups, or
-     *  with three model kinds, counts once. Models with no key sensor yet and
-     *  models only in "Not in Group" are not counted. */
+    /** Distinct sensors with a model in a real group, keyed like the panel (`modelSensorKey`), so a sensor in several groups or kinds counts once. Models with no key sensor, or only in 'Not in Group', are not counted. */
     assignedSensorCount: number;
-    /** `isModelComplete` — the same rule as the panel's existing "x of y
-     *  models complete" chip (marked complete AND not out of date). */
+    /** `isModelComplete`: same rule as the panel's 'x of y models complete' chip (marked complete and not out of date). */
     completeModelCount: number;
     /** Every model in the workspace, "Not in Group" ones included — the same
      *  denominator the panel's chip already uses. */

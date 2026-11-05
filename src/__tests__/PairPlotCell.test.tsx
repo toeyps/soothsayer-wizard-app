@@ -102,11 +102,7 @@ describe('PairPlotCell', () => {
         const expectedHeight = 150 - 14 - 18; // AXIS_PAD.top/bottom
         expect(opts.width).toBe(expectedWidth);
         expect(opts.height).toBe(expectedHeight);
-        // Regression: regl-scatterplot defaults aspectRatio to 1 (assumes a
-        // square data domain) and letterboxes a non-square canvas — our x/y
-        // domains are both normalized to [-1,1] with nothing physical to
-        // preserve, so this must match the canvas's own ratio to fill the
-        // whole cell instead of showing black bars on the sides.
+        // regl-scatterplot letterboxes a non-square canvas at its default aspectRatio 1; match the canvas ratio to fill the cell.
         expect(opts.aspectRatio).toBe(expectedWidth / expectedHeight);
         expect(opts.backgroundColor).toEqual([0, 0, 0, 1]);
         expect(opts.pointColor).toEqual(baseProps.pointColor);
@@ -222,11 +218,7 @@ describe('PairPlotCell', () => {
         );
     });
 
-    // Regression guard: Pair Plot deliberately does NOT read the Highlights
-    // tab's time-window list at all (unlike ScatterChart/LineChart) — its
-    // lasso-cluster already covers "mark points I care about", and an
-    // earlier revision's `sizeBy`-driven highlight emphasis here was removed
-    // as more confusing than useful once both existed side by side.
+    // Pair Plot deliberately does NOT read the Highlights time-window list: its lasso cluster already covers marking points.
     it('has no timeHighlights prop at all -- Pair Plot only ever reads clusters for colouring', () => {
         render(<PairPlotCell {...baseProps} />);
         const setCalls = lastInstance!.set.mock.calls;

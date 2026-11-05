@@ -69,8 +69,7 @@ pub fn execute_multi_op(op_id: &str, values: &[f64]) -> Result<Option<f64>, Stri
     }
 }
 
-/// Resolve a single-sensor operation ONCE, so a per-row loop doesn't rebuild
-/// the whole registry `HashMap` for every cell (what `execute_single_op` does).
+/// Resolves a single-sensor operation ONCE so a per-row loop doesn't rebuild the registry `HashMap` per cell.
 pub fn single_op_fn(op_id: &str) -> Result<SingleOpFn, String> {
     build_single_ops()
         .get(op_id)
@@ -86,14 +85,7 @@ pub fn multi_op_fn(op_id: &str) -> Result<MultiOpFn, String> {
         .ok_or_else(|| format!("Unknown multi operation: {}", op_id))
 }
 
-/// Does this multi operation need EVERY source value present for a row?
-///
-/// `sum` is "all or nothing" — a row where any
-/// source sensor is missing (NaN) has NO sum, exactly like `evaluate_formula`
-/// (a formula with a missing input is missing). A partial total (A+B with B
-/// missing silently returning A) would look like a wrong value. Every other
-/// multi op (`mean`, `median`) is an average-like statistic that is still
-/// meaningful over the remaining valid values, so it skips NaN sources instead.
+/// True when a row with any NaN source has no result: `sum` only (like `evaluate_formula`); `mean`/`median` skip NaN.
 pub fn multi_op_needs_all_inputs(op_id: &str) -> bool {
     op_id == "sum"
 }
@@ -131,7 +123,6 @@ pub fn multi_op_name(op_id: &str) -> Result<&'static str, String> {
 mod tests {
     use super::*;
 
-    // ── execute_single_op ────────────────────────────────────────────
 
     #[test]
     fn single_add() {
@@ -244,18 +235,13 @@ mod tests {
         assert!(execute_single_op("bogus", 1.0, 1.0).is_err());
     }
 
-    // Regression guard: "product"/"subtract"/"divide" multi-ops with a base
-    // sensor are not in the multi registry, but their names
-    // overlap with real single-op ids — confirm single-op "subtract"/
-    // "divide" still work (they're a different feature: a sensor combined
-    // with a fixed value, not "one sensor vs the rest").
+    // Single-op "subtract"/"divide" (a sensor combined with a fixed value) still work although same-named multi-ops were removed.
     #[test]
     fn single_subtract_and_divide_ids_still_valid_after_multi_removal() {
         assert!(execute_single_op("subtract", 1.0, 1.0).is_ok());
         assert!(execute_single_op("divide", 1.0, 1.0).is_ok());
     }
 
-    // ── execute_multi_op ─────────────────────────────────────────────
 
     #[test]
     fn multi_sum() {
@@ -304,11 +290,7 @@ mod tests {
         assert!(execute_multi_op("bogus", &[1.0]).is_err());
     }
 
-    // Regression guard: "product" (and "subtract"/"divide" as multi-ops
-    // with a base sensor) are not in the multi registry. If either
-    // ever silently comes back as valid here without the UI/type-layer
-    // support too, calculate_new_sensor would accept a
-    // config the frontend cannot construct — catch that drift.
+    // Keep these out of the multi registry, or `calculate_new_sensor` accepts configs the frontend can't build.
     #[test]
     fn multi_product_was_removed() {
         assert!(execute_multi_op("product", &[2.0, 3.0]).is_err());
@@ -320,7 +302,6 @@ mod tests {
         assert!(execute_multi_op("divide", &[2.0, 3.0]).is_err());
     }
 
-    // ── resolved fn pointers + sum rule ──────────────────────────────
 
     #[test]
     fn resolved_fns_match_execute() {
@@ -337,7 +318,6 @@ mod tests {
         assert!(!multi_op_needs_all_inputs("median"));
     }
 
-    // ── single_op_symbol ─────────────────────────────────────────────
 
     #[test]
     fn single_op_symbol_covers_every_known_id() {
@@ -356,7 +336,6 @@ mod tests {
         assert!(single_op_symbol("bogus").is_err());
     }
 
-    // ── multi_op_name ────────────────────────────────────────────────
 
     #[test]
     fn multi_op_name_covers_every_known_id() {

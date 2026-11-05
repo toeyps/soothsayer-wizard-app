@@ -1,7 +1,4 @@
-/**
- * Pure helpers for the Import page's "Get started" (step 0) screen. Kept free of
- * React / Tauri so they can be unit-tested directly (homeHelpers.test.ts).
- */
+/** Pure helpers for the Import page's step 0; no React/Tauri so they unit-test directly. */
 
 import type { WorkspaceMetadata } from '../../types';
 import { formatDateTimeMinutes } from '../../utils/dateFormat';
@@ -10,11 +7,7 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 
-/** Relative "last modified" label: "just now", "5 min ago", "2 h ago", "3 d ago";
- *  older than 30 days falls back to the calendar date and time in the app's one
- *  date format ("2026/03/05 14:20", local time). A missing /
- *  non-finite timestamp yields "" (nothing is invented); a timestamp slightly in
- *  the future (clock skew) reads "just now". */
+/** Relative 'last modified' label (just now, 5 min ago, 2 h ago, 3 d ago); past 30 days the app date format; '' when missing. */
 export function formatRelativeTime(timestamp: number | undefined | null, now: number = Date.now()): string {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp) || timestamp <= 0) return '';
   const diff = now - timestamp;
@@ -32,8 +25,7 @@ export function projectInitials(name: string): string {
   return letters || 'P';
 }
 
-/** Hues (oklch) for the project icons; picked deterministically per project so a
- *  card keeps its colour across sessions and re-renders. */
+/** oklch hues for project icons, picked deterministically per project so a card keeps its colour. */
 const ICON_HUES = [235, 300, 160, 60, 20, 200] as const;
 
 function hashString(s: string): number {

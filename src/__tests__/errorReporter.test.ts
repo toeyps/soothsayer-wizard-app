@@ -5,9 +5,7 @@ vi.mock('@tauri-apps/api/core', () => ({
     invoke: (...args: unknown[]) => mockInvoke(...args),
 }));
 
-// Module-level mutable state (nextId/installed/errors) means every test
-// needs a clean module instance — resetModules + a fresh dynamic import
-// gives each test its own errors=[]/nextId=1/installed=false.
+// Module-level state needs a fresh module instance per test (resetModules + dynamic import).
 async function freshModule() {
     vi.resetModules();
     return await import('../errorReporter');

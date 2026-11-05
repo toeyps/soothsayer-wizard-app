@@ -3,68 +3,27 @@ import { getBuildBlockReason, type RunningConditionFg } from './runningCondition
 import { computeTrainFingerprint, isModelTrainedFresh } from './trainFingerprint';
 import { trainedFormulasChanged } from './specialSensorSignature';
 
-/**
- * The ONE definition of a model's status, shared by the Build Model window, the
- * Dashboard's Failure Groups panel and anything else that draws a status dot,
- * a Complete count or a "re-train" hint.
- *
- * `FailureModel.status` is only the PERSISTED half ("the user marked it
- * complete"). A model also has a train record (`lastTrainedAt` +
- * `trainedFingerprint`), and a Complete model whose inputs have changed since
- * that record is no longer complete — the write side already flips `status`
- * to false the moment such an input changes (`applyIncompleteRule`), and this
- * is the read side of the same rule, so data written before the rule existed
- * (or by a writer that bypassed it) still reads correctly.
- */
+/** The one definition of a model's status. `FailureModel.status` is only the persisted 'marked complete' half; a Complete model whose inputs changed since its train record is not complete. This is the read side of `applyIncompleteRule`, so data from older or bypassing writers still reads correctly. */
 
-/** Text shown (and the reason Mark complete blocks on) when the gate passes
- *  but the model has not been Trained-and-fresh. One string everywhere. */
+/** Reason shown (and Mark complete blocks on) when the gate passes but the model isn't Trained-and-fresh. */
 export const NOT_TRAINED_BLOCK_REASON = 'Train the model, then check the result before marking it complete.';
 
-/** The workspace's special-sensor recipes, for the "a special sensor this
- *  model was trained on changed its formula" half of staleness.
- *  Omitted / null = that half is not judged here; the write
- *  side (`applyIncompleteRule` -> `demoteModelsForRecipeChange`) still demotes
- *  such a model on disk, so a caller without the recipes is never wrong for
- *  long. Pass them wherever they are at hand. */
+/** Special-sensor recipes for the 'trained sensor changed its formula' half of staleness; omitted/null = not judged here. */
 export type StatusRecipes = SpecialSensorRecipe[] | null | undefined;
 
-/**
- * Was trained at some point, but its inputs (or its effective running
- * condition) changed since — "Settings changed — re-train". Also stale: a
- * special sensor it was trained on has a different recipe now
- * (`model.trainedFormulas` vs `recipes`; a model trained before that snapshot
- * existed has none and is not judged by it — backward compatible).
- *
- * Independent of `status`: a Complete model is stale too. A model with no train
- * record at all (`lastTrainedAt` unset — never trained, or marked complete
- * before train records existed) is NOT stale: there is no result to be out of
- * date, and demoting every such legacy model on read would erase work nobody
- * can redo from a record.
- */
+/** Trained before, but its inputs or effective running condition changed since, or a special sensor it trained on has a different recipe (`trainedFormulas` vs `recipes`; no snapshot = not judged). Independent of `status`. No train record (`lastTrainedAt` unset) is NOT stale: there is no result to be out of date. */
 export function isModelStale(model: FailureModel, fg: RunningConditionFg, recipes?: StatusRecipes): boolean {
     if (!model.lastTrainedAt) return false;
     if (model.trainedFingerprint !== computeTrainFingerprint(model, fg)) return true;
     return !!recipes && trainedFormulasChanged(model, recipes);
 }
 
-/** Complete AND not out of date. This — not `model.status` — is what any
- *  display of "complete" (green dot, "N of M complete", the Complete pill)
- *  should read. */
+/** Complete AND not stale; displays of 'complete' read this, not `model.status`. */
 export function isModelComplete(model: FailureModel, fg: RunningConditionFg, recipes?: StatusRecipes): boolean {
     return model.status && !isModelStale(model, fg, recipes);
 }
 
-/** What a status dot / pill shows for a model.
- *   - `complete` — marked complete and still up to date (green)
- *   - `stale`    — was trained, inputs changed since (incl. a Complete model
- *                  that fell back to Incomplete): needs a re-train (yellow)
- *   - `blocked`  — the gate stops it (no category / running condition / bad
- *                  period): needs fixing (red)
- *   - `trained`  — trained and fresh, waiting for the user to mark it complete
- *   - `none`     — never trained, nothing wrong yet
- *  `blocked` and `stale` are separate so a UI can colour them differently;
- *  today's dots map everything but `complete` / `trained` to "no dot". */
+/** What a dot/pill shows: `complete`, `stale` (trained, inputs changed since), `blocked` (the gate stops it), `trained` (fresh, awaiting Mark complete), `none`. `blocked` and `stale` are separate so a UI can colour them differently. */
 export type ModelDotState = 'complete' | 'trained' | 'stale' | 'blocked' | 'none';
 
 export function modelDotState(
@@ -83,18 +42,7 @@ export function modelDotState(
     return model.lastTrainedAt ? 'stale' : 'none';
 }
 
-/**
- * What the saved set points of a TRAINED model say — the
- * ONE place every surface (Dashboard Failure Groups dot, Build Model list dot,
- * the kind tab pill) reads the persisted validation verdict:
- *   - `fix`    — Rust rejected a saved set point ("Fix set point", red)
- *   - `needed` — only empty points left ("Set points needed", yellow)
- *   - `null`   — nothing to flag (valid, never judged, or the model is not in
- *                the `trained` state at all: a Complete / stale / blocked /
- *                never-trained model has its own status and ignores the verdict).
- * A caller that overrides the dot state (a failed run of this session) passes
- * the state it actually shows via `state`.
- */
+/** What the saved set points of a TRAINED model say; the one place every surface reads the persisted verdict: `fix` (Rust rejected a point), `needed` (only empty points left), `null` (nothing to flag, or the model isn't `trained`). A caller overriding the dot state passes the state it shows via `state`. */
 export type SetPointFlag = 'fix' | 'needed' | null;
 
 export function modelSetPointFlag(

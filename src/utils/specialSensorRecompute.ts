@@ -2,20 +2,7 @@ import { SpecialSensorRecipe } from '../types';
 import { isSessionLostError } from './staleSession';
 import type { SensorLabelOf } from './specialSensorDeps';
 
-/**
- * Re-running a special sensor's recipe against the loaded data.
- *
- * This is the same pair of commands the workspace-reopen replay uses
- * (`DataUploadPage`), with one difference: `replace: true`. On reopen the
- * columns do not exist yet and get appended; after an edit the column is
- * already there and has to be overwritten in place, or the recomputed values
- * end up in a second column of the same name that nothing ever reads (see
- * `put_sensor_column` in `lib.rs`).
- *
- * The recipe's own `tag` is forced back as the custom name so a recomputation
- * can never rename the sensor — every formula, model and chart entry that
- * points at it keeps pointing at it.
- */
+/** Re-runs a recipe like the reopen replay, but `replace: true` overwrites the existing column instead of duplicating it. The recipe's `tag` is forced as custom name so a recompute never renames the sensor. */
 
 /** Injected so this is testable without a Tauri runtime. */
 export type Invoker = (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -38,23 +25,11 @@ export function recomputeCall(recipe: SpecialSensorRecipe): { cmd: string; args:
     };
 }
 
-/**
- * Recompute recipes one after another, in the order given.
- *
- * Sequential on purpose: a later recipe may read the column an earlier one
- * writes, so running them concurrently would let it read the stale values.
- *
- * Rejects on the first failure, naming the recipe that failed. Recipes before
- * it have already been written — there is no transaction here — so the caller
- * should treat a rejection as "the data is now part-way through an edit". Use
- * `onRecomputed` to learn which ones, and roll them back (`specialSensorEdit`).
- */
+/** Sequential on purpose: a later recipe may read a column an earlier one writes. Rejects on the first failure; earlier recipes stay written (no transaction), so use `onRecomputed` to roll back. */
 export async function recomputeSpecialSensors(
     recipes: SpecialSensorRecipe[],
     invoker: Invoker,
-    /** Called after each recipe's column has been written, so a caller that
-     *  gets a rejection later knows exactly which columns were already changed
-     *  (the edit flow rolls those back -- see `specialSensorEdit.ts`). */
+    /** Called after each column is written, so a caller knows which to roll back (`specialSensorEdit.ts`). */
     onRecomputed?: (recipe: SpecialSensorRecipe) => void,
     /** How the error names the sensor. Default: the tag. */
     labelOf: SensorLabelOf = tag => tag,
@@ -65,9 +40,7 @@ export async function recomputeSpecialSensors(
             await invoker(cmd, args);
             onRecomputed?.(recipe);
         } catch (err) {
-            // The dataset is not ours any more (stale generation / window
-            // re-pointed): pass it through unwrapped so the caller can stop
-            // WITHOUT rolling back.
+            // Dataset no longer ours (stale generation or re-pointed window): rethrow as is; the caller stops without rolling back.
             if (isSessionLostError(err)) throw err;
             const failure = new Error(`Could not recompute "${labelOf(recipe.tag)}": ${String(err)}`);
             // Set rather than passed to the constructor: the project's TS lib

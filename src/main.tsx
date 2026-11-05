@@ -3,11 +3,7 @@ import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./App.css";
 
-// The sub-windows are separate webviews (`?window=...`) that each load this same
-// entry. They are lazy so their chunks (BuildModelWindow pulls in echarts) are only
-// requested by the window that actually shows them — the main window's
-// `index.html` must not modulepreload them. Imported from their own files, not the
-// `components/windows` barrel, which would drag both back into one chunk.
+// Sub-windows are lazy so only the window showing them requests their chunks; import from their own files, not the barrel, which would merge them.
 const AddSensorWindow = lazy(() => import("./components/windows/AddSensorWindow"));
 const BuildModelWindow = lazy(() => import("./components/windows/BuildModelWindow"));
 

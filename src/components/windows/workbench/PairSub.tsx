@@ -15,10 +15,7 @@ function PairPrefix() {
 /** The subtitle shrinks with its content, so a shortened pair goes back by the width of the card's header line. */
 const cardHeaderRoom = (root: HTMLElement) => root.closest<HTMLElement>('.wb2-card-h');
 
-/**
- * The "X vs Y" subtitle of a Clusters card. The two names are one set (DESIGN_SYSTEM §4 rule 3): each keeps the
- * part that tells it from the other. Two names that fit print as they always did.
- */
+/** 'X vs Y' subtitle of a Clusters card; the two names are one set, each keeps the part that tells it apart. */
 export function PairSub({ x, y, note }: { x: string; y: string; note?: ReactNode }) {
     const tags = useMemo(() => [x, y], [x, y]);
     return (

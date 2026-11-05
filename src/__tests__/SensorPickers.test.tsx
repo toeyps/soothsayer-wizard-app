@@ -6,10 +6,7 @@ import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import type { SensorMetadata } from '../types';
 import { findPickerRow, openPickerSurface, pickerRows, rowTag } from './helpers/sensorPicker';
 
-// `SensorPickerModal` is now a thin adapter over the ONE shared
-// picker (`src/components/sensor/SensorPicker.tsx`, tested in SensorPicker.test.tsx) — single →
-// anchored popover, multi → chips + "Add…" + modal. These tests pin the adapter's wiring only.
-// (BuildModelWindow.test.tsx and RunningConditionPanel.test.tsx mock this module out.)
+// `SensorPickerModal` is a thin adapter over the shared picker; these tests pin the adapter's wiring only.
 
 afterEach(() => {
     cleanup();

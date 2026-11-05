@@ -63,3 +63,7 @@ Each brief must stand alone: task, files, zone reminder, tests expected, done-wh
 - Never modify application source code or test files — that includes the verification step (run the checks; re-spawn the owning agent to fix failures, or report them).
 - Always check HANDOFF blocks before moving to the next phase.
 - Don't skip the Final Verification step.
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

@@ -1,13 +1,6 @@
-# Generates the PREP-6 test kit (and the files of PREP-5 / MULTI, WFE, WFF, WFG, PERF) used by
-# docs/testing/MANUAL_TEST_PLAN.md. Which item uses which file: docs/testing/TEST_DATA_GUIDE.md.
-#
-# Usage (standard library only):
-#   python scripts/make-all-testdata.py                    # the usual way: every test-data folder under C:\WizardTestData
-#   python scripts/make-prep-testdata.py C:\WizardTestData\IMP                          # this kit alone, small files (~25 MB)
-#   python scripts/make-prep-testdata.py C:\WizardTestData\IMP --expdata C:\WizardTestData\EXP
-#                                                          # + copies of EXP-data.csv with a column added / removed
-#   python scripts/make-prep-testdata.py C:\WizardTestData\IMP --big                    # + the big files (about 8.5 GB
-#                                                          #   of free disk, roughly 3-10 minutes on an SSD; see EXPECTED.txt)
+# Generates the PREP-6 test kit (+ PREP-5 / MULTI, WFE, WFF, WFG, PERF files); item-to-file map: docs/testing/TEST_DATA_GUIDE.md.
+# Usage: python scripts/make-prep-testdata.py C:\WizardTestData\IMP [--expdata C:\WizardTestData\EXP] [--big]
+#   --expdata adds copies of EXP-data.csv with a column added/removed; --big adds the big files (~8.5 GB disk, 3-10 min).
 #
 # Folders written (every file is listed with its real numbers in <out>\EXPECTED.txt):
 #   normal/      a normal 30-day file + its tag names, a long-file-name copy, an Excel "CSV UTF-8" copy
@@ -23,8 +16,7 @@
 #   variants/    copies of the normal file with a column removed / a day added / 10 days only, and changed tag names
 #   projects/    GEG-3 / GEG-4 gas engines + tag names (English, Thai UTF-8, Thai saved as plain "CSV"), CMP-1 compressor
 #   exp-variants/  (only with --expdata) EXP-data.csv with columns "A B" + "A/B", without KW, without FLOW A
-#   matching-tags/ one tag-name file for each data file above that had none: a tag-name file is REQUIRED on step 2
-#                and must list exactly the sensors of the data, so every flow that creates a project needs one
+#   matching-tags/ one tag-name file for each data file above that had none (step 2 requires one listing exactly the sensors)
 #   big/         (only with --big) 300 MB, 1.9 GB, 2.1 GB (over the 2 GB cap), the 2.1 GB file split in two, 3 overlapping
 #   wfg/         (only with --big) GEG5_2024.csv + GEG5_2025.csv (2 years, every minute, 120 sensors) + tag names
 import csv, io, math, os, random, statistics, sys, time, zipfile
@@ -149,7 +141,6 @@ def ts(t):
     return t.strftime('%Y-%m-%d %H:%M:%S')
 
 
-# ─────────────────────────────── normal/ ───────────────────────────────
 NORM_HEAD = ['timestamp', 'TI-101', 'TI-102', 'PI-201', 'FI-301', 'KW-401', 'VI-501', 'TT-601']
 NORM_STOP = (datetime(2024, 1, 10, 8, 0), datetime(2024, 1, 11, 7, 55))
 
@@ -171,8 +162,7 @@ def make_normal(days=30, start=datetime(2024, 1, 1), seed=1, drop=None):
     rnd = random.Random(seed)
     times = series(start, days * 288)
     rows = [[ts(t)] + norm_vals(t, rnd) for t in times]
-    # known empty cells: TI-101 at 12 rows, FI-301 at 12 rows (only inside the first 30 days) -> 24 of 60,480 cells
-    # = 0.04 %, which the Import page must show as "<0.1%" (below 0.05 %)
+    # known empty cells: TI-101 x12 and FI-301 x12 in the first 30 days = 24 of 60,480 cells = 0.04 %, shown as "<0.1%"
     for k in range(12):
         i = 500 + k * 613
         if i < len(rows):
@@ -225,8 +215,7 @@ note('normal/IMP-normal-tags.csv', ['IMP-115', 'IMP-123', 'IMP-124'],
       'tag ที่ไม่มีในข้อมูล 3 ตัว (TI-103, PI-202, XX-999) → บรรทัดแดง "3 tags in the tag-name file are not in the dataset."',
       'alarm: TI-101 LL 10 / L 20 / H 80 / HH 90 · TI-102 H 120 อย่างเดียว · PI-201 L 2 และ H เป็น "-" (ไม่มีค่า) · '
       'FI-301 H 600 · KW-401 H 250 / HH 280 · TT-601 ไม่มี alarm และไม่มี component'])
-# Exactly the sensors of IMP-normal.csv. VI-501 has a tag and nothing else: it is the sensor with no description,
-# no unit and no component that the Dashboard items look at (a file that leaves it out is refused now).
+# Exactly the sensors of IMP-normal.csv. VI-501 has only a tag (no description, unit or component).
 VI501_ROW = ['VI-501', '', '', '', '', '', '', '']
 NORM_TAGS_EXACT = NORM_TAGS[:6] + [VI501_ROW]
 write('normal/IMP-normal-tags-exact.csv', NORM_TAGS_HEAD, NORM_TAGS_EXACT)
@@ -236,7 +225,6 @@ note('normal/IMP-normal-tags-exact.csv', ['IMP-38', 'IMP-14', 'IMP-60', 'IMP-82'
       'VI-501 มีแค่ tag: ไม่มีชื่อ หน่วย component และ alarm → ใน Dashboard แสดง tag อย่างเดียว อยู่ใต้ "Uncategorized"',
       'TT-601 มีชื่อแต่ไม่มี component → "Uncategorized" · alarm ของตัวอื่นเหมือน IMP-normal-tags.csv'])
 
-# ─────────────────────────────── multi-file/ ───────────────────────────────
 def two_col(t):
     h = t.hour + t.minute / 60
     d = (t - datetime(2024, 1, 1)).days
@@ -312,7 +300,6 @@ note('multi-file/MF-set-1.csv + MF-set-2-BROKEN.csv + MF-set-3.csv', ['IMP-73'],
      ['3 ไฟล์ วันละไฟล์ (1, 2, 3 เม.ย. 2024) · ไฟล์ที่ 2 บรรทัดที่ 50 มี 5 ช่อง แต่หัวคอลัมน์มี 4 ช่อง',
       'ต้องไม่โหลดทั้งชุด และข้อความแดงควรบอกชื่อไฟล์ MF-set-2-BROKEN.csv'])
 
-# ─────────────────────────────── tags/ ───────────────────────────────
 write('tags/T01-other-header-names.csv', ['Name', 'UOM', 'System', 'LoLo', 'Low', 'High', 'HiHi', 'TAG'],
       [['Pump bearing temperature', 'degC', 'Pump P-1', '-', '20', '80', 'n/a', 'TI-101'],
        ['Motor winding temperature', 'degC', 'Motor M-1', '', '', '120', '', 'TI-102'],
@@ -365,7 +352,6 @@ write('tags/T08-same-count-2-tags-differ.csv', NORM_TAGS_HEAD,
 note('tags/T08-same-count-2-tags-differ.csv', ['IMP-116'],
      ['7 แถวเท่าข้อมูล แต่มี VI-599, TT-699 แทน VI-501, TT-601 → "Sensors don\'t match: both have 7, but 2 tags differ." · บรรทัดแดง "2 tags in the tag-name file are not in the dataset."'])
 
-# ─────────────────────────────── buddhist/ ───────────────────────────────
 tt = series(datetime(2024, 2, 28), 3 * 288)
 rnd = random.Random(3)
 rr = [[str(t.year + 543) + ts(t)[4:], round(60 + 8 * math.sin(2 * math.pi * (t.hour + t.minute / 60) / 24) + rnd.gauss(0, 0.3), 2),
@@ -377,7 +363,7 @@ note('buddhist/BE-2567-leap-day.csv', ['PREP-6', 'IMP-20', 'IMP-74'],
          'ต้องมีบรรทัด "864 timestamp(s) used a Buddhist-Era year (พ.ศ.) — converted to Gregorian (ค.ศ.) …"',
          'วันที่ 29 ก.พ. 2024 ต้องมีครบ 288 จุด (00:00 → 23:55)'])
 
-# The BE rows come first though the CE rows are later in time, so the order of the text is not the order of time.
+# BE rows come first although the CE rows are later in time: text order is not time order.
 def be_text(t):
     return str(t.year + 543) + ts(t)[4:]
 
@@ -401,7 +387,6 @@ note('buddhist/BE-mixed-part1.csv + BE-mixed-part2.csv', ['IMP-136'], [
     'แถวเดียวกับ BE-mixed-one-file.csv แยกเป็น 2 ไฟล์ → Rows, Period และค่าทุกจุดต้องเท่ากับไฟล์เดียว',
     f'เพิ่มบรรทัด "{len(set(mix_a) & set(mix_b))} duplicate timestamp(s) found (values were merged/overwritten)"'])
 
-# ─────────────────────────────── odd/ ───────────────────────────────
 tt = series(datetime(2024, 5, 1), 2 * 288)
 rr = [[ts(t)] + two_col(t) + [round(450 + 10 * math.sin(i / 40), 2)] for i, t in enumerate(tt)]
 for i in (10, 60, 110, 160, 210):
@@ -459,7 +444,6 @@ write('odd/ODD-time-in-column-3.csv', ['TI-101', 'PI-201', 'timestamp', 'FI-301'
 note('odd/ODD-time-in-column-3.csv', ['PREP-6', 'IMP-64'],
      ['288 แถว 2024/05/05 00:00:00 → 23:55:00 · คอลัมน์ timestamp อยู่คอลัมน์ที่ 3 · Sensors = 3 (TI-101, PI-201, FI-301)'])
 
-# ─────────────────────────────── broken/ ───────────────────────────────
 tt = series(datetime(2024, 6, 1), 288)
 write('broken/BRK-date-header.csv', ['Date', 'TI-101', 'PI-201'], [[ts(t)] + two_col(t) for t in tt])
 note('broken/BRK-date-header.csv', ['PREP-6', 'IMP-128'], [
@@ -527,7 +511,6 @@ note('broken/BRK-excel-file-renamed.csv', ['PREP-6', 'IMP-71', 'IMP-73'],
      ['ไฟล์ Excel (.xlsx) จริง 24 แถว ที่เปลี่ยนนามสกุลเป็น .csv — ข้างในเป็นไฟล์บีบอัด ไม่ใช่ข้อความ → ต้องขึ้นกล่องแดง ไม่ใช่อ่านสำเร็จด้วยหัวคอลัมน์ขยะ'])
 note('broken/BRK-not-a-csv.xlsx', ['IMP-62'], ['ไฟล์เดียวกับข้างบนแต่นามสกุล .xlsx — ใช้ลากมาวางเพื่อดูว่าไฟล์ที่ไม่ใช่ .csv ถูกปฏิเสธ (เปิดใน Excel ได้)'])
 
-# ─────────────────────────────── time-shapes/ ───────────────────────────────
 SHAPES = [
     ('IMP66-1_dash-seconds.csv', datetime(2024, 1, 1), lambda t: t.strftime('%Y-%m-%d %H:%M:%S'), 'อ่านได้'),
     ('IMP66-2_dash-minutes.csv', datetime(2024, 1, 2), lambda t: t.strftime('%Y-%m-%d %H:%M'), 'อ่านได้'),
@@ -566,7 +549,7 @@ write('time-shapes/IMP87-B_day-month-year.csv', ['timestamp', 'TS_TEMP', 'TS_PRE
 note('time-shapes/IMP87-B_day-month-year.csv', ['IMP-87'],
      [f'576 แถว · แถวแรก "13/01/2026 00:00" (วันที่เกิน 12) · ต้องได้ {fmt(tb[0])} → {fmt(tb[-1])} (13–14 ม.ค.)'])
 
-# IMP-88 look-alike historian export: "01-Jan-25 12:00 AM", header TimeStamp, BOM, a 1-day outage so the totals match the plan
+# IMP-88 historian look-alike: "01-Jan-25 12:00 AM", header TimeStamp, BOM, a 1-day outage so the totals match the plan
 GAP = (datetime(2025, 7, 14), datetime(2025, 7, 14, 23, 55))
 
 
@@ -589,7 +572,6 @@ note('time-shapes/IMP88/(2025.csv + 2026.csv พร้อมกัน)', ['IMP-8
       'มีช่องว่างข้อมูล 1 วัน (2025/07/14 ทั้งวัน) ตั้งใจใส่ไว้ให้จำนวนแถวตรงกับข้อ IMP-88',
       'รูปแบบอื่นในข้อเดียวกัน (Fri, 31 Jan 2025 …, 20250131130500, 31 ม.ค. 2568, 45688.54…) ใช้ C:\\WizardTestData\\TS\\formats F09 / F10 / F14 / F16'])
 
-# ─────────────────────────────── intervals/ ───────────────────────────────
 for name, step, n in [('INT-10s.csv', 10, 8640), ('INT-90s.csv', 90, 1920), ('INT-90min.csv', 5400, 480),
                       ('INT-1h.csv', 3600, 1440), ('INT-1d.csv', 86400, 365)]:
     tk = series(datetime(2024, 7, 1), n, timedelta(seconds=step))
@@ -597,7 +579,6 @@ for name, step, n in [('INT-10s.csv', 10, 8640), ('INT-90s.csv', 90, 1920), ('IN
     write('intervals/' + name, ['timestamp', 'TI-101', 'PI-201'], rr)
     note('intervals/' + name, ['IMP-36'] + (['BMW-212'] if step in (10, 3600) else []), stats_lines(tk, ['timestamp', 'TI-101', 'PI-201'], rr))
 
-# ─────────────────────────────── wide/ ───────────────────────────────
 WH = ['timestamp'] + [f'W{i:03d}' for i in range(1, 221)]
 tk = series(datetime(2024, 8, 1), 288)
 rnd = random.Random(220)
@@ -616,7 +597,6 @@ note('wide/IMP-wide-220-sensors.csv + IMP-wide-tags.csv', ['IMP-117'],
       'ไฟล์นี้ตั้งใจให้ไม่ตรงกับข้อมูล: "Sensors don\'t match: the data has 220, the tag-name file has 240." · Continue กดไม่ได้',
       'บรรทัดแดง "25 tags … not in the dataset." · ชี้เมาส์แล้วเห็นรายชื่อสูงสุด 20 ตัว · ป้าย component มี "Uncategorized" (10 ตัว)'])
 
-# ─────────────────────────────── variants/ ───────────────────────────────
 t_, h_, r_ = make_normal(drop='TI-101')
 write('variants/IMP-normal_without-TI-101.csv', h_, r_)
 note('variants/IMP-normal_without-TI-101.csv', ['PER-15', 'BMW-396'],
@@ -646,7 +626,6 @@ note('variants/IMP-normal-tags_changed.csv', ['PER-19', 'WFF-5'],
      ['เหมือน IMP-normal-tags-exact.csv แต่: TI-101 description "Pump bearing temperature (CHANGED)" และ alarm H 75 (เดิม 80) · '
       'FI-301 component "Pump P-2" (เดิม Pump P-1) · วิธีใช้: คัดลอกไปทับ IMP-normal-tags-exact.csv แล้วเปลี่ยนชื่อเป็นชื่อเดิม'])
 
-# ─────────────────────────────── projects/ ───────────────────────────────
 GEG_HEAD = ['timestamp', 'PWR_KW', 'SPEED_RPM', 'TT_BRG_DE', 'TT_BRG_NDE', 'TT_LO_IN', 'TT_EXH_A', 'VIB_GEN']
 
 
@@ -744,7 +723,6 @@ note('projects/CMP-1.csv + CMP-1-tags.csv', ['PREP-5 (โปรเจกต์ B
     'เครื่องอัดก๊าซ — tag / component คนละชุดกับ GEG-3 ทั้งหมด (Compressor K-1, Gas cooler E-1, Motor M-2)',
     'เครื่องหยุด 2025/02/03 00:00 → 23:50 · Running condition แนะนำ "KW_CMP is above 100"'])
 
-# ─────────────────────────────── exp-variants/ (optional) ───────────────────────────────
 if EXP:
     src = os.path.join(EXP, 'EXP-data.csv')
     if not os.path.exists(src):
@@ -773,11 +751,8 @@ if EXP:
             note(rel, ['BMW-396'], [f'EXP-data.csv ที่ไม่มีคอลัมน์ {col} — {why}',
                                     'วิธีใช้: ปิดโปรแกรม → เก็บสำเนา EXP-data.csv → คัดลอกไฟล์นี้ไปทับ แล้วเปลี่ยนชื่อเป็น EXP-data.csv → คืนไฟล์เดิมเมื่อจบ'])
 
-# ─────────────────────────────── matching-tags/ ───────────────────────────────
-# A tag-name file is required on step 2 and must list exactly the sensors of the data, so each data file that had
-# none gets one, written from its real header row. The column called timestamp / time (else the first column) is the
-# time column, never a sensor. A column written twice, also in another case, is one sensor under its first spelling.
-# Files that share the same columns share one tag file.
+# Each data file without a tag file gets one from its real header. The timestamp/time (else first) column is never a sensor;
+# a column written twice (any case) is one sensor under its first spelling. Same columns share one tag file.
 def data_sensors(rel):
     with open(p(*rel.split('/')), newline='', encoding='utf-8-sig') as f:
         hdr = next(csv.reader(f))
@@ -818,7 +793,6 @@ for name, rel, uses, about in MATCHING:
 matching_tags('M1-M2-tags.csv', ['FLOW_A', 'FLOW_B'], ['IMP-131'], 'M1_iso.csv + M1_us_ampm.csv และ M2_part1.csv + M2_part2.csv ในชุด TS')
 matching_tags('M3-tags.csv', ['FLOW_A'], ['IMP-131'], 'M3_column_twice.csv ในชุด TS')
 
-# ─────────────────────────────── big/ and wfg/ (--big) ───────────────────────────────
 HM = [f'{m // 60:02d}:{m % 60:02d}:00' for m in range(1440)]
 
 
@@ -843,7 +817,7 @@ def pool_rows(n_sensors, size, seed, empty_p=0.005, texts=None, text_p=0.0):
 
 
 def big_write(rel, n_sensors, pool, start, first_idx, n_rows=None, target=None):
-    """Rows i = first_idx .. : time = start + i minutes, values = pool[i % len(pool)]. Stops at n_rows or at target bytes."""
+    """Rows i = first_idx..: time = start + i minutes, values = pool[i % len(pool)]. Stops at n_rows or target bytes."""
     path = p(*rel.split('/'))
     head = 'timestamp,' + ','.join(f'S{s:03d}' for s in range(1, n_sensors + 1)) + '\n'
     size, i, written = len(head), first_idx, 0
@@ -980,7 +954,6 @@ if BIG:
     note('wfg/GEG5-tags.csv', ['WFG-1', 'WFG-3'], ['120 แถว · 6 component (Engine, Generator, Lube oil, Cooling water, Exhaust, Auxiliary) กลุ่มละ 20 ตัว'])
     print(f'big files: {time.time() - t_start:.0f} s')
 
-# ─────────────────────────────── EXPECTED.txt ───────────────────────────────
 with open(os.path.join(OUT, 'EXPECTED.txt'), 'w', encoding='utf-8', newline='\r\n') as f:
     f.write('ชุดไฟล์ทดสอบ PREP-6 (make-prep-testdata.py) — ตัวเลขจริงของทุกไฟล์\n')
     f.write('ตารางว่าข้อไหนใช้ไฟล์ไหน: docs/testing/TEST_DATA_GUIDE.md · เวลาเขียนแบบที่โปรแกรมแสดง (YYYY/MM/DD HH:MM:SS)\n')

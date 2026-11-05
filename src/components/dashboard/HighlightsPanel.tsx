@@ -16,10 +16,7 @@ interface HighlightsPanelProps {
     onRecolorTimeHighlight: (id: string, color: string) => void;
     onRenameTimeHighlight: (id: string, label: string) => void;
 
-    // "By value" -- one sensor + its value ranges, colours Scatter points.
-    // Scatter-only (see ValueHighlight's own docstring in types.ts for why
-    // this is a single sensor+ranges object rather than a flat list like
-    // timeHighlights).
+    // 'By value': one sensor + value ranges colouring Scatter points; Scatter only.
     valueHighlight: ValueHighlight;
     /** Sensors selectable in the "Colour by…" dropdown -- same pool
      *  ScatterChart itself plots (Dashboard's `scatterChartHeaders`). */
@@ -30,26 +27,14 @@ interface HighlightsPanelProps {
     onRemoveValueHighlightRange: (id: string) => void;
     onRecolorValueHighlightRange: (id: string, color: string) => void;
 
-    /** Which chart is on screen right now -- drives the live compatibility
-     *  banner + disabled state below. On Pair Plot (the only chart type this
-     *  group has no effect on), the "By time" column's body is fully
-     *  disabled (via a wrapping <fieldset disabled>) and dims, with a
-     *  banner explaining why, instead of relying on a static footnote
-     *  nobody reads. Deliberately NOT just visually dimmed while staying
-     *  clickable -- an earlier revision did that (reasoning: these are
-     *  shared, cross-session settings someone might want to stage while
-     *  looking at a different chart), but the user explicitly rejected it
-     *  after seeing it live: a control that looks editable but silently
-     *  does nothing on the current chart is worse than one that's plainly
-     *  disabled. */
+    /** Chart on screen: on Pair Plot the 'By time' body is a disabled fieldset with a banner, not merely dimmed. */
     chartType: 'line' | 'scatter' | 'pair';
     /** First and last time of the data: the calendar opens there and stays inside. */
     dataStart?: string;
     dataEnd?: string;
 }
 
-/** "2025/03/14 21:25 → 2025/03/15 08:00": a highlight's two bounds in the app's
- *  one date format (a bound the user typed: date + time, no seconds). */
+/** A highlight's two bounds in the app's date format (date + time, no seconds). */
 function fmtRange(start: string, end: string): string {
     const f = (s: string) => {
         const d = new Date(s);
@@ -58,16 +43,7 @@ function fmtRange(start: string, end: string): string {
     return `${f(start)} → ${f(end)}`;
 }
 
-/**
- * Dashboard's "Highlights" tab -- "By time" (timestamp-range windows, Line +
- * Scatter) and "By value" (a sensor's value ranges, Scatter only) rendered
- * SIDE BY SIDE as two columns (`.hl-grid` in the approved prototype),
- * divided by a vertical rule, instead of stacked top-to-bottom -- both are
- * visible at once without scrolling past one to reach the other. Persists
- * through Dashboard.tsx's `timeHighlights` state -- this component only owns
- * ephemeral draft-form / open-popover state, the same split already used for
- * the Selected Sensor tab's colour picker.
- */
+/** Highlights tab: 'By time' (Line + Scatter) and 'By value' (Scatter only) side by side; owns only draft-form and popover state. */
 export default function HighlightsPanel({
     timeHighlights, onAddTimeHighlight, onToggleTimeHighlight, onRemoveTimeHighlight, onRecolorTimeHighlight,
     onRenameTimeHighlight,
@@ -84,8 +60,7 @@ export default function HighlightsPanel({
     const [draftEnd, setDraftEnd] = useState('');
     const [draftLabel, setDraftLabel] = useState('');
     const [highlightError, setHighlightError] = useState<string | null>(null);
-    // Inline label-rename -- which chip's label is currently an editable
-    // text field instead of static text, plus its in-progress draft value.
+    // Which chip's label is being edited inline, and its draft value.
     const [editLabelFor, setEditLabelFor] = useState<string | null>(null);
     const [draftEditLabel, setDraftEditLabel] = useState('');
 
@@ -98,10 +73,7 @@ export default function HighlightsPanel({
     const lookup = useSensorLookup();
     const unit = valueHighlight.sensor ? lookup(valueHighlight.sensor).unit : undefined;
 
-    // The inline rename draft is cleared on ANY chartType change: the panel's layout shifts
-    // (the "Not shown on Pair Plot" banner) and a half-typed rename is cheap to restart. The
-    // colour pickers (the shared ColourPicker) own their open state; they are keyed by chart
-    // type below, so a chart switch remounts them closed the same way.
+    // Clear the rename draft on any chart switch (layout shifts); colour pickers are keyed by chart type so they remount closed.
     useEffect(() => {
         setEditLabelFor(null);
     }, [chartType]);
@@ -128,10 +100,7 @@ export default function HighlightsPanel({
         setEditLabelFor(h.id);
         setDraftEditLabel(h.label);
     };
-    // Empty labels are rejected (reverts instead of saving) -- an
-    // untitled highlight chip is confusing to pick out of the list, and
-    // the "+ Add" form already falls back to an auto-generated name for
-    // the same reason.
+    // Empty labels revert instead of saving: an untitled chip is hard to pick out.
     const commitEditLabel = () => {
         if (!editLabelFor) return;
         const trimmed = draftEditLabel.trim();
@@ -142,7 +111,6 @@ export default function HighlightsPanel({
 
     return (
         <div className="highlights-grid">
-            {/* ===== Left column: "By time" (Line + Scatter) ===== */}
             <div className="highlights-col">
                 <div className="highlights-col-head">
                     <span className="highlights-col-title">By time</span>
@@ -185,8 +153,7 @@ export default function HighlightsPanel({
                                 <div className="highlights-chip">
                                     <input type="checkbox" checked={h.enabled} onChange={() => onToggleTimeHighlight(h.id)} title={h.enabled ? 'Hide this highlight' : 'Show this highlight'} />
                                     <ColourPicker
-                                        // Keyed by chart type: any chart switch remounts it closed, so an
-                                        // open popover never survives a layout shift at a stale position.
+                                        // Keyed by chart type so a switch remounts it closed; an open popover never stays at a stale position.
                                         key={chartType}
                                         color={h.color}
                                         onChange={hex => onRecolorTimeHighlight(h.id, hex)}
@@ -226,7 +193,6 @@ export default function HighlightsPanel({
                 </div>
             </div>
 
-            {/* ===== Right column: "By value" (Scatter only) ===== */}
             <div className="highlights-col">
                 <div className="highlights-col-head">
                     <span className="highlights-col-title">By value</span>
@@ -241,8 +207,7 @@ export default function HighlightsPanel({
                 )}
 
                 <fieldset disabled={!valueHighlightApplies} className={`highlights-fieldset${valueHighlightApplies ? '' : ' highlights-fieldset--dim'}`}>
-                    {/* "Colour by…" is the shared single picker, scoped to the sensors on
-                        the chart — a real disabled state on Line and Pair Plot. */}
+                    {/* Shared single picker scoped to the chart's sensors; really disabled on Line and Pair Plot. */}
                     <SensorPickerSingle
                         sensors={valueHighlightSensors}
                         value={valueHighlight.sensor}

@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 
-/** Render count of the legend's ColourPicker swatches — the legend's only
- *  children that render on every legend render, so "the legend did not
- *  re-render" = this count did not move. */
+/** Counts ColourPicker renders (the only legend child rendered every time): unchanged means the legend did not re-render. */
 let colourPickerRenders = 0;
 vi.mock('../components/sensor/ColourPicker', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../components/sensor/ColourPicker')>();
@@ -21,8 +19,7 @@ const cellCalls: any[] = [];
 // memo'd like the real PairPlotCell, so "does this re-render the WebGL cells?" is observable.
 vi.mock('../components/charts/PairPlotCell', async () => {
   const React = await import('react');
-  // Mirrors the real cell's zoom contract: reports under its own per-instance
-  // useId, and a bumped resetTick reports "not zoomed" under that same id.
+  // Mirrors the real cell's zoom contract: reports under its own `useId`; a bumped `resetTick` reports 'not zoomed' under it.
   return {
     fitLabel: (text: string) => text,
     default: React.memo((props: any) => {
@@ -106,10 +103,7 @@ afterEach(() => {
 });
 
 describe('PairPlotChart', () => {
-    // Regression guard: Pair Plot deliberately does not read the Highlights
-    // tab's timeHighlights at all (see ChartTypes.ts / Dashboard.tsx for
-    // why) -- it never receives the prop from Chart.tsx and none of its
-    // cells accept it.
+    // Pair Plot deliberately ignores the Highlights tab's `timeHighlights`: Chart.tsx never passes it and no cell accepts it.
     it('never forwards a timeHighlights prop to PairPlotCell', () => {
         render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
         expect(cellCalls.length).toBeGreaterThan(0);
@@ -125,13 +119,11 @@ describe('PairPlotChart', () => {
         const bar = document.querySelector('.pair-regl-cell-slot rect[fill="#6366f1"]');
         expect(bar).toBeTruthy();
 
-        // Histogram cell background must be pure black, not --bg-primary
-        // (regression: these used to be two different shades of near-black).
+        // Histogram cell background must be pure black, not --bg-primary.
         const histCell = document.querySelector('.pair-regl-cell') as HTMLElement;
         expect(histCell.style.background).toBe('rgb(0, 0, 0)');
 
-        // PairPlotCell is mocked above, so we can inspect the exact pointColor
-        // prop it was given — should be #6366f1 converted to 0..1 RGBA, alpha 0.55.
+        // PairPlotCell is mocked, so check its `pointColor`: #6366f1 as 0..1 RGBA, alpha 0.55.
         expect(cellCalls.length).toBeGreaterThan(0);
         const [r, g, b, a] = cellCalls[0].pointColor;
         expect(r).toBeCloseTo(0x63 / 255, 3);
@@ -150,9 +142,7 @@ describe('PairPlotChart', () => {
 
         it('the AxisLabel column header for sensor B shows exactly once, over the row-0 scatter cell', () => {
             const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
-            // Not-rotated (top orientation) spans only — the rotated (left/row
-            // header) span for the same sensor is a separate, expected label,
-            // covered by its own test below.
+            // Only the non-rotated (top) spans; the rotated row-header span for the same sensor has its own test.
             const topLabelsForB = Array.from(container.querySelectorAll('.pair-regl-axis-label > span'))
                 .filter((el) => el.textContent === 'B' && !(el as HTMLElement).style.transform);
             expect(topLabelsForB.length).toBe(1);
@@ -162,16 +152,13 @@ describe('PairPlotChart', () => {
             render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
             // Row 0's diagonal (sensor A) is the only diagonal cell that ever labels itself.
             expect(screen.getAllByText('A').length).toBeGreaterThanOrEqual(1);
-            // Sensor B's diagonal is row 1 — no label there; B only appears via
-            // the correlation cell's row header (asserted separately below).
+            // B's diagonal is row 1 and has no label; B appears only via the correlation cell's row header (asserted below).
         });
 
         it('the left-most correlation cell in a row shows the row header (sensorY only, never sensorX)', () => {
             const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
             const rNode = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === '+1.00');
-            // AxisLabel renders as a sibling of .pair-regl-cell (not nested
-            // inside it) so its hover tooltip isn't clipped by .pair-regl-cell's
-            // overflow:hidden — .pair-regl-cell-slot is their shared ancestor.
+            // AxisLabel sits beside `.pair-regl-cell` (tooltip not clipped by its overflow:hidden); the slot is the shared ancestor.
             const slot = rNode!.closest('.pair-regl-cell-slot') as HTMLElement;
             expect(slot.textContent).toContain('B'); // row header for row 1
             expect(slot.textContent).not.toContain('A'); // no column label on a correlation cell
@@ -183,8 +170,7 @@ describe('PairPlotChart', () => {
                 { tag: 'B', description: '', unit: '', component: '' }, // known tag, blank description
             ];
 
-            // At rest the tag alone (mono, dotted underline); the
-            // hover / focus card is the stacked label (description, unit chip, tag) + a component chip.
+            // At rest: the tag alone (mono, dotted underline); hover/focus card: stacked label + unit chip + component chip.
             it('marks the top (column) label hoverable; its card is the stacked label + unit + component chip', () => {
                 const { container } = render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} sensorMetadata={sensorMetadata} />);
                 const topLabelWrap = Array.from(container.querySelectorAll('.pair-regl-axis-label'))
@@ -204,9 +190,7 @@ describe('PairPlotChart', () => {
             it('marks the left (row) label hoverable too, matched case-insensitively via normalizeSensorTag', () => {
                 const mixedCaseMeta = [{ tag: 'a', description: 'Pump Pressure', unit: '', component: '' }];
                 const { container } = render(<PairPlotChart data={data} sensors={['B', 'A']} headers={headers} sensorMetadata={mixedCaseMeta} />);
-                // With sensors=['B','A'], row 1 (sensorY='A') is a correlation
-                // cell's left header — its lookup must match the lowercase 'a'
-                // in sensorMetadata against the uppercase 'A' sensor tag.
+                // sensors=['B','A']: row 1's left header (sensorY='A') must match lowercase 'a' in `sensorMetadata`.
                 const rotatedSpans = Array.from(container.querySelectorAll('.pair-regl-axis-label > span'))
                     .filter((el) => (el as HTMLElement).style.transform && el.textContent === 'A');
                 expect(rotatedSpans.length).toBe(1);
@@ -258,14 +242,11 @@ describe('PairPlotChart', () => {
             // A matrix wide enough that the tag headers fit (otherwise rule 5 prints keys).
             Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 1000 });
             const { container } = render(<PairPlotChart data={longData} sensors={longHeaders} headers={longHeaders} />);
-            // Two spans render this text: the (correctly-ellipsis-able) top/column
-            // header on the row-0 scatter cell, and the rotated row-header span on
-            // the correlation cell — only the rotated one must never truncate.
+            // Two spans render this text; the rotated row header on the correlation cell must never truncate.
             const labelSpan = Array.from(container.querySelectorAll('span'))
                 .find((el) => el.textContent === '11TE1602.PV' && !!(el as HTMLElement).style.transform);
             expect(labelSpan).toBeTruthy();
-            // The old bug came from clipping the label's own box before rotation
-            // (overflow:hidden + textOverflow:ellipsis on a 36px-wide container).
+            // Clipping the label's own box before rotation (overflow:hidden + ellipsis on a 36px container) truncates it.
             expect(labelSpan!.style.overflow).not.toBe('hidden');
             expect(labelSpan!.style.textOverflow).not.toBe('ellipsis');
         });
@@ -279,9 +260,7 @@ describe('PairPlotChart', () => {
             ] as any;
             const { container } = render(<PairPlotChart data={data3} sensors={headers3} headers={headers3} />);
 
-            // Row 2 (sensor C, gridRow 3) has two correlation cells:
-            // gridColumn 1 (pair C-A, left-most → shows the row header "C")
-            // gridColumn 2 (pair C-B, interior → must show no label at all).
+            // Row 2 (sensor C, gridRow 3): left-most gridColumn 1 shows header "C"; interior gridColumn 2 shows no label.
             const slots = Array.from(container.querySelectorAll<HTMLElement>('.pair-regl-cell-slot'));
             const leftMost = slots.find((el) => el.style.gridRow === '3' && el.style.gridColumn === '1')!;
             const interior = slots.find((el) => el.style.gridRow === '3' && el.style.gridColumn === '2')!;
@@ -394,7 +373,7 @@ describe('PairPlotChart', () => {
             expect(swatchBg('Cluster 1')).toBe('rgb(245, 158, 11)');
             expect(within(legend).getByRole('button', { name: 'Remove Cluster 1' })).toBeTruthy();
             expect(document.querySelector('input[type="color"]')).toBeNull();
-            expect(screen.queryByText(/rows/)).toBeNull(); // row counts are gone
+            expect(screen.queryByText(/rows/)).toBeNull(); // row counts are not shown
         });
 
         it('the default colour is a palette swatch, so the picker opens with a check on it (not on "Custom colour")', () => {
@@ -710,8 +689,7 @@ describe('PairPlotChart', () => {
                     return { onRename, input };
                 };
 
-                // Both events in one act: the field is still mounted when the blur
-                // arrives, as when a browser blurs the field it is removing.
+                // Both events in one act: the field is still mounted when blur arrives, as when a browser blurs a field it is removing.
                 it('Esc then blur keeps the old name and saves nothing', () => {
                     const { onRename, input } = renderLegend();
                     act(() => {
@@ -784,8 +762,7 @@ describe('PairPlotChart', () => {
                     fireEvent.click(container.querySelector('.pair-regl-inspect-overlay') as HTMLElement);
                     const modal = container.querySelector('.pair-regl-expand-modal') as HTMLElement;
                     const footer = modal.querySelector('.pair-regl-expand-footer') as HTMLElement;
-                    // First control of the enlarged view's own toolbox (the first overlay is a
-                    // diagonal cell, which has no lasso — its first tool is ↺).
+                    // First toolbox control of the enlarged view (a diagonal cell has no lasso, so it is ↺).
                     const modalFirstTool = modal.querySelector('.pair-regl-expand-toolbox button') as HTMLElement;
                     expect(modalFirstTool).toBeTruthy();
 
@@ -825,7 +802,7 @@ describe('PairPlotChart', () => {
             expect(screen.queryByText('View Table')).toBeNull();
             expect(screen.queryByTitle(/View brushed rows/)).toBeNull();
             expect(screen.queryByTitle(/CSV/)).toBeNull();
-            expect(screen.queryByTitle('Delete Cluster 1')).toBeNull(); // old trash button
+            expect(screen.queryByTitle('Delete Cluster 1')).toBeNull(); // no trash button
             expect(container.querySelector('.pair-regl-cluster-panel, .pair-regl-modal, .pair-regl-modal-backdrop, table')).toBeNull();
 
             // Same inside the enlarged view.
@@ -844,8 +821,7 @@ describe('PairPlotChart', () => {
         // Inline label + value (the one en-US formatter, up to 3 decimals).
         expect(screen.getByText('1.235')).toBeTruthy();
         expect(screen.getByText('9.877')).toBeTruthy();
-        // the row's time under the two values: the one date format, from the row's OWN clock
-        // (the mocked row is "2026-01-01T00:00:00Z" — the "Z" never moves it to this PC's zone)
+        // The row's time in the one date format, from the row's OWN clock (the mocked stamp's `Z` never moves it to this PC's zone).
         expect(container.querySelector('.scatter-regl-tooltip-ts')!.textContent).toBe('2026/01/01 00:00:00');
     });
 
@@ -853,9 +829,7 @@ describe('PairPlotChart', () => {
         render(<PairPlotChart data={data} sensors={['A', 'B']} headers={headers} />);
         fireEvent.click(screen.getByText('hover-B-time'));
         expect(screen.queryByText(/^Row /)).toBeNull();
-        // formatDateTime output for 2026-01-01T00:00:00Z will vary with local
-        // TZ, so just check the date portion is present and no timestamp
-        // duplicate row is shown for the time axis.
+        // Output varies with local TZ: check only the date part, and no duplicate timestamp row on the time axis.
         expect(screen.getByText(/2026\/01\/01/)).toBeTruthy();
     });
 
@@ -869,9 +843,7 @@ describe('PairPlotChart', () => {
         fireEvent.click(overlay);
         expect(container.querySelector('.pair-regl-expand-modal')).toBeTruthy();
 
-        // Hover inside the dialog's own (mocked) PairPlotCell — it shares the
-        // same onHover={setHover} as the matrix, so this is the last
-        // hover-A-B button rendered (the dialog's cell mounts after the matrix's).
+        // Hover in the dialog's own mocked PairPlotCell: it mounts after the matrix, so it is the last hover-A-B button.
         const hoverButtons = screen.getAllByText('hover-A-B');
         fireEvent.click(hoverButtons[hoverButtons.length - 1]);
 
@@ -882,9 +854,7 @@ describe('PairPlotChart', () => {
 
 });
 
-// "the ↺ button does nothing". Besides the
-// cell-side redraw fix (PairPlotCell.test.tsx), the button now says when it
-// has nothing to undo instead of silently doing nothing.
+// The ↺ button says when it has nothing to undo instead of silently doing nothing.
 describe('PairPlotChart — toolbox ↺ (reset zoom and pan)', () => {
     const resetBtn = () => screen.getAllByRole('button', { name: 'Reset zoom and pan' })[0];
 

@@ -16,16 +16,7 @@ import { SensorPickerModal } from '../SensorPickers';
 import { focusableIn } from '../useModalFocus';
 import { fgLabel } from '../../../utils/fgLabel';
 
-/*
- * Export results (design 2026-10-20, DESIGN_SYSTEM §4.2): the Build Model
- * window's bottom bar (`ExportBar`, variant C) and the Export dialog
- * (`ExportModal`): readiness checklist → Save to → What is written (Peek) →
- * confirm sensors without a component → writing → done / failed / cancelled.
- *
- * Everything shown comes from real data: the checklist from `exportReadiness`
- * (the window's view of the workspace), the files / rows / Peek from the Rust
- * dry run (`exportPlan`), and the run itself from `useWorkspaceExport`.
- */
+/* Export results UI: bottom bar (ExportBar) and dialog (ExportModal). Data comes from exportReadiness, the Rust dry run (exportPlan) and useWorkspaceExport. */
 
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
 const pad2 = (n: number) => String(n).padStart(2, '0');
@@ -52,9 +43,6 @@ export interface ExportedLine {
     at: Date;
 }
 
-// ---------------------------------------------------------------------------
-// The workspace status bar (variant C)
-// ---------------------------------------------------------------------------
 
 export function ExportBar({ counts, phase, progress, exported, filled, blockedWhy, unsavedWhy = null, onExport, onShowWhich, onShowRun, onOpenFolder }: {
     counts: ExportReadiness['counts'];
@@ -157,9 +145,6 @@ export function ExportBar({ counts, phase, progress, exported, filled, blockedWh
     );
 }
 
-// ---------------------------------------------------------------------------
-// The dialog
-// ---------------------------------------------------------------------------
 
 export interface ExportGroupInfo {
     no: number;
@@ -192,8 +177,7 @@ function ByGroup({ rows, groups, render }: { rows: ExportReadinessRow[]; groups:
     );
 }
 
-/** A model key or file name. Plain text while it fits; once it is cut, the cut is in the middle (rule 1), so the
- *  end that tells two files apart stays, with its "-R1" and extension. The full name is in `title`. */
+/** A model key or file name; when cut, the cut is in the middle so the end (-R1, extension) stays. Full name in `title`. */
 function KeyText({ k, ext = '', lead = '', className = 'ex-mono' }: { k: string; ext?: string; lead?: string; className?: string }) {
     const full = `${lead}${k}${ext}`;
     const [ref, cut] = useLineCut(full);
@@ -221,8 +205,7 @@ function ModelRow({ r, status, tone, act, also }: { r: ExportReadinessRow; statu
     );
 }
 
-/** One line of the checklist. `fix` = a working link in THIS window; `where` =
- *  plain words for a place in another window (never a dead link). */
+/** One checklist line. `fix` = a link that works in this window; `where` = words for a place in another window. */
 function ReadyLine({ id, ok, info, text, sub, fix, where, below }: {
     id: string; ok: boolean; info?: boolean; text: ReactNode; sub?: ReactNode;
     fix?: { label: string; run: () => void }; where?: string; below?: ReactNode;
@@ -255,10 +238,7 @@ export interface ExportModalProps {
     projectName: string;
     machineTag: string;
     exp: UseWorkspaceExport;
-    /** The last `exp.plan()` (the dry run) was refused. Not a failed export: the
-     *  checklist stays, with one inline line; "Export failed · Nothing was
-     *  written" is only for a failed write. The hook says `failed` for both, so
-     *  the window (which knows which call it made) tells the dialog. */
+    /** The dry run exp.plan() was refused: the checklist shows one inline line. 'Export failed' is only for a failed write. */
     planFailed?: boolean;
     /** Another dialog (Project details) is open on top: this one leaves Esc and Tab alone. */
     stacked: boolean;
@@ -298,8 +278,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
     // there it is one green line with "Show".
     const [showList, setShowList] = useState(!allReady);
     useEffect(() => { if (!allReady) setShowList(true); }, [allReady]);
-    // The dry run only runs once everything is there: when the last item is filled
-    // in while the dialog is open (Project details on top of it), it runs then.
+    // The dry run only runs once everything is there; if the last item is filled while the dialog is open, it runs then.
     const prevReadyRef = useRef(allReady);
     useEffect(() => {
         const was = prevReadyRef.current;
@@ -310,14 +289,12 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [allReady]);
 
-    // A new running status when everything was already there: the dry run shown is
-    // out of date (the not-ready -> ready step runs it in the effect above).
+    // A new running status when already ready makes the shown dry run stale, so it runs again here.
     const saveRunningStatus = async (sensor: string, value: string) => {
         await onSaveRunningStatus(sensor, value);
         if (allReady && (phase === 'idle' || phase === 'ready' || phase === 'cancelled' || planFailed)) void exp.plan();
     };
 
-    // ---- keyboard: first focus, Tab kept inside, Esc closes only the top dialog ----
     const stackedRef = useRef(stacked);
     stackedRef.current = stacked;
     useEffect(() => {
@@ -736,8 +713,7 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
     );
 }
 
-/** What each export-check code means, in the user's words (Rust's `message`
- *  carries raw tags, so it is shown only for a code this app does not know). */
+/** Export-check codes in the user's words; Rust's message carries raw tags, so it is shown only for an unknown code. */
 export const EXPORT_ISSUE_WORDS: Record<string, string> = {
     machine_missing: 'Plant name, Machine name or Machine tag not filled in',
     running_status_missing: 'Running status not set',
@@ -761,9 +737,7 @@ export const EXPORT_ISSUE_WORDS: Record<string, string> = {
     fg_name_duplicate: 'Another failure group has the same name',
 };
 
-/** One export-check problem: the model it is about (its name, or its sensor and
- *  kind), the failure group, the sensor (`SensorInline`, never the raw tag), then
- *  the fixed wording of its code. */
+/** One export-check problem: model, failure group, sensor (SensorInline, never the raw tag), then the code's wording. */
 export function ExportIssueLine({ issue, row, spec }: { issue: ExportIssue; row?: ExportReadinessRow; spec?: Pick<ExportModelSpec, 'display_name' | 'kind'> }) {
     const words = Object.prototype.hasOwnProperty.call(EXPORT_ISSUE_WORDS, issue.code) ? EXPORT_ISSUE_WORDS[issue.code] : undefined;
     const kind = spec?.kind ?? row?.kind;

@@ -1,38 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Cross-feature smoke through the REAL components.
- *
- * ONE long user journey per model kind that chains the app's features,
- * with nothing but Tauri and the Rust backend faked:
- *
- *   real App (DataUploadPage import: Create project -> browse -> Parse -> Continue)
- *   -> real Dashboard -> "Add special sensor" spawns the REAL Add Special Sensor
- *      window (own React root) -> formula sensor created
- *   -> Sensor tab FG sheet: new group (creates an Individual model), assign the
- *      kind under test, un-assign the extra Individual model -> Undo toast
- *   -> "Build Model ->" spawns the REAL Build Model window (own React root)
- *   -> Running condition: Step-1 card -> modal -> condition + train period + a
- *      SCORING period (start -> end only) -> Apply -> strip / Scoring chip
- *   -> settings -> Train -> Model fit -> Health score -> set points -> Mark complete
- *   -> the special sensor is now LOCKED in Manage (edit + delete)
- *   -> FG sheet un-assign of the COMPLETE model -> Undo restores it whole
- *   -> Back to Import -> import workspace B (none of A's sensors/models leak)
- *   -> reopen A from Recent (special sensor replayed, model Complete, set points intact)
- *   -> Back -> delete A (workspace file AND its model output folder removed, B untouched).
- *
- * Plus the Dashboard VIS behaviour that sits next to all of that: Filter tab +
- * value highlight follow a rename of a special sensor no model uses, the time
- * range bar, and a chart-type switch closes the open colour popover.
- *
- * Shared fakes: `helpers/healthEnv.tsx` (in-memory plugin-fs / plugin-store /
- * event bus, the REAL workspaceManager runs on top of them) and
- * `helpers/crossFeatureBackend.ts` (special-sensor session fake + health fake on
- * the SAME columns). Every console.error / console.warn and every unhandled
- * promise rejection is recorded; React warnings (act / key / unknown prop /
- * update on unmounted) fail the test, anything else is asserted explicitly.
- */
+/* Cross-feature smoke with REAL components, one journey per model kind (import through delete); only Tauri and Rust are faked (`helpers/healthEnv.tsx`, `helpers/crossFeatureBackend.ts`). React warnings (act/key/unknown prop/unmounted) fail the test. */
 
 const wins = vi.hoisted(() => ({
     pending: [] as string[],
@@ -80,8 +49,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
     },
 }));
 vi.mock('@tauri-apps/api/app', () => ({ getVersion: () => Promise.resolve('0.7.0') }));
-// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
-// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+// jsdom has no 2D canvas context (and logs 'Not implemented'), so the Import page's canvas animation is stood in.
 vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -120,7 +88,6 @@ import { showSensorTab } from './helpers/dashboardLanding';
 
 vi.setConfig({ testTimeout: 120_000 });
 
-// ── data ───────────────────────────────────────────────────────────────
 
 const PATH_A = 'C:/data/plant-a.csv';
 const PATH_B = 'C:/data/plant-b.csv';
@@ -134,7 +101,6 @@ const RC_FILTER = { timestamp_ranges: [], value_filters: [{ sensor: 'TAG2', oper
 
 let be: CrossFeatureBackend;
 
-// ── console / rejection recorder ─────────────────────────────────────────
 
 const logged: { level: 'error' | 'warn'; text: string }[] = [];
 const rejections: string[] = [];
@@ -177,7 +143,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-// ── windows ──────────────────────────────────────────────────────────────
 
 const roots = new Map<string, ReturnType<typeof render>>();
 const closing: string[] = [];
@@ -210,12 +175,10 @@ async function mountPendingWindows() {
         wins.open.set(label, {
             label,
             setFocus: async () => {},
-            // A Tauri close is IPC: the webview goes away later. Queue it -- unmounting
-            // here would nest act() inside the Dashboard's own unmount.
+            // A Tauri close is IPC (the webview goes later): queue it; unmounting here would nest act() inside the Dashboard's unmount.
             close: async () => {
                 if (!wins.open.has(label)) return;
-                // Tauri v2: close() emits CloseRequested first; a handler may preventDefault
-                // (Build Model does while a save / Mark complete is running) and close later itself.
+                // Tauri v2 `close()` emits CloseRequested first; Build Model may preventDefault while saving/Mark complete runs.
                 if (label === 'build-model') {
                     let prevented = false;
                     for (const cb of [...env.closeHandlers]) void cb({ preventDefault: () => { prevented = true; } });
@@ -241,9 +204,7 @@ async function renderApp() {
 
 const onDashboard = () => !!document.querySelector('button[title="Back to Import"]');
 
-/** Import page: New project -> name -> Continue -> browse -> Parse files -> Continue -> step 3
- *  "Skip for now" (no failure groups; the journeys create theirs from the FG sheet) -> Dashboard,
- *  which then lands on its Failure Groups tab -> open the Sensor tab. */
+/** Import page flow: New project, name, parse, 'Skip for now', Dashboard, then the Sensor tab. */
 async function importProject(name: string, path: string) {
     await act(async () => { fireEvent.click(app().getByRole('button', { name: /New project/ })); });
     await settle();
@@ -287,7 +248,6 @@ const recentIds = () => ((env.store.get('recent_workspaces') as any[]) ?? []).ma
 const wsIdByName = (name: string) => ((env.store.get('recent_workspaces') as any[]) ?? []).find(w => w.name === name)?.id as string;
 const disk = (id: string) => JSON.parse(env.files.get(`workspaces/${id}.json`)!);
 
-// ── Dashboard: sensors, FG sheet ─────────────────────────────────────────
 
 async function openSensorTab() {
     const btn = app().queryByRole('button', { name: /^Sensor \(/ });
@@ -323,7 +283,6 @@ async function clickCell(sheet: ReturnType<typeof within>, label: string) {
     await settle(400);
 }
 
-// ── Add Special Sensor window ────────────────────────────────────────────
 
 async function openAddSensorWindow() {
     await act(async () => { fireEvent.click(document.querySelector('.add-sensor-btn') as HTMLElement); });
@@ -357,7 +316,6 @@ async function goManage() {
     await settle(30);
 }
 
-// ── Build Model window ───────────────────────────────────────────────────
 
 async function openBuildModel() {
     await openFgTab();
@@ -387,9 +345,7 @@ async function setRunningCondition() {
     if (dlg.queryByTestId('periods-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('period-add')); });
     }
-    // ...and a SCORING period before Mark complete: start -> end only ("just score
-    // it" - no label, no event time), typed through the real Scoring
-    // periods editor (dates commit on blur).
+    // A scoring period before Mark complete: start -> end only, typed in the real Scoring periods editor (dates commit on blur).
     if (dlg.queryByTestId('tests-empty')) {
         await act(async () => { fireEvent.click(dlg.getByTestId('test-add')); });
         const typeDate = (label: string, value: string) => {
@@ -630,9 +586,6 @@ describe.each(['individual', 'relationship', 'clustering'] as Kind[])('cross-fea
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// Dashboard VIS behaviour next to the special-sensor lifecycle
-// ═════════════════════════════════════════════════════════════════════════
 
 const lastChartFilter = () => [...be.session.cmds('get_chart_data')].reverse().find(c => !c.error)?.args.filter;
 const openPopovers = () => Array.from(document.querySelectorAll<HTMLElement>('#wizard-portal-root .sensor-popover'));
@@ -768,12 +721,8 @@ describe('Dashboard VIS behaviour around a special sensor no model uses', () => 
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// Leaving the workspace while a Relationship "Mark complete" is still saving
-// ═════════════════════════════════════════════════════════════════════════
 
-/** Workspace A with a Relationship model (target TAG1, predictor = special sensor SP1)
- *  that is trained, has valid set points, and is one click away from Mark complete. */
+/** Workspace A with a trained Relationship model (target TAG1, predictor = special sensor SP1) with valid set points, one click from Mark complete. */
 async function relationshipReadyToComplete(): Promise<{ A: string; mid: string }> {
     await renderApp();
     await importProject('Alpha', PATH_A);
@@ -827,10 +776,7 @@ describe('leaving the workspace while a Relationship Mark complete is still chec
         expect(rejections, 'unhandled rejections').toEqual([]);
     });
 
-    // Mark complete writes no files any more, so nothing can be left half-done: a check
-    // still in flight when the window is re-pointed at workspace B (whose dataset Rust now
-    // holds) is answered STALE_SESSION — A simply stays Incomplete, nothing is written into
-    // A or B, and the user marks it complete again once A is open.
+    // A check in flight when the window is re-pointed at B gets STALE_SESSION: A stays Incomplete, nothing is written.
     it('re-pointing the still-open window at workspace B before the check finishes leaves A Incomplete and untouched (never half-done)', async () => {
         const { A, mid } = await relationshipReadyToComplete();
         wins.selfClose = 'build-model';

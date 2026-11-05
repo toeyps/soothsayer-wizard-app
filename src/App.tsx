@@ -3,9 +3,7 @@ import { DataUploadPage } from "./components/upload";
 import type { DashboardRef } from "./components/dashboard";
 import { CsvMetadata, PROJECT_DETAILS_CHANGED, SensorMetadata, WorkspaceMetadata, WorkspaceState, type ProjectDetailsChangedPayload } from "./types";
 
-// Dashboard pulls in echarts + regl-scatterplot (the app's two heaviest
-// dependencies) — deferring it until a workspace is actually open keeps
-// those out of the initial bundle the upload screen has to parse.
+// Lazy: Dashboard pulls in echarts and regl-scatterplot, the heaviest deps; keeps them out of the initial bundle.
 const Dashboard = lazy(() =>
   import("./components/dashboard").then((m) => ({ default: m.Dashboard })),
 );
@@ -31,8 +29,7 @@ function App() {
   const [initialWorkspaceState, setInitialWorkspaceState] = useState<WorkspaceState | null>(null);
   const [workspaceName, setWorkspaceName] = useState<string>("");
   const [renameTrigger, setRenameTrigger] = useState(0);
-  // Project details, opened from the title bar's project menu: the project as
-  // it is on disk plus the other projects (the Plant · Machine pair is unique).
+  // Project details: the project as on disk plus the other projects (the Plant · Machine pair must be unique).
   const [details, setDetails] = useState<{ ws: WorkspaceState; others: WorkspaceMetadata[] } | null>(null);
   const workspaceIdRef = useRef<string | undefined>(undefined);
   workspaceIdRef.current = metadata ? initialWorkspaceState?.id : undefined;
@@ -48,14 +45,9 @@ function App() {
     };
   }, []);
 
-  // No auto-resume: the app always boots into the Import page. Users navigate
-  // into past work by clicking a Recent Workspace in the sidebar — that flow
-  // lives in `DataUploadPage.handleLoadWorkspace`, which decides per-workspace
-  // whether to land in Dashboard, Failure Group, or Predictive Model.
+  // No auto-resume: boots into the Import page; `DataUploadPage.handleLoadWorkspace` decides where a Recent Workspace lands.
 
-  // File > New Workspace (Ctrl/Cmd+N). With a workspace open it returns to the
-  // Import page as before; already on the Import page it asks DataUploadPage to
-  // start a new project (it acts only on step 0 -- see its `newProjectSignal`).
+  // New Workspace (Ctrl/Cmd+N): with a workspace open go back to Import, else `newProjectSignal` asks DataUploadPage to start a project.
   const [newProjectSignal, setNewProjectSignal] = useState(0);
 
   const handleBackToImport = () => {
@@ -73,9 +65,7 @@ function App() {
     }
   };
 
-  // A Project details save -- from this window or another (Build Model) --
-  // renames the open project. Only THIS project's: a payload for another
-  // workspace (or with no id) is dropped.
+  // A Project details save (from any window) renames the open project; payloads for another workspace or with no id are dropped.
   const handleRenameRef = useRef(handleRename);
   handleRenameRef.current = handleRename;
   useEffect(() => subscribe<ProjectDetailsChangedPayload>(PROJECT_DETAILS_CHANGED, (event) => {

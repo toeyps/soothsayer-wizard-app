@@ -11,38 +11,7 @@ import RunningConditionTimeline from './RunningConditionTimeline';
 import TestPeriodsEditor from './TestPeriodsEditor';
 import TimePeriodsEditor, { type PeriodBounds } from './TimePeriodsEditor';
 
-/*
- * The Running-condition settings (workbench redesign SPEC §5,
- * docs/design/handoff/workbench-redesign/README.md) — ONE column, used twice:
- *
- *   - `scope="workspace"`: the body of BuildModelWindow's Running condition
- *     modal (the workspace default; Apply lives in the modal footer);
- *   - `scope="custom"`: a Custom model's own running condition inside its
- *     Model settings (saved with Save changes) — the same timeline, rows and
- *     states, ending with one footnote.
- *
- *   [ timeline hero: month axis · Train lane (P1 P2) · Score lane (S1 S2) · ONE caption ]
- *   Train periods                  one eyebrow line · one quiet line per period
- *   Scoring periods                one eyebrow line · one quiet line per period
- *   When the machine is running    one eyebrow line · ONE line:
- *                                  "Machine is running when [sensor] is above [value unit]"
- *
- * The running condition is that one line (user decision 2026-10-26): no
- * operator choice, no second condition, no AND / OR. It filters the rows for
- * Train and the Health score, and (workspace scope) it is the export's
- * `machine_info.running_status`. It is required.
- *
- * Above the line, "Only when running | Use all data" (back 2026-10-28, user
- * decision): on all data Train and the Health score use every row of the
- * periods and the line is hidden (2026-11-03, user decision: nothing is
- * filtered, so nothing is asked here). The export asks for it in its checklist.
- *
- * No right-hand preview column and no callout boxes. No number of data rows
- * either (user decision 2026-10-14): the counts are shown as running DAYS — in
- * the caption and at the end of each period row — never as rows or a
- * percentage. Presentation only: every value and handler arrives through
- * props, and nothing here writes anything.
- */
+/* Running-condition settings for scope 'workspace' (modal body, Apply in its footer) and 'custom' (a model's own, saved with Save changes). Presentation only: values and handlers arrive via props. One required line 'Machine is running when [sensor] is above [value]' filters Train and Health score and (workspace) is the export's running_status. 'Use all data' hides it (the export checklist asks instead). Counts show as running days, never rows or %. */
 
 /** Header pills of the modal: Fix period / Required. */
 export function RunningConditionPills({ configured, periodInvalid }: {
@@ -58,9 +27,7 @@ export function RunningConditionPills({ configured, periodInvalid }: {
 }
 
 export interface RunningConditionPanelProps {
-    /** `workspace` (default): the modal's draft. `custom`: one model's own
-     *  running condition — different test ids on the root and the sections,
-     *  "save" wording, and the footnote at the end. */
+    /** `workspace`: the modal's draft. `custom`: one model's own condition, with its own test ids, 'save' wording and the footnote. */
     scope?: 'workspace' | 'custom';
     /** The running condition (as drafted) is configured. */
     configured: boolean;
@@ -88,14 +55,9 @@ export interface RunningConditionPanelProps {
     /** The workspace's Dashboard time highlights — only for the TRAIN-period
      *  overlap line ("Remove the overlap"). */
     highlights: TimeHighlight[];
-    /** A date in one of the two lists is still being typed: the row's name
-     *  ("P1" / "S2"), or null once that list has nothing half-typed. A complete
-     *  date arrives through `onPeriodsChange` / `onTestPeriodsChange` at once. */
+    /** A date is half-typed: the row's name ('P1'/'S2'), or null; a complete date arrives via onPeriodsChange/onTestPeriodsChange. */
     onPendingDate?: (list: 'train' | 'scoring', name: string | null) => void;
-    /** The two lists as they are SAVED (the persisted workspace periods, or the
-     *  model's own saved Custom ones). A period unchanged from them that lies
-     *  entirely outside the loaded data only WARNS on its row; a new / changed
-     *  one is invalid. Omitted = every period is new. */
+    /** Both lists as SAVED: a saved period outside the loaded data only warns, a new or changed one is invalid. Omitted = all new. */
     savedPeriods?: PeriodBaseline;
     savedTestPeriods?: PeriodBaseline;
 }
@@ -106,9 +68,7 @@ export default function RunningConditionPanel({
     counts = PERIOD_COUNTS_IDLE, testPeriods, onTestPeriodsChange, highlights, onPendingDate, savedPeriods, savedTestPeriods,
 }: RunningConditionPanelProps) {
     const custom = scope === 'custom';
-    // Without a complete condition the count would be of EVERY row (no condition
-    // is sent), which is not what will be trained on once it is set — so no
-    // running days on the rows, and the caption claims no running time either.
+    // Without a complete condition the count would cover every row, not what trains once it is set; so no running days and no running-time claim.
     const rowCounts = configured ? counts : PERIOD_COUNTS_IDLE;
     const sensor = condition?.sensor ?? '';
     const value = condition?.value1 ?? '';

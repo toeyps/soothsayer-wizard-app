@@ -79,19 +79,14 @@ describe('ColorPlatePicker', () => {
         const onChange = vi.fn();
         const { container, rerender } = render(<ColorPlatePicker color="#ff0000" onChange={onChange} />);
         rerender(<ColorPlatePicker color="#00ff00" onChange={onChange} />);
-        // Clicking the SV square's top-left corner now yields white regardless
-        // of the (new) hue, same invariant as before — confirms the picker
-        // picked up the new color rather than staying pinned to the old hue.
+        // The SV square's top-left corner yields white whatever the hue; confirms the picker took the new colour, not the old hue.
         const square = container.querySelectorAll('div')[1];
         fireEvent.pointerDown(square, { clientX: 0, clientY: 0, pointerId: 1 });
         expect(onChange).toHaveBeenCalledWith('#ffffff');
     });
 
     it('does not re-derive h/s/v when the parent echoes back the exact color this component just emitted', () => {
-        // Regression guard for the hue-360-vs-0 wraparound bug described in
-        // the component's own comments: re-deriving on every render would
-        // snap the hue thumb back to 0 the instant the parent's state
-        // update round-trips the emitted value back down as `color`.
+        // Guards the hue 360-vs-0 wraparound: re-deriving on every echo of `color` would snap the hue thumb back to 0.
         const onChange = vi.fn();
         const { container, rerender } = render(<ColorPlatePicker color="#ff0000" onChange={onChange} />);
         const hueSlider = container.querySelectorAll('div')[3];

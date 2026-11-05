@@ -10,15 +10,10 @@ export type PeriodFault =
     | 'start-missing'
     | 'end-missing'
     | 'ends-before-start'
-    /** Entirely outside the loaded data's time range — only for a period that is
-     *  NEW or was CHANGED against the saved list (`PeriodBaseline`), and only
-     *  when the caller hands in the dataset bounds. A saved, untouched period
-     *  outside the data is never a fault: it is a warning (`outsideData`). */
+    /** Entirely outside the data: only for a new or changed period when bounds are given; an unchanged saved one only warns (`outsideData`). */
     | 'outside-data';
 
-/** The loaded dataset's first / last timestamp (`get_dataset_time_bounds`), as
- *  the period rules read it. Unknown (missing / unparseable) = nothing is
- *  judged against the data. */
+/** Loaded dataset's first/last timestamp; unknown = nothing judged against the data. */
 export interface PeriodDataBounds {
     min?: string | null;
     max?: string | null;
@@ -27,38 +22,21 @@ export interface PeriodDataBounds {
 export interface PeriodStatus {
     /** Unparseable bound, end before start, or an open end where none is allowed. */
     invalid: boolean;
-    /** Short sentence when `invalid`, naming the period by its list number:
-     *  "P2 ends before it starts." Used by the gates and wherever the reason is
-     *  followed by another sentence ("… Fix it in Model settings"). */
+    /** Short sentence when `invalid`, naming the period ("P2 ends before it starts."); used where another sentence follows. */
     reason?: string;
-    /** The ONE reason line under the period's own row when `invalid` (no full
-     *  stop, and a hint what to do where there is one): "P2 ends before it
-     *  starts — pick an end after 2026/05/11 00:00", "P2 needs a start date". */
+    /** The one reason line under the row when `invalid`, with a hint where possible. */
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
-    /** A VALID period that reaches past the loaded data on one or both sides
-     *  (never a block): the quiet amber note under its row — "Only the part
-     *  inside the data is used (data ends 2025/12/31)". For a saved period that
-     *  lies ENTIRELY outside the data (`outsideData`): "P2 is outside the data
-     *  (2025/01/01 00:00 – 2025/12/31 23:50) — it is not used". */
+    /** Valid period reaching past the data (never blocks): amber note. Also the warning for a saved period entirely outside (`outsideData`). */
     dataNote?: string;
-    /** Not invalid, but entirely outside the loaded data: a period that is
-     *  UNCHANGED from the saved list (an old workspace, or the data file changed
-     *  since). A warning only — it never blocks Apply / Save changes, and Train
-     *  only when NO train period is inside the data (`allPeriodsOutsideData`). */
+    /** Entirely outside the data but unchanged from the saved list: warning only. Blocks Train only when no period is inside the data (`allPeriodsOutsideData`). */
     outsideData?: boolean;
     /** Starts strictly before the previous period ends (touching is NOT overlap). */
     overlapsPrev: boolean;
 }
 
-/**
- * The SAVED list a draft is judged against (the persisted workspace periods, or
- * a model's own saved Custom periods). A period that is in it with the same id,
- * start and end is "unchanged": lying outside the data it only WARNS. Leave it
- * out (or pass `null`) when everything is new — a draft with nothing saved
- * behind it — and every period entirely outside the data is invalid.
- */
+/** The saved list a draft is judged against: same id/start/end = unchanged (outside-data only warns). Omit/null when all is new. */
 export type PeriodBaseline = readonly { id: string; start: string; end: string }[] | null | undefined;
 
 const sameBoundText = (a: string | null | undefined, b: string | null | undefined) => (a ?? '').trim() === (b ?? '').trim();
@@ -75,8 +53,7 @@ export interface FilterRange {
 
 const MINUTE = 60_000;
 
-/** Epoch ms of a `datetime-local` / ISO-ish string as LOCAL time; null if empty
- *  or unparseable. Date-only strings are read as local midnight. */
+/** Epoch ms of a datetime-local/ISO-ish string as LOCAL time; null if empty/unparseable. Date-only = local midnight. */
 const toMs = parseLocal;
 
 const FAULT_WORDS: Record<PeriodFault, string> = {
@@ -88,12 +65,6 @@ const FAULT_WORDS: Record<PeriodFault, string> = {
     'outside-data': 'is outside the data',
 };
 
-// ---------------------------------------------------------------------------
-// Period vs the loaded data's time range: a period chosen beyond the data is
-// warned about at once. Pure: the bounds are the ones the window already holds
-// for the timeline, so judging costs no request. Unknown bounds = nothing is
-// flagged.
-// ---------------------------------------------------------------------------
 
 /** The data's time range in epoch ms, or null while it is unknown. */
 function dataRangeMs(bounds: PeriodDataBounds | null | undefined): { min: number; max: number } | null {
@@ -107,22 +78,14 @@ const endOfDay = (ms: number): number => { const d = new Date(ms); d.setHours(23
 
 /** How one period sits against the loaded data. */
 export interface PeriodDataFit {
-    /** No part of it is inside the data (it ends before the first row or starts
-     *  after the last one; an open bound runs to the data's edge). */
+    /** No part is inside the data (open bounds run to the data's edge). */
     outside: boolean;
-    /** It reaches before the data's first day / past its last day. For a period
-     *  that is not `outside` this is the "partly outside" note; a bound on the
-     *  data's own first / last calendar day is not "past" it (a period typed to
-     *  23:59 of the last day of data that ends at 23:50 is not worth a note). */
+    /** Reaches before the first / past the last calendar day of the data (a bound on the edge day is not 'past'). */
     before: boolean;
     after: boolean;
 }
 
-/**
- * Where a period sits against the loaded data, or null when that cannot be said
- * (bounds unknown, or the period itself is unparseable / reversed — its own
- * fault comes first).
- */
+/** Where a period sits against the data; null if bounds are unknown or the period is unparseable/reversed. */
 export function periodDataFit(p: { start: string; end: string }, bounds: PeriodDataBounds | null | undefined): PeriodDataFit | null {
     const r = dataRangeMs(bounds);
     const iv = interval(p);
@@ -141,39 +104,25 @@ export function dataRangeText(bounds: PeriodDataBounds | null | undefined): stri
     return `${formatBound(bounds?.min)} – ${formatBound(bounds?.max)}`;
 }
 
-/** The two texts of a period that is entirely outside the data:
- *  "P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)" (+ a full stop for `reason`). */
+/** Texts for a period entirely outside the data (`reason` ends with a full stop). */
 export function outsideDataTexts(name: string, bounds: PeriodDataBounds | null | undefined): { reason: string; rowReason: string } {
     const core = `${name} ${FAULT_WORDS['outside-data']} (${dataRangeText(bounds)})`;
     return { reason: `${core}.`, rowReason: core };
 }
 
-/** The amber warning of a SAVED, untouched period that lies entirely outside the
- *  data: "P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50) — it is not used"
- *  (train) / "S1 is outside the data — nothing is scored there" (scoring). */
+/** Amber warning for a saved, untouched period entirely outside the data. */
 export function savedOutsideDataNote(name: string, kind: 'train' | 'scoring', bounds: PeriodDataBounds | null | undefined): string {
     return kind === 'train'
         ? `${name} ${FAULT_WORDS['outside-data']} (${dataRangeText(bounds)}) — it is not used`
         : `${name} ${FAULT_WORDS['outside-data']} — nothing is scored there`;
 }
 
-/**
- * NO train period is inside the loaded data: there are train periods, the data's
- * range is known, and every one of them lies entirely outside it — truly nothing
- * to train on (the one case where a period outside the data blocks Train). False
- * while the range is unknown or any period is unreadable (its own fault first).
- */
+/** True when periods exist and every one lies outside the known data range (the case that blocks Train); false if any is unreadable. */
 export function allPeriodsOutsideData(list: readonly { start: string; end: string }[], bounds: PeriodDataBounds | null | undefined): boolean {
     return list.length > 0 && list.every(p => periodDataFit(p, bounds)?.outside === true);
 }
 
-/**
- * The warnings of the SAVED lists for the one-line running-condition card: one
- * sentence per saved period that lies entirely outside the data ("P2 is outside
- * the data (…) — it is not used", "S1 is outside the data — nothing is scored
- * there"). Empty while the data's range is unknown. Periods broken by the plain
- * date rules are not listed (they have their own red state).
- */
+/** Warnings for saved periods entirely outside the data; empty while the range is unknown. Periods with date faults are not listed. */
 export function savedOutsideDataNotes(train: TimePeriod[], tests: TestPeriod[], bounds: PeriodDataBounds | null | undefined): string[] {
     const out: string[] = [];
     validatePeriods(train, bounds, train).forEach(s => { if (s.outsideData && s.dataNote) out.push(s.dataNote); });
@@ -181,10 +130,7 @@ export function savedOutsideDataNotes(train: TimePeriod[], tests: TestPeriod[], 
     return out;
 }
 
-/** The quiet amber note of a period that is only PARTLY inside the data, or null:
- *  "Only the part inside the data is used (data ends 2025/12/31)". The data's
- *  edge is given as a date alone — "past the data" is judged by calendar day
- *  (`periodDataFit`), so a time would claim a precision the rule does not have. */
+/** Amber note for a period only partly inside the data, or null; the edge is a date because 'past' is judged by calendar day. */
 export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds | null | undefined): string | null {
     const r = dataRangeMs(bounds);
     if (!r || fit.outside || (!fit.before && !fit.after)) return null;
@@ -194,14 +140,7 @@ export function partlyOutsideNote(fit: PeriodDataFit, bounds: PeriodDataBounds |
     return `Only the part inside the data is used (${what})`;
 }
 
-/**
- * The two texts of one invalid period. `name` is the period as the user sees
- * it — "P2" (train period, by list position) or "S1" (scoring period) — never
- * "Period 2". `reason` is the short sentence ("P2 ends before it starts.");
- * `rowReason` the one line under the row, with what to do when that is known
- * ("P2 ends before it starts — pick an end after 2026/05/11 00:00"; the date is
- * the period's own start, date and time, in the app's date format).
- */
+/** Texts of one invalid period; `name` is 'P2' (train) or 'S1' (scoring). `rowReason` adds what to do when known. */
 export function periodReasonTexts(name: string, fault: PeriodFault, start?: string | null): { reason: string; rowReason: string } {
     const core = `${name} ${FAULT_WORDS[fault]}`;
     const after = fault === 'ends-before-start' ? formatBound(start) : '';
@@ -214,15 +153,12 @@ export function faultSide(fault: PeriodFault): 'start' | 'end' {
     return fault === 'start-invalid' || fault === 'start-missing' ? 'start' : 'end';
 }
 
-/** Is this date field part of what is wrong? One side for a date fault; BOTH
- *  fields for a period that lies outside the data (the whole period must move). */
+/** Whether this date field is part of the fault; 'outside-data' marks both. */
 export function faultOnSide(fault: PeriodFault, side: 'start' | 'end'): boolean {
     return fault === 'outside-data' || faultSide(fault) === side;
 }
 
-/** Footer line of the Running-condition settings while a period is invalid:
- *  "Fix P2 before applying" (`action` = "saving" for a model's own Custom
- *  lists, which are saved with Save changes). */
+/** Footer line while a period is invalid; `action` 'saving' is for a model's Custom lists. */
 export function fixPeriodFirstText(name: string, action: 'applying' | 'saving' = 'applying'): string {
     return `Fix ${name} before ${action}`;
 }
@@ -240,26 +176,7 @@ export function newPeriodId(): string {
     return `p-${Date.now().toString(36)}-${idCounter}`;
 }
 
-/**
- * Per-period validity + overlap with the previous period (list order — call on
- * a sorted list). Open ends ('') are valid only on the first period's start
- * and the last period's end. Reasons name a train period "P1", "P2" … by its
- * list position (workbench redesign 2026-10: never "Period 1").
- *
- * `bounds` (optional — the loaded dataset's time range) and `baseline` (the
- * SAVED list, see `PeriodBaseline`): a period that is otherwise valid but lies
- * ENTIRELY outside the data is
- *   - invalid when it is NEW or was CHANGED against `baseline` (`fault:
- *     'outside-data'`, "P1 is outside the data (2025/01/01 00:00 – 2025/12/31 23:50)") —
- *     the user is told at once and Apply / Save changes are blocked;
- *   - only a WARNING when it is unchanged from `baseline` (`outsideData` +
- *     `dataNote`: "P2 is outside the data (…) — it is not used") — an old
- *     workspace, or a data file that changed, never blocks an unrelated edit.
- * One that is only partly inside stays valid and gets `dataNote`. Without bounds
- * (no data loaded yet, the data of another dataset generation, or a caller that
- * only shapes a request) nothing is judged against the data. To judge a SAVED
- * list as a whole (a gate, the card), pass the list itself as `baseline`.
- */
+/** Per-period validity and overlap with the previous one (call on a sorted list); open ends only on the first start / last end. With `bounds`+`baseline`: entirely outside the data = invalid if new/changed, warning if unchanged; partly outside gets `dataNote`. */
 export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): PeriodStatus[] {
     const parsed = list.map((p) => ({ s: toMs(p.start), e: toMs(p.end) }));
     return list.map((p, i) => {
@@ -300,8 +217,7 @@ export function validatePeriods(list: TimePeriod[], bounds?: PeriodDataBounds | 
     });
 }
 
-/** Cheap "is the previous period itself unparseable / reversed" check used to
- *  skip overlap reporting against a period that is already flagged. */
+/** Is the previous period unparseable/reversed (skips overlap reports against it). */
 function statusInvalidAt(list: TimePeriod[], parsed: { s: number | null; e: number | null }[], i: number): boolean {
     const p = list[i];
     const { s, e } = parsed[i];
@@ -335,13 +251,7 @@ export function mergeOverlapping(a: TimePeriod, b: TimePeriod): TimePeriod {
     return { id: a.id, start, end };
 }
 
-/**
- * Default for the "Add period" button: starts the day after the last period's
- * end (00:00) and runs to 23:59 on the last day of that month, clamped to
- * `datasetMax`. Empty list → one fully open period. Returns null when nothing
- * sensible can be added (last period is open-ended, its end is invalid, or the
- * new start would be past `datasetMax`).
- */
+/** Default for 'Add period': starts the day after the last end at 00:00, ends 23:59 on that month's last day, clamped to `datasetMax`. Empty list = one open period; null when the last end is open or invalid, or the start passes `datasetMax`. */
 export function nextDefaultPeriod(list: TimePeriod[], datasetMax?: string | null): TimePeriod | null {
     if (list.length === 0) return { id: newPeriodId(), start: '', end: '' };
     const last = list[list.length - 1];
@@ -358,9 +268,7 @@ export function nextDefaultPeriod(list: TimePeriod[], datasetMax?: string | null
     return { id: newPeriodId(), start: fmt(startD.getTime()), end: fmt(endMs) };
 }
 
-/** True when the valid periods together span all of `bounds` (gaps of up to a
- *  minute count as continuous, so 23:59 → next-day 00:00 is contiguous). An
- *  empty list is NOT "covered" (it means "no time gate"). */
+/** True when the valid periods span all of `bounds` (gaps up to a minute count as continuous). An empty list is NOT covered. */
 export function isRangeFullyCovered(list: TimePeriod[], bounds: { min: string; max: string } | null | undefined): boolean {
     if (!bounds) return false;
     const min = toMs(bounds.min);
@@ -389,9 +297,7 @@ export function isRangeFullyCovered(list: TimePeriod[], bounds: { min: string; m
     return coveredTo >= max;
 }
 
-/** Wire shape for `timestamp_ranges`: invalid periods are dropped, `''` → null.
- *  NOTE: an empty result is ambiguous ("no periods" vs "none valid") — callers
- *  must check `validatePeriods` themselves before sending `[]`. */
+/** Wire shape for `timestamp_ranges`: invalid periods dropped, `''` -> null. An empty result is ambiguous: check `validatePeriods` before sending `[]`. */
 export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
     const status = validatePeriods(list);
     return list
@@ -402,31 +308,11 @@ export function toFilterRanges(list: TimePeriod[]): FilterRange[] {
         }));
 }
 
-// ---------------------------------------------------------------------------
-// Train periods vs scoring periods. `runningConditionTimePeriods` / a model's
-// `filterTimePeriods` are the TRAIN periods; `TestPeriod`s are the SCORING
-// periods — "just score it" (spec
-// docs/design/handoff/workbench-redesign/README.md §2): start → end only, the
-// trained model gives a health score for that time. The identifiers below say
-// "test periods" (as do
-// the storage keys and the `test_periods` wire key) so nothing about the
-// workspace format changes; the user-facing words are "scoring period" and the
-// numbers are S1, S2 … by list position. Everything below is pure and works on
-// `datetime-local` strings read as LOCAL time (like `toMs`).
-// ---------------------------------------------------------------------------
+// Train vs scoring periods; identifiers keep 'test' names for storage/wire compatibility. Pure; datetime-local strings are LOCAL time.
 
 const DAY = 86_400_000;
 
-/**
- * A scoring period as it is WRITTEN: `id`, `start`, `end` and nothing else.
- *
- * An old workspace file may carry `label` / `eventTime` /
- * `fromHighlight` on its periods. They stay readable (the type allows them) but
- * nothing may write them, and a spread (`{ ...t, start }`) would carry
- * them along silently — so every place that BUILDS or COPIES a period (the
- * editor's add / edit, `seedCustomFromWorkspace`) goes through this instead.
- * A period that is never touched keeps whatever is on disk (no migration).
- */
+/** A scoring period as WRITTEN: id/start/end only. Build or copy through this so a spread doesn't carry extra keys; untouched periods keep what is on disk. */
 export function toScoringPeriod(t: Pick<TestPeriod, 'id' | 'start' | 'end'>): TestPeriod {
     return { id: t.id, start: t.start ?? '', end: t.end ?? '' };
 }
@@ -442,32 +328,17 @@ export interface TestPeriodStatus {
     invalid: boolean;
     /** Short sentence when `invalid`: "S2 ends before it starts." */
     reason?: string;
-    /** The one reason line under the row when `invalid` (see
-     *  `PeriodStatus.rowReason`): "S2 ends before it starts — pick an end
-     *  after 2026/05/11 00:00". */
+    /** The one reason line under the row when `invalid`. */
     rowReason?: string;
     /** What is wrong, when `invalid`. */
     fault?: PeriodFault;
-    /** Valid, but only partly inside the loaded data — or, with `outsideData`,
-     *  a saved period entirely outside it (see `PeriodStatus.dataNote`). */
+    /** Valid but partly inside the data, or (with `outsideData`) a saved period entirely outside. */
     dataNote?: string;
-    /** Not invalid, but entirely outside the loaded data: unchanged from the
-     *  saved list, so only a warning (see `PeriodStatus.outsideData`). */
+    /** Entirely outside the data but unchanged: warning only. */
     outsideData?: boolean;
 }
 
-/**
- * Per-scoring-period validity. Unlike train
- * periods, a scoring period needs BOTH a start and an end — its day count and
- * "% of running time below 80" are only meaningful on a closed range. Scoring
- * periods may overlap each other and train periods (never invalid for that).
- * The reason text names the period by its number ("S2 needs an end date.").
- * `bounds` / `baseline` (optional): as in `validatePeriods` — a scoring period
- * entirely outside the loaded data is invalid when it is new or was changed
- * against the saved list ("S1 is outside the data (…)") and only a warning when
- * it is unchanged ("S1 is outside the data — nothing is scored there"); one
- * partly inside gets `dataNote`.
- */
+/** Per-scoring-period validity; needs BOTH start and end, overlaps allowed. `bounds`/`baseline` as in `validatePeriods`. */
 export function validateTestPeriods(list: TestPeriod[], bounds?: PeriodDataBounds | null, baseline?: PeriodBaseline): TestPeriodStatus[] {
     return list.map((t, i) => {
         const n = i + 1;
@@ -516,12 +387,7 @@ export interface TestPeriodsWirePlan {
     numbers: number[];
 }
 
-/** Wire shape for `test_periods` — start / end only (invalid periods are
- *  dropped, `''` → null; a legacy label / event time is never sent) together
- *  with the S-number of every entry sent. Results come back with the 1-based
- *  WIRE `index`; `testNumberFor` maps that back to the S-number the editor and
- *  the running-condition chips show (they number the full list, invalid
- *  periods included). */
+/** Wire shape for `test_periods`: start/end only, invalid dropped, `''` -> null, plus the S-number of each entry. `testNumberFor` maps the 1-based wire `index` back. */
 export function testPeriodsWirePlan(list: TestPeriod[]): TestPeriodsWirePlan {
     const status = validateTestPeriods(list);
     const wire: TestPeriodWire[] = [];
@@ -542,14 +408,7 @@ export function toTestPeriodsWire(list: TestPeriod[]): TestPeriodWire[] {
     return testPeriodsWirePlan(list).wire;
 }
 
-/**
- * The S-number to show for a scoring result. `numbers` is
- * `testPeriodsWirePlan(...).numbers` of the list that was sent; `wireIndex` is
- * the result's 1-based `index` (its position in the `test_periods` sent) and
- * `position` its 0-based position in the results. Looks the S-number up by the
- * wire index, then by position; with no mapping at all (or none covering it)
- * the result's position is the number (S1, S2 … in result order).
- */
+/** S-number for a scoring result: `numbers` by wire index, then by position; with no mapping, position + 1. */
 export function testNumberFor(
     numbers: readonly number[] | null | undefined,
     wireIndex: number | null | undefined,
@@ -561,8 +420,7 @@ export function testNumberFor(
     return position + 1;
 }
 
-/** `test_period_<n>_start` / `test_period_<n>_end` — the `field` of an issue
- *  Rust raises about one scoring period (`health_validation.rs`). */
+/** Field of a Rust issue about one scoring period (`health_validation.rs`). */
 const TEST_PERIOD_FIELD_RE = /^test_period_(\d+)_(start|end)$/;
 
 /** Which scoring period an issue from Rust is about. */
@@ -574,15 +432,7 @@ export interface ScoringIssueTarget {
     side: 'start' | 'end';
 }
 
-/**
- * Maps the `field` of a Rust issue about a scoring period back to the period
- * the user sees. Rust numbers by position in the list it RECEIVED, and invalid
- * periods are dropped before sending (`testPeriodsWirePlan`), so with the list
- * [S1 invalid, S2] an issue on `test_period_1_end` is about **S2**. `numbers`
- * is `testPeriodsWirePlan(...).numbers` of the list that was sent; without it
- * (or when it does not cover the index) the wire position is the number.
- * `null` for any other field (`lower`, `test_periods`, …).
- */
+/** Maps a Rust issue field to the period the user sees. Rust numbers by position in the list it RECEIVED (invalid ones dropped), so wire 1 may be S2. `numbers` comes from `testPeriodsWirePlan`; null for other fields. */
 export function scoringIssueTarget(field: string | null | undefined, numbers?: readonly number[] | null): ScoringIssueTarget | null {
     const m = TEST_PERIOD_FIELD_RE.exec((field ?? '').trim());
     if (!m) return null;
@@ -591,31 +441,14 @@ export function scoringIssueTarget(field: string | null | undefined, numbers?: r
     return { wireIndex, number: testNumberFor(numbers, wireIndex, wireIndex - 1), side: m[2] as 'start' | 'end' };
 }
 
-/**
- * The text to SHOW for an issue: Rust's own `message`, with the wire number of
- * a scoring period ("Scoring period S1 ends before it starts.") replaced by
- * the S-number of the list the user sees ("Scoring period S2 …"). Every other
- * issue's message is returned unchanged.
- */
+/** Issue text to show: Rust's message with the wire S-number replaced by the user's S-number. */
 export function scoringIssueMessage(issue: Pick<HealthIssue, 'field' | 'message'>, numbers?: readonly number[] | null): string {
     const target = scoringIssueTarget(issue.field, numbers);
     if (!target || target.number === target.wireIndex) return issue.message;
     return issue.message.replace(new RegExp(`\\bS${target.wireIndex}\\b`, 'g'), `S${target.number}`);
 }
 
-/**
- * What of a scoring-period list can change its RESULTS: each period's start and
- * end, in list order — nothing else. Used to detect a "scoring periods only"
- * change (`applyIncompleteRule`) and an edit during an export
- * (`persistModelComplete`).
- *
- * The id and the legacy `label` / `eventTime` / `fromHighlight` keys of an
- * old workspace file are deliberately NOT part of it: Rust
- * ignores them, so they cannot change a result — and it means a period that
- * loses those keys when it passes through an edit (`toScoringPeriod`) is NOT
- * read as a change, so a Complete model of an old workspace is never sent back
- * to "Mark complete again" by the upgrade.
- */
+/** Key of what can change results: each period's start/end in order. Ids and any other keys are excluded on purpose. */
 export function testPeriodsKey(list: TestPeriod[] | null | undefined): string {
     return JSON.stringify((list ?? []).map(t => ({
         start: t.start ?? '',
@@ -636,8 +469,7 @@ function interval(p: { start: string; end: string }): Interval | null {
     return { s, e };
 }
 
-/** Do two periods share any time? Open ends are unbounded; bounds are
- *  inclusive (touching counts); an unparseable period never overlaps. */
+/** Do two periods share time? Bounds inclusive (touching counts); open ends unbounded; unparseable never overlaps. */
 export function periodsOverlap(a: { start: string; end: string }, b: { start: string; end: string }): boolean {
     const x = interval(a);
     const y = interval(b);
@@ -650,14 +482,7 @@ export function testTrainOverlaps(train: TimePeriod[], tests: TimePeriod[]): num
     return tests.map(t => train.flatMap((p, j) => (periodsOverlap(p, t) ? [j + 1] : [])));
 }
 
-/**
- * CALENDAR days of `test` that are also inside a train period (train periods
- * merged first, so overlapping train periods are not counted twice), rounded
- * to whole days; 0 when none. Information only (never blocks).
- * Open train ends are clipped to `bounds` when given. Before a preview exists
- * the UI uses this; once Rust answered, `TestPeriodResult.train_days`
- * (RUNNING days) is the better number.
- */
+/** Calendar days of `test` inside train periods (merged first, no double count), rounded; 0 when none. Open train ends clipped to `bounds`. Info only; `TestPeriodResult.train_days` (running days) is better once Rust answers. */
 export function trainOverlapDays(train: TimePeriod[], test: TimePeriod, bounds?: { min: string; max: string } | null): number {
     const t = interval(test);
     if (!t || !Number.isFinite(t.s) || !Number.isFinite(t.e)) return 0;
@@ -685,11 +510,7 @@ export function trainOverlapDays(train: TimePeriod[], test: TimePeriod, bounds?:
     return Math.round(ms / DAY);
 }
 
-/** The one quiet note on a scoring-period row / result tile that includes
- *  train time. `index` is 0-based (S1 = 0). `days` stays RAW running time
- *  (`TestPeriodResult.train_days`); the results themselves are per HOUR (the
- *  health score is computed on 1-hour averages), hence "hours the model was
- *  trained on". */
+/** Quiet note for a scoring period that includes train time; `index` is 0-based, `days` is raw running time. */
 export function testIncludesTrainNote(index: number, days: number): string {
     return `S${index + 1} includes ${days} d of train running time — results include hours the model was trained on`;
 }
@@ -701,8 +522,7 @@ export interface TrainHighlightOverlap {
     highlight: TimeHighlight;
 }
 
-/** A highlight's time range in order (one saved with start > end is read the
- *  other way round, like `timeHighlights.ts`); null when unparseable. */
+/** Highlight range in order (start > end is swapped, like `timeHighlights.ts`); null if unparseable. */
 function highlightRange(h: TimeHighlight): { start: string; end: string } | null {
     const a = toMs(h.start);
     const b = toMs(h.end);
@@ -710,10 +530,7 @@ function highlightRange(h: TimeHighlight): { start: string; end: string } | null
     return a <= b ? { start: h.start, end: h.end } : { start: h.end, end: h.start };
 }
 
-/**
- * Train periods that overlap a Dashboard highlight (an amber
- * warning only, never a block). Disabled / unparseable highlights are ignored.
- */
+/** Train periods overlapping a Dashboard highlight (amber warning only). Disabled/unparseable highlights are ignored. */
 export function trainHighlightOverlaps(train: TimePeriod[], highlights: TimeHighlight[]): TrainHighlightOverlap[] {
     const out: TrainHighlightOverlap[] = [];
     train.forEach((p, periodIndex) => {
@@ -728,16 +545,7 @@ export function trainHighlightOverlaps(train: TimePeriod[], highlights: TimeHigh
 
 const floorMinute = (ms: number) => Math.floor(ms / MINUTE) * MINUTE;
 
-/**
- * "Remove the overlap": every train period that overlaps
- * `range` is split so none of it lies inside `range` — the part before ends on
- * the last whole minute before the range starts, the part after starts on the
- * first whole minute after it ends (minute resolution, like the period inputs;
- * bounds are inclusive, so merely touching would still count as overlap). A
- * period entirely inside the range disappears. The first piece keeps the
- * original `id`; a second piece gets a new one. Periods that do not overlap
- * (or are invalid) are kept unchanged. Returns the list sorted (`sortPeriods`).
- */
+/** Splits every train period overlapping `range` so none lies inside it: the before-part ends the last whole minute before, the after-part starts the first whole minute after. Touching counts as overlap; a fully covered period disappears; the first piece keeps the id; the list is returned sorted. */
 export function removeRangeFromPeriods(train: TimePeriod[], range: { start: string; end: string }): TimePeriod[] {
     const r = interval(range);
     if (!r) return train;

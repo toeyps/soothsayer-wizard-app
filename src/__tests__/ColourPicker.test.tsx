@@ -185,7 +185,7 @@ describe('ColourPicker', () => {
         });
     });
 
-    // User decision 2026-10-11: "เอาออกเลย พวก code สี" — a user never needs the colour code.
+    // No colour code is shown anywhere; a user never needs it.
     describe('no colour code is shown anywhere', () => {
         it('palette colour: no hex in the heading, in any tooltip or accessible name, and no hex field', () => {
             render(<Harness initial="#10b981" used={['#f43f5e']} />);
@@ -230,10 +230,7 @@ describe('ColourPicker', () => {
         expect(document.querySelector('input[type="color"]')).toBeNull();
     });
 
-    // Real-app bug: with a long sensor name the popover's implicit `auto` grid column
-    // grew to the heading's full nowrap width (372 px inside a 228 px popover), the swatch grid
-    // stretched across it and the swatches came out twice their size, spilling out of the surface.
-    // jsdom has no layout, so this pins the CSS rule that keeps the column at the popover's width.
+    // A long heading must not widen the popover's grid column; jsdom has no layout, so this pins the CSS rule.
     it('a long heading cannot widen the popover content: the column is minmax(0, 1fr) and the label ellipsises (CSS contract)', () => {
         const css: string = readFileSync('src/App.css', 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '');
         expect(css).toMatch(/\.cp-pop\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);

@@ -13,8 +13,7 @@ export interface WindowedLinesOptions<T> {
     overscanPx: number;
     /** The view's height until the list has one. */
     fallbackHeightPx: number;
-    /** While this stays the same object, the first line in view keeps its place on screen when a line above it
-     *  changes height. A new one starts over (a new search). */
+    /** While this stays the same object, the first line in view keeps its screen place when a line above changes height; a new one resets it. */
     anchorList: unknown;
 }
 
@@ -34,12 +33,7 @@ export interface WindowedLines {
     lineRef: (key: string) => (el: HTMLElement | null) => void;
 }
 
-/**
- * Long lists (DESIGN_SYSTEM §4 rule 6): only the lines in view are rendered, absolutely placed. Heights are estimated
- * until a line has been rendered, then measured, and re-measured when a line changes height with no commit at all
- * (the web font arriving, a width change). Dragging the scrollbar lands among lines not measured yet, so wheeling up
- * from there measures lines above the view: the anchor keeps what the user is looking at from jumping.
- */
+/** Long lists (DESIGN_SYSTEM §4 rule 6): only lines in view are rendered, absolutely placed. Heights are estimated, then measured. The anchor stops the view jumping when measuring lines above it. */
 export function useWindowedLines<T>({
     listRef, lines, keyOf, estimate, windowed, overscanPx, fallbackHeightPx, anchorList,
 }: WindowedLinesOptions<T>): WindowedLines {

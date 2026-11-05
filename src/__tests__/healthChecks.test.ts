@@ -80,7 +80,7 @@ describe('buildCheckLines', () => {
         expect(lines).toHaveLength(1);
         expect(lines[0].tone).toBe('need');
         expect(lines[0].text).toBe('Enter 4 empty points: 0 low, 80 low, 80 high, 0 high');
-        // the residual chart is BELOW the ruler now (it used to be on the left of the table)
+        // the residual chart is below the ruler
         expect(lines[0].fix).toBe('Read them off the residual chart below, or type the values.');
         // the ONE name of each point, shared with the ruler's ticks and markers
         expect(REL_POINT_LABEL).toEqual({ residual_at_0_lower: '0 low', residual_at_80_lower: '80 low', residual_at_80_upper: '80 high', residual_at_0_upper: '0 high' });
@@ -180,13 +180,11 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
         expect(hoverIndexFromAxisEvent({ axesInfo: [{ axisDim: 'x', value: 9 }] }, ['a', 'b', 'c'])).toBeNull();
     });
 
-    // The health score is computed on 1-hour averages: the read-out is given
-    // `HealthPreview.hourly` (one point per clock hour), never the raw `series`.
+    // The read-out takes `HealthPreview.hourly` (one point per clock hour), never raw `series`: the score is on 1-hour averages.
     it('readoutAt: the hour start, the 1 h average / the hourly residual and the score of one HOURLY point; null outside it', () => {
         const indP = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } });
         const ind = indP.hourly;
-        // Rust labels an hour `2026-01-01T03:00:00`; it is printed in the app's one date
-        // format — a data row's time, with seconds ("2026/01/01 03:00:00") — never as that raw text.
+        // Hour labels print in the app's date format with seconds, never as raw text.
         expect(HOURLY_TS[3]).toBe('2026-01-01T03:00:00');
         // 6.1 is the HOUR MEAN of the fixture; the raw row of the same index is 6.2.
         expect(indP.series.kind === 'individual' && indP.series.value[3]).toBe(6.2);
@@ -215,9 +213,7 @@ describe('hover: nearestIndex / hoverIndexFromAxisEvent / readout', () => {
         expect(readoutText(readoutAt(hours, 0), 'bar')).toMatch(/^2024\/01\/05 13:00:00 · 1 h avg /);
     });
 
-    // The formatter prints the text's OWN wall-clock parts (it never goes through `new Date`),
-    // so a stamp that is not an hour label still reads as written: its own seconds are shown
-    // (":00" when it has none) and an explicit offset / Z never shifts it.
+    // The formatter prints the text's own wall-clock parts (no `new Date`): its own seconds (':00' if none) show, and an offset/Z never shifts it.
     it('a stamp that is not an hour label is still printed as written: always with its seconds, an offset or Z never shifts the time', () => {
         const base = makeSetPointAwarePreview({ kind: 'individual', set_points: { lower: 1, upper: 9 } }).hourly;
         const sub = { ...base, timestamps: ['2026-01-01 03:00:00', '2026-01-01 03:00:10', '2026-01-01 03:00:20', '2026-01-01 03:00:30.500', '2026-01-01 03:01:00'] } as typeof base;

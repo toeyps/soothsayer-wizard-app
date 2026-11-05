@@ -1,35 +1,4 @@
-/**
- * Pure helpers for `MachineMorphCanvas` (the animated machine illustration on
- * the Import "Get started" page). No DOM here so everything is unit-testable.
- *
- * Ported from the approved "C6" mockup (`docs/design/handoff/welcome-c6-orbit/`,
- * `buildShapesC`). Each machine is a cloud of points sampled from simple solids
- * (rings, seams, shells, discs, boxes, bolt circles, bodies of revolution,
- * spiral casings). Dot placement is edge-weighted: rims, seams, box edges and
- * bolt rings get most of the dots, surfaces stay sparse. All six clouds are
- * resampled to the SAME particle count so particle `i` can travel from machine
- * A's point `i` to machine B's point `i` while the cloud dissolves and re-forms.
- *
- * Point layout is a flat Float32Array, stride 8 (`POINT_STRIDE`):
- *   x, y, z, group, edge, nx, ny, nz
- *   group     = colour + PART_STEP × part  (so `group & 3` is the colour and
- *               `group >> 2` the part; group < PART_STEP = fixed geometry)
- *     colour 0 = base metal (blue)
- *     colour 1 = second body colour (violet)
- *     colour 2 = hot section / volute (orange — an accepted, user-approved
- *                exception to "warn hue only for state")
- *     colour 3 = bright metal (the reciprocating pump's plungers)
- *     part   0 = does not move; part k ≥ 1 = `MachineShape.parts[k - 1]`, a
- *                rigid moving part (a rotor turning about its shaft, or a
- *                plunger sliding) — see `PartDef` / `poseParts`
- *   edge      = 1 for rim / seam / edge / bolt dots (drawn brighter), else 0
- *   n         = surface normal (0,0,0 for edge dots); gives the rim light
- *
- * Every machine has at least one moving part ("the machine is running").
- * Motion is a pose, not new data: the stored points are the rest pose (which
- * is exactly what reduced motion shows) and the renderer applies one small
- * matrix per part inside its existing per-point loop.
- */
+/** Pure helpers for `MachineMorphCanvas` (Import page machine illustration), no DOM. All six clouds have the SAME particle count so particle i morphs between machines. Points: flat Float32Array, stride 8 (`POINT_STRIDE`): x,y,z,group,edge,nx,ny,nz. `group & 3` = colour, `group >> 2` = part (0 fixed, k>=1 = `parts[k-1]`); edge=1 for rim dots; n = normal. */
 
 export type Rng = () => number;
 export type Vec3 = [number, number, number];
@@ -63,7 +32,6 @@ export const DS = 46;
 export const TAU = Math.PI * 2;
 
 /* ------------------------------------------------------------------ */
-/* Moving parts                                                        */
 /* ------------------------------------------------------------------ */
 
 export type Axis = 'x' | 'y' | 'z';
@@ -78,7 +46,7 @@ export const MAX_PARTS = 6;
 export const SPIN_PER_SECOND = 3;
 /** Crank speed of the reciprocating pump, rev/s (= the shipped plunger phase `spin × 0.55`). */
 export const CRANK_RPS = (0.55 * SPIN_PER_SECOND) / TAU;
-/** Plunger stroke (normalised units) and the three plungers' phase offsets (ported from the mockup). */
+/** Plunger stroke (normalised units) and the three plungers' phase offsets. */
 export const PLUNGER_AMP = 0.09;
 export const PLUNGER_PHASES = [0, 2.094, 4.188] as const;
 
@@ -99,11 +67,7 @@ export interface PartDef {
   amp: number;
 }
 
-/**
- * Write the pose of every part at `seconds` into `out` (slot k = part k, slot 0
- * unused): a 3×4 matrix per part. Allocates nothing — the renderer calls it
- * once per frame per machine.
- */
+/** Write each part's 3x4 pose matrix at `seconds` into `out` (slot k = part k, slot 0 unused); allocation-free. */
 export function poseParts(parts: ReadonlyArray<PartDef>, seconds: number, out: Float32Array): void {
   for (let p = 0; p < parts.length; p++) {
     const d = parts[p];
@@ -143,7 +107,7 @@ function mulberry32WithState(seed: number): { next: Rng; state: () => number } {
   return { next, state: () => a };
 }
 
-/** Small deterministic PRNG (the mockup's seed source), values in [0, 1). */
+/** Small deterministic PRNG, values in [0, 1). */
 export function mulberry32(seed: number): Rng {
   return mulberry32WithState(seed).next;
 }
@@ -178,7 +142,6 @@ export interface MachineShape {
 }
 
 /* ------------------------------------------------------------------ */
-/* Point sampler (C6)                                                  */
 /* ------------------------------------------------------------------ */
 
 export interface CylOpts {
@@ -420,7 +383,6 @@ export function makeSampler(rr: Rng): Sampler {
 }
 
 /* ------------------------------------------------------------------ */
-/* The six machines                                                    */
 /* ------------------------------------------------------------------ */
 
 interface RawShape {
@@ -462,11 +424,10 @@ function sens(p: Vec3, name: string, unit: string, v: number, s: number, trend =
   return { p, name, unit, v, s, trend };
 }
 
-/** The raw (un-fitted, un-resampled) C6 point clouds, in `MACHINE_NAMES` order. */
+/** The raw (un-fitted, un-resampled) point clouds, in `MACHINE_NAMES` order. */
 export function buildRawShapes(rr: Rng): RawShape[] {
   const raw: RawShape[] = [];
 
-  // ---------------- Gas turbine generator ----------------
   {
     const s = makeSampler(rr);
     const GT: Array<[number, number]> = [[-3.6, 1.3], [-3.3, 1.0], [-1.3, 0.9], [-1.05, 1.05], [0.15, 1.05], [0.35, 1.16], [0.5, 1.16]];
@@ -510,7 +471,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
     });
   }
 
-  // ---------------- Gas turbine compressor ----------------
   {
     const s = makeSampler(rr);
     const GT: Array<[number, number]> = [[-3.4, 1.2], [-3.1, 0.95], [-1.5, 0.87], [-1.25, 1.0], [-0.2, 1.0], [0, 1.1], [0.15, 1.1]];
@@ -556,7 +516,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
     });
   }
 
-  // ---------------- Motor (TEFC) ----------------
   {
     const s = makeSampler(rr);
     s.cyl('x', [0, 0, 0], 0.9, 2.5, 0, { k: 0.5, ek: 0.8 });
@@ -608,7 +567,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
     });
   }
 
-  // ---------------- Reciprocating pump ----------------
   {
     const s = makeSampler(rr);
     s.box([-1, 0.05, 0], [1.4, 1.3, 2.1], 0, { k: 0.45 }); // power end
@@ -671,7 +629,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
     });
   }
 
-  // ---------------- Can pump ----------------
   {
     const s = makeSampler(rr);
     s.cyl('y', [0, 1.75, 0], 0.55, 1.1, 1, { k: 0.45 });
@@ -720,7 +677,6 @@ export function buildRawShapes(rr: Rng): RawShape[] {
     });
   }
 
-  // ---------------- Turbo expander ----------------
   {
     const s = makeSampler(rr);
     s.cyl('x', [0, 0, 0], 0.38, 1.3, 0, { k: 0.6, bands: 2 }); // bearing housing
@@ -816,22 +772,13 @@ function fitResample(sh: RawShape, n: number, rr: Rng): MachineShape {
 /** The app's seed (the mockup's), used by `buildShapes`' default and `getShapes`. */
 const SHAPE_SEED = 7;
 
-/**
- * Build the six machine clouds with exactly `n` particles each. Pass a seeded
- * `rng` (values in [0, 1)) for deterministic output; defaults to the mockup's
- * seed so the app shows exactly the approved machines.
- */
+/** Build the six clouds with exactly `n` particles; a seeded `rng` in [0, 1) makes it deterministic. */
 export function buildShapes(n: number, rng: Rng = mulberry32(SHAPE_SEED)): MachineShape[] {
   return buildRawShapes(rng).map((sh) => fitResample(sh, n, rng));
 }
 
 const shapeCache = new Map<number, MachineShape[]>();
-/**
- * The raw clouds (~1.3 M numbers) plus the PRNG state right after building
- * them, so a second particle count resamples without re-sampling the geometry
- * and still gets exactly `buildShapes(n)`. Released once both sizes the
- * component uses (hero + mini) are cached.
- */
+/** Raw clouds plus PRNG state, so a second particle count resamples without rebuilding; freed once both sizes are cached. */
 let rawCache: { raw: RawShape[]; state: number } | null = null;
 let rawBuilds = 0;
 
@@ -863,7 +810,6 @@ export function clearShapeCache(): void {
 
 
 /* ------------------------------------------------------------------ */
-/* Clock, easing, camera                                               */
 /* ------------------------------------------------------------------ */
 
 export interface MorphClock {
@@ -944,7 +890,6 @@ export function projectPoint(cam: Camera, x: number, y: number, z: number, out: 
 }
 
 /* ------------------------------------------------------------------ */
-/* Simulated sensors                                                   */
 /* ------------------------------------------------------------------ */
 
 export const HISTORY_LENGTH = 40;
@@ -969,11 +914,7 @@ export function isAbnormal(s: SensorDef, current: number): boolean {
   return !!s.trend && Math.abs(current) > Math.abs(s.v) * (1 + ABNORMAL_DRIFT);
 }
 
-/**
- * History for the reduced-motion still frame: deterministic, and a trending
- * sensor has already drifted to +20 % so the still image shows the callout in
- * the "● ABNORMAL" (amber) state — the product's story in one frame.
- */
+/** Deterministic history for reduced motion; a trending sensor ends +20 % so the still shows the amber ABNORMAL state. */
 export function stillHistory(s: SensorDef): number[] {
   const rng = mulberry32(Math.round(Math.abs(s.v) * 100) + s.name.length);
   const h: number[] = [];
@@ -996,7 +937,6 @@ export function formatReading(v: number, nominal: number): string {
 }
 
 /* ------------------------------------------------------------------ */
-/* Sensor label layout                                                 */
 /* ------------------------------------------------------------------ */
 
 export interface LabelBox {
@@ -1006,13 +946,7 @@ export interface LabelBox {
   h: number;
 }
 
-/**
- * Callout card width. 224 keeps ~5 px of headroom so "● ABNORMAL" (JetBrains
- * Mono 600 9.5px) never collides with the longest trending name ("Exhaust gas
- * temperature", Inter 600 11px) — also with the Segoe UI / Consolas fallback
- * the installed app gets, and with text-rendering differences between
- * machines (hinting, font versions, display scaling).
- */
+/** Callout width: 224 leaves ~5 px headroom so '● ABNORMAL' never hits the longest name, even on fallback fonts. */
 export const LABEL_W = 224;
 export const LABEL_H = 62;
 /** Text inset inside the card: name starts at +11, the tag ends at w − 10. */
@@ -1025,20 +959,12 @@ export const ABNORMAL_LABEL = '● ABNORMAL';
 export const SPARK_W = 80;
 export const SPARK_X = LABEL_W - LABEL_PAD_R - SPARK_W;
 
-/**
- * True when a callout's name and its "● ABNORMAL" tag fit side by side:
- * `name + 8 + tag ≤ LABEL_W − 21` (widths in px, e.g. from `measureText`).
- */
+/** `name + 8 + tag <= LABEL_W - 21` (px, e.g. from `measureText`). */
 export function calloutFits(nameWidth: number, tagWidth: number, w = LABEL_W): boolean {
   return nameWidth + LABEL_TAG_GAP + tagWidth <= w - LABEL_PAD_L - LABEL_PAD_R;
 }
 
-/**
- * Place one label box per anchor point (screen px). The first sits up-left of
- * its anchor, later ones up-right; if a box would collide with the previous one
- * it is pushed down below it (or, when that runs off the bottom, the previous
- * box moves up instead) so two labels never overlap.
- */
+/** One box per anchor (px): first up-left, the rest up-right; on overlap push down, or lift the previous one at the bottom. */
 export function placeLabels(
   anchors: ReadonlyArray<{ x: number; y: number }>,
   W: number,

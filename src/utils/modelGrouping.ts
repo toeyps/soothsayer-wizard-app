@@ -1,16 +1,10 @@
 import type { CategoryChange, FailureModel, ModelCategory, ModelKind } from '../types';
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 
-/** Individual → Relationship → Clustering: when one sensor's models disagree on
- *  category, the first non-null value in this order wins (then array order). */
+/** When one sensor's models disagree on category, the first non-null in this order wins (then array order). */
 const KIND_PRECEDENCE: Record<ModelKind, number> = { individual: 0, relationship: 1, clustering: 2 };
 
-/**
- * The sensor a model is grouped under on the Overview / Failure Groups panel.
- * Clustering is keyed by its X sensor (NOT Y — changing Y must never move a
- * row); Individual/Relationship by their target. Normalised (trim + lowercase)
- * so `Temp_1` and ` temp_1` are one sensor. `''` = key sensor not chosen yet.
- */
+/** Sensor a model is grouped under: Clustering by its X sensor (not Y: changing Y must not move a row), others by target. Normalised; '' = key sensor not chosen yet. */
 export function modelSensorKey(m: Pick<FailureModel, 'kind' | 'targetSensor' | 'xSensor'>): string {
     return normalizeSensorTag((m.kind === 'clustering' ? m.xSensor : m.targetSensor) ?? '');
 }
@@ -21,8 +15,7 @@ export interface SensorModelGroup {
     models: FailureModel[];
 }
 
-/** One entry per sensor for the models that belong to `groupNo`, in first-seen
- *  order. A model with an empty key sensor forms its own `''` group. */
+/** One entry per sensor for the group's models, first-seen order; a model with an empty key sensor forms its own '' group. */
 export function groupModelsBySensor(models: FailureModel[], groupNo: number): SensorModelGroup[] {
     const out: SensorModelGroup[] = [];
     const byKey = new Map<string, SensorModelGroup>();
@@ -40,8 +33,7 @@ export function groupModelsBySensor(models: FailureModel[], groupNo: number): Se
     return out;
 }
 
-/** The category of a sensor across EVERY model of that key (workspace-wide, not
- *  one FG): first non-null by kind precedence, ties by array order. `null` if none set. */
+/** Category of a sensor across every model of that key (workspace-wide): first non-null by kind precedence, ties by array order; null if none. */
 export function sensorCategory(models: FailureModel[], key: string): ModelCategory | null {
     let best: FailureModel | null = null;
     for (const m of models) {
@@ -51,8 +43,7 @@ export function sensorCategory(models: FailureModel[], key: string): ModelCatego
     return best ? best.category : null;
 }
 
-/** Writes `cat` onto every model of `key`, in every FG. Other models keep their
- *  identity (same object). Returns the same array when nothing needs changing. */
+/** Writes `cat` onto every model of `key` in every FG; other models keep identity; returns the same array when nothing changes. */
 export function setSensorCategory(models: FailureModel[], key: string, cat: ModelCategory | null): FailureModel[] {
     let changed = false;
     const next = models.map((m) => {
@@ -63,13 +54,7 @@ export function setSensorCategory(models: FailureModel[], key: string, cat: Mode
     return changed ? next : models;
 }
 
-/**
- * One-time legacy cleanup: makes every sensor's models agree on a category.
- * The winner is `sensorCategory` (kind precedence); models that differ —
- * including ones that were `null` while a sibling had a value — are rewritten
- * and reported in `changes`. A sensor with no category anywhere is untouched.
- * Idempotent: a second run returns no changes.
- */
+/** One-time cleanup: make every sensor's models agree on a category (winner = `sensorCategory`); rewritten ones are reported in `changes`. Idempotent. */
 export function normalizeSensorCategories(models: FailureModel[]): { models: FailureModel[]; changes: CategoryChange[] } {
     const winner = new Map<string, ModelCategory | null>();
     for (const m of models) {
@@ -87,15 +72,12 @@ export function normalizeSensorCategories(models: FailureModel[]): { models: Fai
     return { models: changes.length ? next : models, changes };
 }
 
-/** The models a Failure Group deletes with it: those that belong to that group ONLY. A model
- *  that is also in another group just loses this one. */
+/** Models a Failure Group deletes with it: those in that group ONLY; a model also in another group just loses this one. */
 export function modelsOnlyIn<T extends Pick<FailureModel, 'groupNos'>>(models: readonly T[], groupNo: number): T[] {
     return models.filter(m => m.groupNos.length > 0 && m.groupNos.every(n => n === groupNo));
 }
 
-/** What deleting a group does to its models: those only in it are deleted, those also in
- *  another group just lose it. (Deleting never removes exported files — Export results is the
- *  only writer of the output folder and nothing deletes from it.) */
+/** What deleting a group does: models only in it are deleted, others lose it. Exported files are never deleted. */
 export function groupDeleteCounts(models: readonly { groupNos: number[] }[], groupNo: number): { deleted: number; kept: number } {
     const inGroup = models.filter(m => m.groupNos.includes(groupNo));
     const deleted = modelsOnlyIn(inGroup, groupNo).length;

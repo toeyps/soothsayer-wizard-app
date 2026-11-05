@@ -1,30 +1,5 @@
 // @vitest-environment node
-/**
- * Wording guard for everything a user can read.
- *
- * The whole app says "Relation model" — never
- * "Relationship" / "Relationship model" — and the words of the machinery
- * ("sidecar", "Python") and the confidential algorithm name never reach the
- * screen (CLAUDE.md: "the UI must say Relation model").
- *
- * This parses the REAL app source (every `.ts`/`.tsx` under `src/`, tests
- * excluded) with the TypeScript compiler and reads only what can end up on
- * screen: string literals, template-literal text and JSX text. Comments,
- * identifiers, type names (`RelationshipPreviewResult`), import paths and
- * type-position literals are never looked at, so they stay free.
- *
- * What stays allowed on purpose:
- *  - the kind VALUE `'relationship'` (types, saved workspaces, wire values) and
- *    names built from it without a space: command names
- *    (`preview_relationship_model`), CSS classes (`kind-badge--relationship`),
- *    test ids (`model-fit-relationship`);
- *  - the error CODE `SIDECAR_OUTDATED` (compared, never shown — its text is
- *    `HEALTH_ERROR_TEXT.SIDECAR_OUTDATED`, "The Relation model engine …").
- *
- * A new hit means a user-facing string regressed: fix the string. Only add to
- * `ALLOWED` for a literal that is provably never rendered, with the reason
- * (today: the one legacy word `utils/modelNames.ts` compares saved names with).
- */
+/** Wording guard: rendered text says "Relation model", never "Relationship", "sidecar", "Python" or the algorithm name. Scans string literals, template text and JSX text of src; add to ALLOWED only for a never-rendered literal, with a reason. */
 import { describe, it, expect } from 'vitest';
 import ts from 'typescript';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
@@ -87,12 +62,9 @@ interface Rule { name: string; test: (text: string) => boolean }
 const GLUE = "[\\w\\-.:/$]";
 
 const RULES: Rule[] = [
-    // The kind is "Relation model". A capital-R "Relationship" in rendered text is the old label
-    // (identifiers and type names are not rendered text and are never scanned).
+    // The kind is "Relation model"; a capital-R "Relationship" in rendered text is the old label.
     { name: 'says "Relationship" (the kind is "Relation model")', test: t => /Relationship|RELATIONSHIP/.test(t) },
-    // …and the lower-case form used as a WORD of a sentence ("the relationship model", "a relationship
-    // fit"). The bare kind value and names built on it (`kind-badge--relationship`,
-    // `preview_relationship_model`) are glued to other characters and pass.
+    // Lower-case "relationship" as a word; names glued to other characters (`kind-badge--relationship`) pass.
     {
         name: 'says "relationship" as a word (the kind is "Relation model")',
         test: t => t !== 'relationship' && new RegExp(`(?<!${GLUE})relationship(?!${GLUE})`).test(t),
@@ -104,10 +76,7 @@ const RULES: Rule[] = [
     { name: 'names the algorithm', test: t => /linear[\s_-]*gam/i.test(t) || /(?<![A-Za-z])gams?(?![A-Za-z])/i.test(t) },
 ];
 
-/**
- * Literals that match a rule but are provably never rendered. `file` is the path from the repo
- * root, `text` the exact literal. Add an entry only when there is no other way — and say why.
- */
+/** Matching literals that are never rendered (`file` from repo root, `text` exact); add only with a reason. */
 const ALLOWED: Array<{ file: string; text: string; why: string }> = [
     {
         file: 'src/utils/modelNames.ts',

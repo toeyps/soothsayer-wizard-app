@@ -1,23 +1,5 @@
 // @vitest-environment node
-/**
- * Static IPC contract between the frontend and `src-tauri/src/lib.rs`.
- *
- * Mocked `invoke` in component tests can never notice that a command is not
- * registered, or that an argument key has the wrong casing (CLAUDE.md: "the
- * #1 silent-failure trap" — Tauri v2 expects camelCase keys unless the command
- * says `rename_all = "snake_case"`, and a hook may swallow the rejection).
- * This reads the real Rust source and the real TS call sites:
- *
- *  1. every command the frontend calls is in `generate_handler![...]`;
- *  2. every registered command is either called or on the explicit
- *     "intentionally unused" list (so a removal leaves no
- *     silently dead command behind without a decision);
- *  3. at every call site that passes an object literal, every top-level key
- *     is a parameter of the Rust command in the casing Tauri will accept, and
- *     every non-`Option` parameter is present;
- *  4. every window label the frontend creates has a capability file and a
- *     `main.tsx` route, and every capability window label is still created.
- */
+/** Static IPC contract with lib.rs: registered vs called commands, arg-key casing, window capabilities and routes. */
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync, readdirSync } from 'node:fs';
@@ -38,7 +20,6 @@ const LIB = readText(joinPath(ROOT, 'src-tauri', 'src', 'lib.rs'));
 /** Registered but intentionally not called from the frontend (decide before adding here). */
 const INTENTIONALLY_UNCALLED = new Set<string>();
 
-// ── Rust side ────────────────────────────────────────────────────────────
 
 const registered = (() => {
     const m = LIB.match(/generate_handler!\[([\s\S]*?)\]/);
@@ -89,7 +70,6 @@ const commands: Map<string, RustCommand> = (() => {
 
 const expectedKey = (c: RustCommand, p: RustParam) => (c.snake ? p.name : camel(p.name));
 
-// ── TS side ──────────────────────────────────────────────────────────────
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
     for (const e of listDir(dir)) {
@@ -216,8 +196,7 @@ describe('Tauri IPC contract (static: lib.rs <-> TS call sites)', () => {
         expect(created).toEqual(new Set(['main', 'build-model', 'add-sensor']));
     });
 
-    // Security review 2026-10-28: the sidecar is spawned and folders are opened from Rust,
-    // so no window may hold a shell/opener permission (a compromised page could run or open things).
+    // No window may hold a shell/opener permission: the sidecar is spawned and folders opened from Rust.
     it('no capability grants a shell or opener permission, and the frontend imports neither plugin', () => {
         const capDir = joinPath(ROOT, 'src-tauri', 'capabilities');
         const perms = listNames(capDir).filter(f => f.endsWith('.json'))

@@ -23,23 +23,7 @@ import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import { makeTestResult, makeValidation } from './helpers/validationFixture';
 import type { IndividualSeries, IndividualStats, RelationshipSeries, RelationshipStats } from '../types/health';
 
-/*
- * The train / scoring time scopes every Workbench time chart draws
- * (workbench-redesign §2
- * "just score it": a scoring period is only start → end, so there is NO
- * Known-problem hatch and NO EVENT line). All through the pure option
- * builders — `TimeSeriesSpec.scopes`, never a module setter.
- *
- * workbench-redesign §3: the scopes are NAMED in a thin strip above
- * the plot (plain coloured text) — there is no pill inside the plot — and the
- * reference-line labels sit at the right edge, outside the plot.
- *
- * User decision 2026-10-12: ONLY THE TRAIN PERIODS are drawn (band + name). A
- * scoring period has no band, no dashed frame and no "S1" name on any chart —
- * but its rows stay on the line: the line is still cut from ALL ranges
- * (`scopeIslands`), and `scopesOf` still returns the scoring ranges with their
- * S-numbers (the "Scoring results" card is where the numbers are shown).
- */
+/* Time scopes on Workbench time charts: only train periods are drawn, but the line is cut from all ranges (`scopeIslands`). */
 
 const TS = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
 const ms = (s: string) => new Date(s.replace(' ', 'T')).getTime();
@@ -110,7 +94,7 @@ describe('scopesOf (HealthPreview.test_validation -> chart scopes)', () => {
     });
 
     it('a legacy label / event time that still arrives on a result is ignored: plain "S1", no event', () => {
-        // An answer that still carries the legacy keys (the type does not have them).
+        // An answer carrying label/event keys the type does not have.
         const old = { ...makeTestResult(), label: 'problem', event_time: '2026-01-01T03:30', lead_days: 2, first_below_80: '2026-01-01 03:10:00' };
         const s = scopesOf(makeValidation({ tests: [old] }))!;
         expect(s.ranges[1]).toEqual({ kind: 'score', start: old.start, end: old.end, label: 'S1', short: 'S1' });
@@ -169,8 +153,7 @@ describe('buildTimeSeriesOption with scopes', () => {
         expect(carrier(o).markArea.data).toEqual(carrier(trainOnly).markArea.data);
     });
 
-    // workbench-redesign SPEC §3: "train and scoring ranges are NAMED in a thin strip ABOVE the plot
-    // (TRAIN P1 P2, S1 S2). No pills inside the plot."
+    // Train and scoring ranges are named in a thin strip above the plot; no pills inside it.
     it('the train period is named in a strip ABOVE the plot, on the upper lane; no scoring name is printed and the strip keeps its height', () => {
         const o: any = buildTimeSeriesOption({ ...spec, scopes: SCOPES });
         const labels = stripLabels(o);
@@ -240,7 +223,7 @@ describe('buildTimeSeriesOption with scopes', () => {
     });
 
     it('LEGACY data: an old answer with a Normal / Known-problem label and an event time is still plain "S1", "S2" in the scopes — and draws nothing', () => {
-        // two periods at different times (two names over the SAME range would print on each other, so one is left out)
+        // two periods at different times
         const old = (index: number, label: string) => ({ ...makeTestResult({ index, start: `2026-01-01T0${index}:00`, end: `2026-01-01T0${index}:30` }), label, event_time: '2026-01-01T03:30', lead_days: 2 });
         const v = makeValidation({ tests: [old(1, 'problem'), old(2, 'normal')] });
         expect(scopesOf(v)!.ranges.map(r => r.label)).toEqual(['TRAIN', 'S1', 'S2']); // plain numbers in the scopes
@@ -373,8 +356,7 @@ describe('buildTimeSeriesOption with scopes', () => {
         // few periods on a full-width card: every one is named
         const few = { ranges: ranges.slice(0, 3).map((r, i) => ({ ...r, start: at(i * 30), end: at(i * 30 + 25) })) };
         expect(stripNames(build(few))).toEqual(['TRAIN P1', 'P2', 'P3']);
-        // (there is no "chart beside a side card" spacing any more: the Health score page's charts
-        // are one full-width card since "Workbench detail pages v2")
+        // The Health score charts are one full-width card, so there is no 'beside a side card' spacing.
         expect(Object.keys(few)).toEqual(['ranges']);
     });
 

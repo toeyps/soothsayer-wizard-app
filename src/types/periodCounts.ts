@@ -1,24 +1,4 @@
-/**
- * `count_period_rows` command contract —
- * the TypeScript twin of `src-tauri/src/period_counts.rs`. Field names are
- * exactly what Rust sends / expects (snake_case): do not camelCase them.
- *
- *   invoke<PeriodCounts>('count_period_rows', { periods, filter, expected_generation })
- *
- * (`rename_all = "snake_case"` on the Rust side.) The only caller is
- * `countPeriodRows` in `src/utils/periodCounts.ts`, used by `usePeriodCounts`.
- *
- * For each period: how many dataset rows fall inside it and how many of those
- * are "running" (pass the running condition's value conditions), plus the same
- * numbers for the UNION of the valid periods of THAT call (a row inside two
- * overlapping periods counts once). So the train total needs the train
- * periods in a call of their own, and the scoring periods a second call.
- *
- * Errors are rejected strings: `STALE_SESSION: …` (`expected_generation` is not
- * the loaded dataset's), `NO_DATA: …` (nothing loaded), `BAD_REQUEST: …` (more
- * than `MAX_COUNT_PERIODS` periods). A period Rust cannot count is NOT an
- * error: it comes back `valid: false` with zeroes and is left out of `union`.
- */
+/** `count_period_rows` contract (TS twin of `period_counts.rs`; keep Rust's snake_case names). Per period: rows inside and how many pass the running condition, plus the same for the union of valid periods. Rejects `STALE_SESSION`, `NO_DATA`, `BAD_REQUEST` (> `MAX_COUNT_PERIODS`); an uncountable period returns `valid: false` with zeroes, left out of `union`. */
 
 /** Most periods one call may carry. */
 export const MAX_COUNT_PERIODS = 64;
@@ -30,9 +10,7 @@ export interface PeriodCountArg {
     end?: string | null;
 }
 
-/** The running condition as the count reads it. The command accepts the whole
- *  training-scope filter, but only `value_filters` and `combine` are read (its
- *  time fields are ignored) — so this is all that is sent. */
+/** Running condition as the count reads it: only `value_filters` and `combine` are read (time fields are ignored), so only these are sent. */
 export interface PeriodCountCondition {
     value_filters: {
         sensor: string;

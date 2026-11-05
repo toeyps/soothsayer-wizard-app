@@ -1,30 +1,5 @@
-//! "Export results": one folder per export holding `machine_info.json` plus
-//! `models/<key>.json` + `models/<key>.csv` for every model of the workspace,
-//! exactly as `docs/specs/WIZARD_OUTPUT_SPEC.md` v1.0 defines them.
-//!
-//! Everything here is testable without an `AppHandle`:
-//!   - [`build_plan`] — the pure dry run over a loaded dataset: issues, the
-//!     exact `machine_info` / model JSON, CSV columns, row counts, byte counts
-//!     and a 6-row Peek. The write path builds its content with the SAME
-//!     function, so what the dialog shows is what lands on disk.
-//!   - [`plan_in`] — [`build_plan`] under the session read lock with the
-//!     `NO_DATA` / `STALE_SESSION` guards (`plan_workspace_export`).
-//!   - [`write_export`] — stage into a hidden folder next to the destination,
-//!     self-check (spec §7), then rename to the first free `<folder>`,
-//!     `<folder>_2` … `<folder>_99` (`export_workspace_results`). Any error or
-//!     a cancel removes the staging folder; nothing else in the destination is
-//!     ever touched.
-//!   - [`ExportSlot`] — one export at a time + cancel by export id.
-//!
-//! Training rows: [`training_rows`] is THE row rule of Train (training scope
-//! via `ResolvedFilter`, every model column finite, clustering with more than
-//! one regime also a finite criteria value inside a range). The export then
-//! drops rows without a timestamp, sorts by time (stable) and keeps the LAST
-//! row of a repeated instant; both are counted and reported as warnings.
-//!
-//! Nothing trained leaves the Wizard (spec §1, §6): no fitted numbers, no
-//! internal parameter values (the Relation model's stiffness is exported as a
-//! profile NAME only), no method names in any key, file name or column.
+//! Export results: writes `machine_info.json` + `models/<key>.json/.csv` per `docs/specs/WIZARD_OUTPUT_SPEC.md`.
+//! `build_plan` is the pure dry run the writer shares. No fitted numbers or method names leave the app (stiffness = profile name).
 
 use crate::csv_processor::{micros_to_naive, ColumnarData, TS_MISSING};
 use crate::health_score::SetPointsArg;
@@ -37,8 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Global event emitted after each model is written (payload built in lib.rs:
-/// `{ export_id, workspace_id, written, total, model_key }`).
+/// Global event emitted after each model is written.
 pub const PROGRESS_EVENT: &str = "workspace-export-progress";
 
 const SCHEMA_VERSION: &str = "1.0";
@@ -51,13 +25,9 @@ const CANCEL_CHECK_ROWS: usize = 65_536;
 const PEEK_ROWS: usize = 6;
 /// Highest `_N` suffix tried when `<folder>` already exists.
 const MAX_FOLDER_SUFFIX: u32 = 99;
-/// Same length as `exported_at` on disk (`YYYY-MM-DDTHH:MM:SS±HH:MM`), so the
-/// plan's byte count of `machine_info.json` equals the written file's.
+/// Same length as the real `exported_at`, so planned byte counts match the file.
 const EXPORTED_AT_PLACEHOLDER: &str = "0000-00-00T00:00:00+00:00";
 
-// ---------------------------------------------------------------------------
-// Request (snake_case wire, TS `src/types/export.ts`)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct MachineArg {
@@ -171,9 +141,6 @@ pub struct WorkspaceExportRequest {
     pub models: Vec<ExportModelSpec>,
 }
 
-// ---------------------------------------------------------------------------
-// Issues
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct ExportIssue {
@@ -230,9 +197,6 @@ impl ExportIssue {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Output shapes (typed, spec key order)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
 pub struct MachineOut {
@@ -440,17 +404,9 @@ pub struct BuiltPlan {
     work: Vec<ModelWork>,
 }
 
-// ---------------------------------------------------------------------------
-// Shared row rule
-// ---------------------------------------------------------------------------
 
-/// THE training-row rule of Train, in dataset order: the row passes the
-/// training scope (`resolved`), every column in `cols` is finite and — when
-/// `regimes` is given (clustering with more than one regime) — the criteria
-/// value is finite and falls in a range under `health_score::assign_cluster`
-/// (`min < v <= max`, outer edges open with two or more ranges — the same
-/// rule as Train and the health score). A row inside two overlapping ranges
-/// appears once.
+/// Train's row rule, in dataset order: in scope, all `cols` finite, and with `regimes` a criteria value in a range (`min < v <= max`).
+/// A row in overlapping ranges appears once.
 pub(crate) fn training_rows(
     data: &ColumnarData,
     resolved: &ResolvedFilter,
@@ -480,8 +436,7 @@ pub(crate) fn training_rows(
         .collect()
 }
 
-/// Drop rows without a timestamp, stable-sort by time and keep the LAST row of
-/// a repeated instant. Returns `(rows, without_timestamp, duplicates_dropped)`.
+/// Drop rows without a timestamp, stable-sort by time, keep the LAST row of a repeated instant; returns `(rows, missing, dups)`.
 fn order_by_time(data: &ColumnarData, rows: Vec<u32>) -> (Vec<u32>, usize, usize) {
     let before = rows.len();
     let mut kept: Vec<u32> = rows
@@ -504,13 +459,8 @@ fn order_by_time(data: &ColumnarData, rows: Vec<u32>) -> (Vec<u32>, usize, usize
     (out, missing, dups)
 }
 
-// ---------------------------------------------------------------------------
-// Small rules
-// ---------------------------------------------------------------------------
 
-/// `[^A-Za-z0-9._-]` → `_` (spec §2.1).
-/// A Windows reserved device name before the first dot (`CON`, `NUL.X`, ...)
-/// gets a leading `_` so the key is always a usable file name.
+/// `[^A-Za-z0-9._-]` -> `_` (spec 2.1); a Windows reserved device name before the first dot gets a leading `_`.
 pub(crate) fn sanitize_key_tag(tag: &str) -> String {
     let out: String = tag
         .chars()
@@ -542,13 +492,8 @@ pub(crate) fn fit_profile(stiffness: Option<f64>) -> Option<&'static str> {
         .map(|&(_, name)| name)
 }
 
-/// Clustering regimes for more than one range (spec §4.4): sorted by `min`,
-/// contiguous on the INNER boundaries (`prev.max == next.min`), every inner
-/// range non-empty. The first `from` and the last `to` are ALWAYS written as
-/// null (open outer edges, 2026-10-20) whatever the stored value — the
-/// Workbench's auto-divide stores the criteria's real data min/max there and
-/// the UI cannot edit them; `assign_cluster` ignores them the same way.
-/// `Err(())` = an inner gap, an overlap or a bad bound.
+/// Regimes for 2+ ranges (spec 4.4): sorted by `min`, contiguous inner boundaries, no empty inner range.
+/// First `from` and last `to` are always null; `Err(())` = gap, overlap or bad bound.
 pub(crate) fn regimes_from_ranges(ranges: &[ClusterRange]) -> Result<Vec<Regime>, ()> {
     if ranges.len() < 2 {
         return Err(());
@@ -754,9 +699,6 @@ fn exported_at_now() -> String {
     chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, false)
 }
 
-// ---------------------------------------------------------------------------
-// CSV writing (one writer for the byte count, the Peek and the file)
-// ---------------------------------------------------------------------------
 
 struct Counting<W> {
     inner: W,
@@ -821,9 +763,7 @@ fn write_csv_row<W: Write>(
     wtr.write_record(None::<&[u8]>).map_err(|e| io(&e))
 }
 
-/// Write the model's CSV to `w` and return `(bytes, inner writer)`. `peek`
-/// (when given) receives the first [`PEEK_ROWS`] data rows' fields, exactly as
-/// written.
+/// Writes the model CSV to `w`; returns `(bytes, inner writer)`. `peek` gets the first `PEEK_ROWS` rows as written.
 fn write_csv<W: Write>(
     w: W,
     data: &ColumnarData,
@@ -848,10 +788,8 @@ fn write_csv<W: Write>(
     Ok((counting.n, counting.inner))
 }
 
-/// The bytes of [`write_csv`], written to `w` WITHOUT the session lock held:
-/// each `chunk_rows` rows are formatted into memory under a read lock, after
-/// checking the session is still `stamp` (so the column indices still hold),
-/// and the lock is released before they reach the disk.
+/// Same bytes as `write_csv`, without holding the session lock across disk writes:
+/// each `chunk_rows` chunk is formatted under a read lock after checking the session is still `stamp`.
 #[allow(clippy::too_many_arguments)]
 fn write_csv_unlocked<W: Write>(
     mut w: W,
@@ -895,13 +833,9 @@ fn write_csv_unlocked<W: Write>(
     Ok((total, w))
 }
 
-// ---------------------------------------------------------------------------
-// Plan
-// ---------------------------------------------------------------------------
 
-/// The pure dry run over `data` (see the module doc). `derived` = the
-/// session's set of special-sensor name keys. `Err` only for a malformed
-/// request (`BAD_REQUEST: …`); every user-fixable problem is an issue.
+/// Pure dry run over `data`; `derived` = special-sensor name keys.
+/// `Err` only for a malformed request (`BAD_REQUEST`); user-fixable problems are issues.
 pub fn build_plan(
     data: &ColumnarData,
     derived: &HashSet<String>,
@@ -911,7 +845,6 @@ pub fn build_plan(
     let has_col = |tag: &str| data.headers.iter().skip(1).any(|h| h == tag);
     let col_of = |tag: &str| data.headers.iter().skip(1).position(|h| h == tag).map(|i| i + 1);
 
-    // ---- machine / offset ----
     for (field, value) in [
         ("plant", &req.machine.plant),
         ("name", &req.machine.name),
@@ -931,7 +864,6 @@ pub fn build_plan(
         ));
     }
 
-    // ---- sensor metadata ----
     let meta: HashMap<&str, &SensorMetaArg> =
         req.sensor_meta.iter().map(|m| (m.tag.as_str(), m)).collect();
     let component_of = |tag: &str| -> String {
@@ -942,7 +874,6 @@ pub fn build_plan(
             .to_string()
     };
 
-    // ---- models ----
     if req.models.is_empty() {
         issues.push(ExportIssue::error("no_models", "There are no models to export"));
     }
@@ -964,10 +895,7 @@ pub fn build_plan(
         let kind = Kind::parse(&m.kind)
             .ok_or_else(|| bad_request(format!("model '{}': unknown kind '{}'", m.id, m.kind)))?;
 
-        // Columns in CSV order + the key tag + the regime criteria. An
-        // unfinished model (normal while a project is being set up) is a
-        // per-model error issue and is left out of the plan, never a
-        // BAD_REQUEST for the whole request.
+        // An unfinished model is a per-model error issue and is left out of the plan, not a BAD_REQUEST.
         let (columns, key_tag, criteria) = match model_columns(kind, m) {
             Ok(v) => v,
             Err(issue) => {
@@ -992,19 +920,14 @@ pub fn build_plan(
             );
         }
 
-        // Key (spec §2.1): `<target_tag>-<R|I|C><n>`, target_tag = `output` /
-        // `sensor` / `y_sensor` — for clustering the Y sensor, even though the
-        // model belongs to (and takes its component from) the X sensor.
+        // Key (spec 2.1): `<tag>-<R|I|C><n>`; clustering uses the Y sensor as tag, while its component comes from the X sensor.
         let stem_tag = if kind == Kind::Clustering { &columns[1] } else { &key_tag };
-        // The counter is keyed case-insensitively: the key is a file name, and
-        // `ABC-I1` + `abc-I1` would be one file on Windows. The key itself keeps
-        // the tag's own casing (`ABC-I1`, `abc-I2`). The sanitized stem is ASCII.
+        // Counter is case-insensitive (keys `ABC-I1` and `abc-I1` collide as Windows file names); the key keeps the tag's casing.
         let stem = format!("{}-{}", sanitize_key_tag(stem_tag), kind.letter());
         let counter = key_counters.entry(stem.to_ascii_lowercase()).or_insert(0);
         *counter += 1;
         let key = format!("{stem}{counter}");
 
-        // Per-model issues.
         let mut unknown = false;
         let mut referenced: Vec<&str> = columns.iter().map(String::as_str).collect();
         if let Some(c) = &criteria {
@@ -1068,7 +991,6 @@ pub fn build_plan(
             vec![Regime { from: None, to: None }]
         };
 
-        // Rows.
         let (col_idx, rows) = if unknown {
             (Vec::new(), Vec::new())
         } else {
@@ -1116,7 +1038,6 @@ pub fn build_plan(
             (col_idx, rows)
         };
 
-        // JSON.
         let training_data = TrainingDataOut { file: format!("{key}.csv"), note: m.training_note.clone() };
         let display_name = m.display_name.trim().to_string();
         let component = component_of(&key_tag);
@@ -1213,7 +1134,6 @@ pub fn build_plan(
         }
     }
 
-    // ---- running status ----
     let running_status = match &req.running_status {
         Some(rs) if !rs.sensor.trim().is_empty() && rs.stop_if_lower_than.is_finite() => {
             if !has_col(&rs.sensor) {
@@ -1236,7 +1156,6 @@ pub fn build_plan(
         }
     };
 
-    // ---- sensors / derived sensors ----
     let is_derived = |tag: &str| derived.contains(&crate::name_key(tag));
     let mut used: Vec<String> = Vec::new();
     for p in &planned {
@@ -1465,9 +1384,6 @@ fn plan_with_stamp(state: &AppState, req: &WorkspaceExportRequest) -> Result<(Bu
     Ok((build_plan(&session.data, &session.derived, req)?, session.stamp()))
 }
 
-// ---------------------------------------------------------------------------
-// Destination checks
-// ---------------------------------------------------------------------------
 
 /// `^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$`, not ending with `.`, not a reserved
 /// Windows device name.
@@ -1489,8 +1405,7 @@ pub(crate) fn validate_folder_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// `\\?\C:\x` → `C:\x` (canonicalize's verbatim form is not what the user or
-/// the file manager expects). UNC verbatim paths are kept as they are.
+/// Strips the verbatim prefix canonicalize adds to drive paths; UNC verbatim paths are kept.
 fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\") {
@@ -1507,9 +1422,6 @@ fn validate_dest(dest_dir: &str) -> Result<PathBuf, String> {
     Ok(strip_verbatim(canon))
 }
 
-// ---------------------------------------------------------------------------
-// Staging + write
-// ---------------------------------------------------------------------------
 
 static STAGING_SEQ: AtomicU64 = AtomicU64::new(0);
 
@@ -1548,10 +1460,8 @@ struct Hooks {
     fail_before_model: Option<usize>,
 }
 
-/// Write the export (see the module doc). `progress(written, total, key)` is
-/// called after each model. Errors: `BAD_REQUEST:` / `NO_DATA:` /
-/// `STALE_SESSION:` / `NOT_READY: <n> problem(s)` / `CANCELLED:` /
-/// `WRITE_FAILED:` — for all of them nothing is left in `dest_dir`.
+/// Writes the export; `progress(written, total, key)` is called after each model.
+/// Errors: BAD_REQUEST / NO_DATA / STALE_SESSION / NOT_READY: <n> problem(s) / CANCELLED / WRITE_FAILED; nothing is left in `dest_dir` on any error.
 pub fn write_export(
     state: &AppState,
     req: &WorkspaceExportRequest,
@@ -1680,10 +1590,8 @@ fn write_export_with(
     })
 }
 
-/// Spec §7 on the staged folder: `machine_info.json` is there and parses,
-/// every model has exactly its `.json` + `.csv` (key = stem, `model_key`
-/// matches), nothing else is in `models/`, every model key a failure group
-/// lists exists, every referenced tag is listed and every component is known.
+/// Spec 7 check of the staged folder: `machine_info.json` parses; `models/` holds exactly each model's .json + .csv (key = stem = `model_key`).
+/// Group model keys exist; every referenced tag is listed and every component is known.
 fn self_check(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
     let mi: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(root.join(MACHINE_INFO_FILE)).map_err(|e| e.to_string())?,
@@ -1746,9 +1654,6 @@ fn self_check(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// One export at a time + cancel
-// ---------------------------------------------------------------------------
 
 /// The running export (`export_id` + its cancel flag).
 #[derive(Default)]
@@ -1812,9 +1717,6 @@ impl ExportSlot {
 /// The app's one export slot.
 pub static EXPORTS: ExportSlot = ExportSlot::new();
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1822,7 +1724,6 @@ mod tests {
     use crate::{clustering_preview_in, SessionData};
     use std::sync::RwLock;
 
-    // ---- the session lock is not held while writing ----
 
     /// Runs `on_write` for every write it receives.
     struct Probe<F: FnMut()> {
@@ -1912,10 +1813,8 @@ mod tests {
         assert!(matches!(err, CsvFail::Cancelled), "{err:?}");
     }
 
-    // ---- fixtures ----
 
-    /// 20 rows at 5-minute steps from 2024-01-09 22:00; columns:
-    /// A = i, B = 2i, C = i % 4 (criteria 0..3), Y = 10 + i, D = derived (A - B).
+    /// 20 rows at 5-minute steps from 2024-01-09 22:00; A = i, B = 2i, C = i % 4 (criteria 0..3), Y = 10 + i, D = derived (A - B).
     fn data_with(ts: Vec<Option<String>>) -> ColumnarData {
         let n = ts.len();
         let a: Vec<f64> = (0..n).map(|i| i as f64).collect();
@@ -2056,7 +1955,6 @@ mod tests {
             .collect()
     }
 
-    // ---- keys ----
 
     #[test]
     fn keys_use_the_kind_letter_a_per_tag_counter_and_y_for_clustering() {
@@ -2139,7 +2037,6 @@ mod tests {
         );
     }
 
-    // ---- JSON per kind ----
 
     #[test]
     fn relationship_json_has_every_field_in_spec_order() {
@@ -2232,8 +2129,7 @@ mod tests {
 
     #[test]
     fn clustering_outer_edges_are_written_open_whatever_is_stored() {
-        // What the Workbench's auto-divide stores: the criteria's real data
-        // [min, max] = [0, 3] as finite outer edges (2026-10-20 fix).
+        // Auto-divide stores the criteria's data [min, max] = [0, 3] as finite outer edges.
         for (ranges, want) in [
             (
                 vec![rng(Some(0.0), Some(1.5)), rng(Some(1.5), Some(3.0))],
@@ -2254,9 +2150,7 @@ mod tests {
 
     #[test]
     fn training_rows_put_values_beyond_the_outer_edges_in_the_outer_clusters() {
-        // C = i % 4 over 20 rows (values 0..3). Stored outer edges [0, 3] like
-        // the auto-divide: C == 0 (the data minimum) is kept, as are values
-        // beyond either outer edge; only an inner gap drops rows.
+        // C = i % 4 over 20 rows: stored outer edges [0, 3] keep C == 0 and values beyond either edge; only an inner gap drops rows.
         let d = data();
         let resolved = ResolvedFilter::resolve(None, &d.headers).unwrap();
         let auto = [rng(Some(0.0), Some(1.5)), rng(Some(1.5), Some(3.0))];
@@ -2327,7 +2221,6 @@ mod tests {
         assert!(plan(&request(vec![ind("i1", "Y"), rel("r1", "Y", &["A"]), clus("c1", "A", "Y", None, None)])).ok);
     }
 
-    // ---- CSV ----
 
     #[test]
     fn csv_columns_follow_the_spec_order_per_kind() {
@@ -2362,7 +2255,6 @@ mod tests {
         assert_eq!(p.models[0].peek[2][0], "2024-01-09T22:00:01-03:30");
     }
 
-    // ---- rows ----
 
     fn running_filter() -> PreviewFilter {
         serde_json::from_value(serde_json::json!({
@@ -2436,7 +2328,7 @@ mod tests {
 
     #[test]
     fn cluster_range_contains_is_min_exclusive_max_inclusive() {
-        // Spec §4.4 / user decision 2026-10-20: `from < value <= to`.
+        // Spec 4.4: `from < value <= to`.
         let r = rng(Some(1.0), Some(2.0));
         assert!(!r.contains(1.0), "the bottom edge belongs to the range below");
         assert!(r.contains(1.000_001));
@@ -2444,8 +2336,7 @@ mod tests {
         assert!(!r.contains(2.000_001));
         assert!(rng(None, Some(1.0)).contains(-1e300) && rng(None, Some(1.0)).contains(1.0));
         assert!(!rng(Some(1.0), None).contains(1.0) && rng(Some(1.0), None).contains(1e300));
-        // Training (the clustering preview core) follows it: C = i % 4 over 20
-        // rows -> C <= 1 is 10 rows (0 and 1), C > 1 is 10 rows (2 and 3).
+        // Training follows the same rule: C <= 1 is 10 rows, C > 1 is 10 rows.
         let d = data();
         let ranges = vec![rng(None, Some(1.0)), rng(Some(1.0), None)];
         let p = clustering_preview_in(&d, "A".into(), "Y".into(), 2, Some("C".into()), Some(ranges.clone()), None).unwrap();
@@ -2493,7 +2384,6 @@ mod tests {
         assert!(!p.ok);
     }
 
-    // ---- machine_info ----
 
     #[test]
     fn derived_sensors_are_classified_and_their_raw_sources_listed() {
@@ -2580,7 +2470,6 @@ mod tests {
         assert!(build_plan(&data(), &derived(), &bad).unwrap_err().starts_with("BAD_REQUEST:"));
     }
 
-    // ---- unfinished models / spec rules (review fixes) ----
 
     fn issues_of<'a>(p: &'a WorkspaceExportPlan, id: &str) -> Vec<(&'static str, Option<&'a str>)> {
         p.issues
@@ -2695,7 +2584,6 @@ mod tests {
         }
     }
 
-    // ---- spec §6 guard ----
 
     fn json_keys(v: &serde_json::Value, out: &mut Vec<String>) {
         match v {
@@ -2745,7 +2633,6 @@ mod tests {
         assert!(!all.contains("['") && !all.contains("{'"));
     }
 
-    // ---- write ----
 
     fn tmp() -> tempfile::TempDir {
         tempfile::tempdir().unwrap()

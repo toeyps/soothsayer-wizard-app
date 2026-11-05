@@ -8,8 +8,7 @@ const gaps = (v: number[]) => v.slice(1).map((t, i) => t - v[i]);
 const DAY = 86_400_000;
 
 describe('evenTimeTicks', () => {
-    // Real-app bug: ECharts marks the 1st, 8th, 15th, 22nd of every month AND the next 1st, so
-    // the labels read 7, 7, 7, 9-10 days apart ("2026/05/22 … 2026/06/01").
+    // ECharts marks the 1st, 8th, 15th, 22nd of each month AND the next 1st, giving uneven gaps (7, 7, 7, 9-10 days).
     it('a 3-month view: one fixed step of whole days, every tick a local midnight, across month ends', () => {
         const t = evenTimeTicks(at(2026, 4, 8, 12), at(2026, 7, 8, 12), 13);
         expect(t.key).toBe('d7');

@@ -44,3 +44,7 @@ If a request needs a new direction or changes the design system itself, say so a
 5. If the task turns out to be a full new screen or a new direction, flag it for the lead (and for Figma per CLAUDE.md) — don't do it yourself.
 
 Stop after delivering. Do not implement, even if asked to "just do it" — hand back to the caller.
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

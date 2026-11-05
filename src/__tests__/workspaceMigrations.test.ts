@@ -6,8 +6,7 @@ import { isModelComplete, isModelStale, modelDotState } from '../utils/modelStat
 import { applyIncompleteRule } from '../utils/incompleteRule';
 import { mk as baseMk } from './helpers/failureModelFixture';
 
-/** A PRE-periods model: like the shared fixture, but with no `filterTimePeriods`
- *  (unless given) and free to carry the old `filterTimeStart`/`filterTimeEnd` keys. */
+/** A pre-periods model: no `filterTimePeriods` unless given, and may carry the old `filterTimeStart`/`filterTimeEnd`. */
 function mk(over: Partial<FailureModel> & { id: string } & Record<string, unknown>): FailureModel {
     const m = baseMk(over as never) as unknown as Record<string, unknown>;
     if (!('filterTimePeriods' in over)) delete m.filterTimePeriods;

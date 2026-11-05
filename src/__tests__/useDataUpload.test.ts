@@ -3,9 +3,6 @@ import { renderHook, act } from '@testing-library/react';
 import { useDataUpload } from '../hooks/useDataUpload';
 import type { CsvLoadReport } from '../types/dataUpload';
 
-// ============================================================
-// Mocks
-// ============================================================
 
 const mockInvoke = vi.fn();
 const mockOpen = vi.fn();
@@ -18,9 +15,6 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: unknown[]) => mockOpen(...args),
 }));
 
-// ============================================================
-// Test data
-// ============================================================
 
 const sampleReport: CsvLoadReport = {
   headers: ['timestamp', 'sensor_a', 'sensor_b'],
@@ -33,9 +27,6 @@ const sampleReport: CsvLoadReport = {
   warnings: [],
 };
 
-// ============================================================
-// Tests
-// ============================================================
 
 describe('useDataUpload', () => {
   beforeEach(() => {
@@ -295,10 +286,7 @@ describe('useDataUpload', () => {
     expect(result.current.isStale).toBe(false);
   });
 
-  // ──────────────────────────────────────────────────────────────────────
-  // isStale lifecycle — guards against shipping a stale loadReport whose
-  // selectedFiles no longer match the snapshot used at parse time.
-  // ──────────────────────────────────────────────────────────────────────
+  // isStale: a stale loadReport must not ship when selectedFiles no longer match the parse snapshot.
   describe('isStale', () => {
     it('is false initially (no parse yet)', () => {
       const { result } = renderHook(() => useDataUpload());

@@ -1,34 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Train sensor / Train all queue — QA
- * sweep across the windows.
- *
- * The queue's rules are unit-tested in useTrainQueue.test.ts / trainQueue.test.ts,
- * its parts in TrainQueueParts.test.tsx and its wiring into the Build Model
- * window in BuildModelWindow.test.tsx (with workspaceManager MOCKED and no
- * Dashboard). What only shows up with the pieces combined is tested here: the
- * REAL Dashboard and the REAL Build Model window side by side on one event bus,
- * the REAL workspaceManager over an in-memory plugin-fs (so "what is on disk"
- * is the actual file), and the fake Rust backend of the health-score tests
- * (`helpers/fakeHealthRust.ts`) behind `invoke`.
- *
- *  (a) Back to Import while Train all runs: the Dashboard's unmount
- *      (`workspace-closing` + its close of the window) closes the Build Model
- *      window WITHOUT the "Training is still running" dialog, nothing more is
- *      trained or written for that workspace, and the next project gets a
- *      clean window — both when the window really closes and when it outlives
- *      the close (the close IPC is best effort) and is re-pointed.
- *  (b) Train all over models of two failure groups, one failing and one
- *      skipped for a missing setting: strictly sequential, the final strip, the
- *      file per model, the "Set points needed" chip, the Health score banner,
- *      and the Dashboard's Failure Groups dots after the broadcast.
- *
- * The two windows are rendered as two separate React roots, so the Dashboard
- * can be unmounted (Back to Import) and the Build Model window "destroyed" on
- * their own.
- */
+/* Train queue across windows: real Dashboard and Build Model on one event bus, fake Rust health backend. */
 
 const wv = vi.hoisted(() => ({
     /** What `WebviewWindow.getByLabel('build-model')` returns to the Dashboard. */
@@ -88,9 +61,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-// ---------------------------------------------------------------------------
-// Harness
-// ---------------------------------------------------------------------------
 
 async function mountDashboard(id: string) {
     const ui = render(
@@ -132,11 +102,7 @@ async function startTrainAll() {
     await act(async () => { fireEvent.click(bmw().getByTestId('train-all-start')); });
 }
 
-/** Records every TRAIN call (the three per-kind train commands; the Step-1 row
- *  count asks `compute_sensor_stats` for TAG1 and is not a train): start/end
- *  order and the most that were ever in flight at once. Every train takes a
- *  little while, so an overlap would be visible. `fail` answers a call with an
- *  error instead. */
+/** Records every train call (order, max in flight); `fail` answers a call with an error. The Step-1 row count isn't a train. */
 function recordTrains(o: { individualTargets: string[]; fail?: (cmd: string, args: any) => string | null }) {
     const log: string[] = [];
     const rec = { inFlight: 0, maxInFlight: 0, log };
@@ -163,9 +129,6 @@ function recordTrains(o: { individualTargets: string[]; fail?: (cmd: string, arg
     return rec;
 }
 
-// ---------------------------------------------------------------------------
-// (a) Back to Import / Dashboard unmount during a Train all run
-// ---------------------------------------------------------------------------
 
 describe('(a) the Dashboard goes away (Back to Import) while Train all runs', () => {
     /** ws1: three Individual models in FG-A, never trained. */
@@ -204,8 +167,7 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
     it('the window really closes: no "Training is still running" dialog, the Dashboard\'s own close is not held, nothing more is trained or changed in ws1, and the next project gets a clean window', async () => {
         const { dashUi, bmwUi } = await runUntilSecondModelHeld();
 
-        // The Dashboard's close of the Build Model window fires the window's own close
-        // handler (`onCloseRequested`), exactly like Tauri does.
+        // The Dashboard's close fires the window's own close handler (`onCloseRequested`), like Tauri.
         const closes: { prevented: boolean }[] = [];
         let destroyed = false;
         wv.handle = {
@@ -233,8 +195,7 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
         expect(destroyed).toBe(true);
         // The run is gone from the window (dropped, not finished).
         expect(bmw().queryByTestId('train-run-strip')).toBeNull();
-        // Nothing in ws1 changed with the close. (The Dashboard's own last autosave may
-        // re-write the file on unmount; it must carry exactly what was there.)
+        // Nothing in ws1 changed; the Dashboard's unmount autosave may rewrite the file but with the same content.
         for (const w of ws1WritesFrom(writesBefore)) expect(w).toEqual(ws1Before);
         expect(readDisk('ws1')).toEqual(ws1Before);
 
@@ -268,9 +229,7 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
         expect(env.files.get(wsFile('ws1'))).toBe(ws1AfterClose);
     });
 
-    /** The close of the window is LOST (the Dashboard's `getByLabel` finds nothing), so
-     *  the window outlives its project; the train that was in flight then comes back.
-     *  Then the next project's Dashboard re-points the surviving window via "Build Model". */
+    /** The close is lost, so the window outlives its project and the in-flight train returns; the next project's Dashboard re-points it. */
     async function survivingWindowRepointedAtWs2() {
         const { gate, dashUi } = await runUntilSecondModelHeld();
         await act(async () => { dashUi.unmount(); });
@@ -297,9 +256,7 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
 
     it('the window outlives the close (close lost): the in-flight train never starts the next model, and once re-pointed at the next project the window is clean and trains only that project', async () => {
         const { ws1Settled } = await survivingWindowRepointedAtWs2();
-        // A train in flight is never cut off: with the window still alive, the model that
-        // was training when the project closed lands its record in ITS workspace (a true
-        // fit on ws1's data — same generation), not Complete. The run itself is gone.
+        // A train in flight is never cut off: the model lands its record in its own workspace (a true fit on ws1's data), not Complete.
         expect(freshOnDisk('ws1', 'i4')).toBe(true);
         expect(diskModelOf('ws1', 'i4').status).toBe(false);
 
@@ -317,34 +274,25 @@ describe('(a) the Dashboard goes away (Back to Import) while Train all runs', ()
         expect(env.files.get(wsFile('ws1'))).toBe(ws1Settled);
     });
 
-    // Regression: `workspace-closing` sets
-    // `closeBypassRef`, and the re-point branch (`switched`) must clear it again.
-    // Otherwise a window that outlived its project's close (best-effort IPC, or a
-    // hung Mark complete held it open) and was re-pointed at the next project
-    // closes in the middle of that project's run without the dialog.
+    // Guards: the re-point branch must clear `closeBypassRef` (set by `workspace-closing`), or the window closes mid-run unasked.
     it('after a lost close + re-point, closing during the NEW project\'s run still asks first', async () => {
         await survivingWindowRepointedAtWs2();
         const held = env.backend!.gate('compute_sensor_stats', a => a?.sensor === 'TAG3');
         await act(async () => { fireEvent.click(bmw().getByTestId('train-sensor')); });
         await waitFor(() => expect(held.entered).toBe(true));
         await act(async () => { fireEvent.click(bmw().getByTitle('Close')); });
-        expect(env.windowClose).toBe(1); // actual: 2 — closed mid-run without asking
+        expect(env.windowClose).toBe(1);
         expect(bmw().getByRole('alertdialog').textContent).toContain('Training is still running');
     });
 });
 
-// ---------------------------------------------------------------------------
-// (c) The X of the main window while Build Model has something to ask
-// ---------------------------------------------------------------------------
 
 describe('(c) the X of the main window asks Build Model, on the real handlers of both windows', () => {
     const start = () => wsState({
         models: [model({ id: 'i3', targetSensor: 'TAG3' }), model({ id: 'i4', targetSensor: 'TAG4' })],
     }, 'ws1', 'Project one');
 
-    /** Main first, Build Model second. The handle runs Build Model's own close handler, like
-     *  Tauri does, and destroys it unless the handler prevented that; the main window's `close()`
-     *  re-enters its own handler. */
+    /** Main first, Build Model second. The handle runs Build Model's close handler like Tauri and destroys it unless prevented. */
     async function mountBoth() {
         writeDisk(start(), 'ws1');
         await mountDashboard('ws1');
@@ -486,14 +434,9 @@ describe('(c) the X of the main window asks Build Model, on the real handlers of
     });
 });
 
-// ---------------------------------------------------------------------------
-// (b) Train all over two failure groups, one failure, one skip
-// ---------------------------------------------------------------------------
 
 describe('(b) Train all over two failure groups with one failure and one skip', () => {
-    /** FG-A: i3 (Individual TAG3) + r1 (Relation TAG1 <- TAG3, FAILS).
-     *  FG-B: i5 (Individual TAG5) + r5 (Relation TAG5, NO predictor → skipped)
-     *        + c5 (Clustering X TAG5 / Y TAG3, criteria TAG4). */
+    /** FG-A: i3 + r1 (fails). FG-B: i5 + r5 (no predictor, skipped) + c5 (Clustering X TAG5, Y TAG3, criteria TAG4). */
     const start = () => wsState({
         models: [
             model({ id: 'i3', targetSensor: 'TAG3', groupNos: [1] }),

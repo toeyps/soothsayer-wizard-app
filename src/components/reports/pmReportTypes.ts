@@ -1,7 +1,4 @@
-// ── Relationship-model stiffness (LinearGAM λ) presets ───────────────
-// Stiffness is exposed to users as four discrete levels in the Build Model
-// Workbench's Model settings; the underlying λ is hidden everywhere user-facing. Order is
-// loose → strict, matching the picker's render order.
+// Relation-model stiffness presets shown as four levels (lambda hidden from users), ordered loose to strict.
 export const STIFFNESS_OPTIONS: ReadonlyArray<{ value: number; label: string }> = [
     { value: 1_000,     label: 'Very loose' },
     { value: 10_000,    label: 'Loose' },
@@ -10,12 +7,10 @@ export const STIFFNESS_OPTIONS: ReadonlyArray<{ value: number; label: string }> 
 ];
 export const STIFFNESS_DEFAULT = 100_000;
 const STIFFNESS_VALUES = new Set(STIFFNESS_OPTIONS.map(o => o.value));
-/** Resolve a λ value to its human label. Unknown values (e.g. workspaces
- *  saved before this UI change, where λ defaulted to `1`) fall back to
- *  the "Standard" label so the UI never shows a bare number. */
+/** Lambda value to label; an unknown value falls back to the 'Standard' label. */
 export const stiffnessLabel = (v: number): string =>
     STIFFNESS_OPTIONS.find(o => o.value === v)?.label
     ?? STIFFNESS_OPTIONS.find(o => o.value === STIFFNESS_DEFAULT)!.label;
-/** Snap a legacy / out-of-range λ to the closest preset on workspace load. */
+/** Snap an unknown λ to the default preset (`STIFFNESS_DEFAULT`). */
 export const snapStiffness = (v: number): number =>
     STIFFNESS_VALUES.has(v) ? v : STIFFNESS_DEFAULT;

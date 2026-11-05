@@ -1,24 +1,6 @@
 import { useCallback, useRef } from 'react';
 
-/**
- * Serialize regl-scatterplot `.draw()` calls.
- *
- * The library ignores a `draw()` issued while the previous one is still in
- * flight and warns: "Ignoring draw call as the previous draw call has not yet
- * finished." That is not just console noise — the ignored call's data/colors
- * are silently dropped, so a cell can keep rendering stale state. This
- * happens in normal operation: PairPlotCell's data effect and clusters effect
- * both draw in the same commit on mount, and any rapid data/cluster update
- * can land while a draw is pending.
- *
- * `requestDraw(sc, args)` draws immediately when idle; while busy it parks
- * `args` as the ONE pending draw (newer requests overwrite older ones — only
- * the latest state matters) and flushes it when the in-flight draw settles.
- *
- * `resetDraw()` must be called when the instance is destroyed: a draw
- * interrupted by `destroy()` may never settle, which would otherwise leave
- * the queue stuck busy forever.
- */
+/** Serializes regl-scatterplot `.draw()`: the library drops a draw issued while one is in flight. `requestDraw` draws when idle, else keeps the latest args as the one pending draw. Call `resetDraw()` on destroy. */
 export function useCoalescedDraw(): {
     requestDraw: (sc: any, args: any) => void;
     resetDraw: () => void;
@@ -34,9 +16,7 @@ export function useCoalescedDraw(): {
         busyRef.current = true;
         Promise.resolve()
             .then(() => sc.draw(args))
-            // A rejected draw (e.g. instance torn down mid-flight) must not
-            // wedge the queue; real render failures surface via the
-            // webglcontextlost overlay, not here.
+            // A rejected draw (instance torn down) must not wedge the queue; real failures show via the webglcontextlost overlay.
             .catch(() => { /* swallowed on purpose */ })
             .then(() => {
                 busyRef.current = false;

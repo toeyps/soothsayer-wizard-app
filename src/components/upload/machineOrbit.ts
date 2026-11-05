@@ -1,25 +1,11 @@
-/**
- * Orbit camera for the hero machine illustration ("feels like a 3D model
- * viewer"). Pure state + helpers, no DOM, so every rule is unit-testable.
- * Ported from the approved C6 + orbit mockup
- * (`docs/design/handoff/welcome-c6-orbit/machine-art-c6-orbit-reference.html`).
- *
- * - Left/right turns the machine all the way round (no limit).
- * - Up/down tilts between −10° and +80° (never flips); home tilt ≈ 18°.
- * - While held: no auto-sway, the morph clock waits (see `stepHeldClock`).
- * - On release: the turn keeps its speed (capped at `V_MAX`) and glides to a
- *   stop in ~0.5 s
- *   (no glide if the pointer was still for > 80 ms before release).
- * - 1.5 s after the glide ends the sway resumes and the tilt eases home (~2 s).
- * - No zoom (user decision).
- */
+/** Orbit camera for the hero machine illustration; pure state + helpers, no DOM. Turn unlimited; tilt -10° to +80° (home ≈ 18°); no zoom. Held: no sway, morph clock waits. Release: glide capped at `V_MAX`, stops in ~0.5 s (none if still > 80 ms); 1.5 s later sway resumes and tilt eases home (~2 s). */
 import { HOLD_SECONDS, TAU, advanceMorph, type MorphClock } from './machineShapes';
 
 const DEG = Math.PI / 180;
 
 export const PITCH_MIN = -10 * DEG;
 export const PITCH_MAX = 80 * DEG;
-/** Home tilt: 0.32 rad ≈ 18.3°, exactly today's camera. */
+/** Home tilt: 0.32 rad ≈ 18.3°. */
 export const PITCH_HOME = 0.32;
 /** Home turn before the gentle sway is added. */
 export const YAW_HOME = -0.7;
@@ -36,11 +22,7 @@ export const SMOOTH = 22;
 export const FRICTION = 6;
 /** Below this speed (rad/s) a glide is over. */
 export const GLIDE_STOP = 0.03;
-/**
- * Release speed cap (rad/s). A fast touch flick can measure 30+ rad/s; capped,
- * a glide travels at most V_MAX / FRICTION = 2 rad and 95 % of that within
- * 0.5 s (the remaining crawl under GLIDE_STOP ends by ~1 s).
- */
+/** Release speed cap (rad/s); a glide travels at most V_MAX / FRICTION = 2 rad, 95 % of it within 0.5 s. */
 export const V_MAX = 12;
 /** A pointer held still this long (ms) before release does not glide. */
 export const HOLD_STILL_MS = 80;
@@ -95,11 +77,7 @@ export function glideDecay(v: number, dt: number): number {
   return v * Math.exp(-FRICTION * dt);
 }
 
-/**
- * Advance the morph clock, honouring the hold rule: while the user interacts, a
- * dissolve already under way finishes, otherwise the clock stops just before
- * the callouts would fade (so they stay readable while the user turns it).
- */
+/** Advance the morph clock: while interacting, a dissolve under way finishes, else the clock stops just before the callouts would fade. */
 export function stepHeldClock(clock: MorphClock, dt: number, interacting: boolean, count: number): void {
   if (!interacting) {
     advanceMorph(clock, dt, count);
@@ -120,7 +98,6 @@ export function homeYaw(view: OrbitView): number {
 }
 
 /* ------------------------------------------------------------------ */
-/* Pointer input                                                       */
 /* ------------------------------------------------------------------ */
 
 export interface DragState {
@@ -154,11 +131,7 @@ export function dragMove(view: OrbitView, drag: DragState, x: number, y: number,
 
 const clampV = (v: number): number => (v > V_MAX ? V_MAX : v < -V_MAX ? -V_MAX : v);
 
-/**
- * Release: glide only if the pointer was still moving (and motion is allowed),
- * at no more than `V_MAX`. Pass `noGlide` to end without a glide — reduced
- * motion, or a drag ended because its release was lost (capture taken away).
- */
+/** Release: glide only if the pointer was still moving, capped at `V_MAX`. `noGlide` (reduced motion, or a lost release) ends without one. */
 export function endDrag(view: OrbitView, drag: DragState, now: number, noGlide: boolean): void {
   view.dragging = false;
   if (noGlide || now - drag.lastMove > HOLD_STILL_MS) {
@@ -182,12 +155,7 @@ export function resetView(view: OrbitView, now: number): void {
   view.lastInteract = now - RESUME_MS + 400;
 }
 
-/**
- * Advance the camera by `dt` seconds. Dragging: targets come from the pointer.
- * Gliding: the turn keeps its speed and decays. Idle: the gentle sway the
- * welcome screen always had, plus the tilt easing home. Reduced motion: no
- * glide, no sway, no smoothing (the view follows the pointer directly).
- */
+/** Advance the camera by `dt` s. Drag: pointer sets targets. Glide: speed decays. Idle: gentle sway, tilt eases home. Reduced motion: no glide, sway or smoothing. */
 export function stepOrbit(view: OrbitView, now: number, dt: number, reduced: boolean): void {
   if (view.dragging) {
     /* targets set by the pointer */
@@ -217,7 +185,6 @@ export function isSettling(view: OrbitView): boolean {
 }
 
 /* ------------------------------------------------------------------ */
-/* Dot-buffer resolution                                               */
 /* ------------------------------------------------------------------ */
 
 /** Max pixels in the dot buffer; above it the buffer drops a resolution step. */
@@ -227,21 +194,12 @@ export const BUF_STEPS = [1.25, 1, 0.8, 0.65] as const;
 /** Highest buffer pixel ratio, whatever the display's. */
 export const BUF_MAX_RATIO = 1.25;
 
-/**
- * Upper bound of the dot buffer's pixel count for a `wCss`×`hCss` machine box
- * at scale `s` with `pad` buffer px of stamp padding on every side (+1 px per
- * side for rounding the box edges outward).
- */
+/** Upper bound of the dot buffer's pixels for a `wCss`×`hCss` box at scale `s`, with `pad` stamp padding and 1 px rounding per side. */
 export function bufferPixels(wCss: number, hCss: number, s: number, pad: number): number {
   return (wCss * s + 2 * pad + 2) * (hCss * s + 2 * pad + 2);
 }
 
-/**
- * Pick the dot-buffer scale for a `wCss`×`hCss` CSS px machine box: the
- * sharpest step that is ≤ min(devicePixelRatio, 1.25) and keeps the padded
- * buffer (`bufferPixels`, `padFor(step)` = stamp padding at that step) within
- * `BUF_CAP` pixels; the smallest step if none does.
- */
+/** Pick the dot-buffer scale: the sharpest step <= min(devicePixelRatio, 1.25) whose padded buffer fits `BUF_CAP`; the smallest step if none does. */
 export function pickBufferScale(wCss: number, hCss: number, dpr: number, padFor: (s: number) => number = () => 0): number {
   const dMax = Math.min(dpr || 1, BUF_MAX_RATIO);
   for (const s of BUF_STEPS) {

@@ -1,5 +1,4 @@
-# Generates the "WF" test data set used by the workflow scenarios WFA-WFD in docs/testing/MANUAL_TEST_PLAN.md.
-# Usage: python scripts/make-wf-testdata.py C:\WizardTestData\WF   (standard library only; scripts/make-all-testdata.py runs it for you)
+# Generates the "WF" test data (workflows WFA-WFD). Usage: python scripts/make-wf-testdata.py C:\WizardTestData\WF
 import csv, math, random, sys, os
 from datetime import datetime, timedelta
 out = sys.argv[1] if len(sys.argv) > 1 else '.'

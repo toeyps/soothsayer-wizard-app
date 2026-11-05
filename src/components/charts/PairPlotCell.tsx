@@ -10,35 +10,14 @@ import { textWidth } from '../../utils/textMeasure';
 import { sensorPlainLabel, useSensorLookup } from '../sensor/sensorInfo';
 import { CANVAS_BG, CANVAS_BG_HEX } from './pairPlotColors';
 
-/** WebGL can't read CSS custom properties, so the canvas clear colour is a
- *  plain RGBA constant — shared with PairPlotChart's diagonal histograms via
- *  pairPlotColors.ts so both always render the exact same background (not
- *  ScatterChart.tsx's own separate CANVAS_BG, which is a single-canvas
- *  component with no sibling background to stay in sync with). */
+/** Hover colour as plain RGBA: WebGL can't read CSS variables (the canvas clear colour is in pairPlotColors.ts). */
 const POINT_COLOR_HOVER: [number, number, number, number] = [0.925, 0.282, 0.6, 1.0];
 
-/**
- * One scatter / time × value cell of the pair plot. Wraps a single
- * regl-scatterplot instance, exposes axis labels on the outer-edge cells,
- * subscribes to lasso & hover events, and accepts a parent-owned list of
- * brushed clusters so the multi-coloured highlight stays in sync across
- * every cell.
- *
- * Deliberately does NOT read the Highlights tab's time-window list (unlike
- * ScatterChart/LineChart) — Pair Plot's lasso-cluster already covers "mark a
- * group of points I care about", and layering a second, differently-scoped
- * highlighting mechanism on top of it was judged more confusing than useful
- * (an earlier revision added a `sizeBy`-driven emphasis for this; removed
- * per the same call).
- */
+/** One scatter / time x value cell of the pair plot. Ignores Highlights time windows: lasso clusters already mark points. */
 
 type ToolMode = 'pan' | 'lasso';
 
-/**
- * One brushed group of rows. Multiple clusters can coexist — each gets its
- * own colour, count, and is rendered as a separate visual group in every
- * cell via regl-scatterplot's `colorBy: 'valueA'` + `pointColor` palette.
- */
+/** One brushed group of rows; each cluster gets its own colour via `colorBy: 'valueA'` + `pointColor`. */
 export type Cluster = {
     id: string;
     label: string;
@@ -78,35 +57,20 @@ interface PairPlotCellProps {
     showYLabel: boolean;
     /** Active tool — propagated to sc via `mouseMode`. */
     tool: ToolMode;
-    /** Parent-owned list of brushed clusters. Each row may belong to at
-     *  most one cluster. Drives the multi-coloured highlight via the
-     *  regl-scatterplot category-colour pipeline. */
+    /** Parent-owned brushed clusters; a row belongs to at most one. */
     clusters: Cluster[];
-    /** Lasso completed in this cell → bubble the picked row indices up so
-     *  the parent can decide whether to spawn a new cluster (or append). */
+    /** Lasso done in this cell; passes the picked row indices to the parent. */
     onLasso: (rows: number[]) => void;
     onHover: (info: HoverInfo | null) => void;
     /** Default colour for points that DON'T belong to any cluster. */
     pointColor: [number, number, number, number];
-    /** Monotonically-increasing counter. When it bumps higher than the
-     *  last value we acted on, the cell calls `sc.reset()` to snap its
-     *  camera back to the full data extent. Allows a single toolbox
-     *  button to broadcast a reset to every cell at once. */
+    /** Bumping this above the last applied value calls `sc.reset()`, so one button resets every cell. */
     resetTick: number;
-    /** Called with `true` when the user zooms/pans this cell away from its
-     *  full data extent and `false` once it is back (reset, rebuilt, or
-     *  unmounted) — lets the toolbox say "Nothing to reset" honestly. Only
-     *  called on a change. `cellId` is this component INSTANCE's own
-     *  `useId()`, not derived from its sensors: the matrix keys cells by
-     *  index, so one instance can switch sensors while its camera stays
-     *  zoomed, and a sensor-derived id would leave the old id stuck in the
-     *  parent's zoomed set. Read through a ref, so a new callback identity
-     *  never rebuilds the WebGL instance. */
+    /** True when zoomed/panned away from the full extent; fires on change only. `cellId` is the instance's `useId()`, not a sensor id (cells are keyed by index). */
     onZoomChange?: (cellId: string, zoomed: boolean) => void;
 }
 
-/** True when a view domain is no longer the full data extent (zoomed in/out
- *  or panned). The tolerance absorbs float noise from the camera maths. */
+/** True when the view differs from the full extent; the tolerance absorbs float noise. */
 export function isViewAwayFromExtent(
     xDomain: readonly number[], yDomain: readonly number[],
     b: { xLo: number; xHi: number; yLo: number; yHi: number },
@@ -117,17 +81,7 @@ export function isViewAwayFromExtent(
         || Math.abs(yDomain[0] - b.yLo) > tolY || Math.abs(yDomain[1] - b.yHi) > tolY;
 }
 
-/**
- * Padding applied to EVERY cell — even when it doesn't actually render
- * an axis on that side. Uniform reserved space keeps every cell's plot
- * rect the same dimensions across the whole matrix, so the borders line
- * up like graph paper instead of zig-zagging in/out.
- *
- * `top: 14`     leaves room for the column sensor name on the top row.
- * `bottom: 18`  leaves room for the X-axis tick row on the bottom row.
- * `left: 36`    leaves room for Y-axis tick labels when a cell shows them.
- * `right: 4`    minimal breathing room on the right edge.
- */
+/** Padding on every cell, even without an axis, keeps all plot rects the same size so borders line up. */
 const AXIS_PAD = { left: 36, right: 4, top: 14, bottom: 18 };
 
 function fmt(n: number): string {
@@ -163,23 +117,16 @@ function PairPlotCell({
     const canvasRef = useRef<HTMLCanvasElement>(null);
     /** scatter-point index → original CSV row index (skips rows with null values). */
     const pointToRowRef = useRef<number[]>([]);
-    /** row index → scatter-point index. Inverse of pointToRow; used to map
-     *  parent-owned cluster row indices back into local valueA categories. */
+    /** row index -> scatter-point index; inverse of pointToRowRef. */
     const rowToPointRef = useRef<Map<number, number>>(new Map());
-    /** Float32Array of per-point cluster categories (0 = none, 1..N = clusters).
-     *  Kept in a ref so we can rewrite it cheaply on every cluster change
-     *  without going through React's render cycle. */
+    /** Per-point cluster category (0 = none, 1..N); a ref so it can be rewritten without a render. */
     const valueARef = useRef<Float32Array>(new Float32Array(0));
-    /** Last x/y arrays sent to draw(). We need to re-call draw() with the
-     *  same x/y + a fresh `valueA` when clusters change, since regl needs
-     *  the category dim re-uploaded alongside the position buffers. */
+    /** Last x/y sent to draw(); redrawn with a fresh `valueA` on cluster change (regl needs the category dim re-uploaded). */
     const drawDataRef = useRef<{ x: Float32Array; y: Float32Array } | null>(null);
     const dataBoundsRef = useRef<{ xLo: number; xHi: number; yLo: number; yHi: number }>({
         xLo: 0, xHi: 1, yLo: 0, yHi: 1,
     });
-    /** Last resetTick value we've already applied to this cell. Stops the
-     *  reset effect from firing on initial mount (when tick=0) and from
-     *  re-firing if React re-runs the effect for unrelated reasons. */
+    /** Last resetTick applied; stops a reset firing on mount or on unrelated effect re-runs. */
     const lastResetTickRef = useRef(0);
     /** Whether this cell currently reports itself as zoomed/panned. */
     const zoomedRef = useRef(false);
@@ -207,23 +154,12 @@ function PairPlotCell({
     /** The GPU dropped this cell's context: an overlay offers Retry, which rebuilds the instance. */
     const [contextLost, setContextLost] = useState(false);
     const [rebuildNonce, setRebuildNonce] = useState(0);
-    /** WebGL init failure — same guard as ScatterChart: createScatterplot()
-     *  throws synchronously when a context can't be created, and an escaped
-     *  throw here would unmount the entire app (production black-screen).
-     *  The reporter dedupes, so a whole matrix of failing cells surfaces as
-     *  ONE toast instead of N. */
+    /** createScatterplot() throws without a WebGL context; an escaped throw would unmount the app. */
     const [initError, setInitError] = useState<string | null>(null);
-    /** The data effect and the clusters effect both draw in the same commit
-     *  (every mount!), and regl-scatterplot DROPS a draw issued while one is
-     *  in flight ("Ignoring draw call…"). Coalescing keeps only the latest
-     *  requested state and flushes it once the current draw settles. */
+    /** Both effects draw in one commit; regl-scatterplot drops a mid-draw request, so keep only the latest. */
     const { requestDraw, resetDraw } = useCoalescedDraw();
 
-    // Track wrapper size + carve out an inner plot area for the canvas.
-    // Padding is CONSTANT — see AXIS_PAD docstring. Conditional rendering
-    // below decides whether the reserved space actually shows ticks/labels,
-    // but the inner rect stays the same size no matter what so every cell's
-    // frame is identical across the matrix.
+    // Constant padding (see AXIS_PAD) keeps every cell's inner rect the same size.
     useEffect(() => {
         const el = containerRef.current;
         if (!el) return;
@@ -237,12 +173,7 @@ function PairPlotCell({
             });
         };
         update(); // immediate on mount — no debounce delay for the initial layout
-        // Debounced for every resize AFTER that: a split-pane drag fires many
-        // rapid ResizeObserver callbacks, and each one drives a full WebGL
-        // context destroy+recreate below — multiplied by up to MAX_PAIR_PLOT_SENSORS
-        // matrix cells all resizing at once, since every cell owns its own
-        // instance. Waiting for the resize to pause briefly means that cost
-        // is paid once at the end of a drag, not on every intermediate tick.
+        // Debounced: a resize rebuilds a WebGL context in every cell, so pay it once after a drag.
         let debounceTimer: ReturnType<typeof setTimeout> | null = null;
         const ro = new ResizeObserver(() => {
             if (debounceTimer) clearTimeout(debounceTimer);
@@ -266,14 +197,7 @@ function PairPlotCell({
                 canvas: canvasRef.current,
                 width: innerDims.width,
                 height: innerDims.height,
-                // regl-scatterplot defaults aspectRatio to 1 (assumes a
-                // square DATA domain) and letterboxes to preserve it when the
-                // canvas itself isn't square — exactly what a pairplot cell
-                // usually is (wider than tall). Our x/y domains are already
-                // both normalized to [-1, 1] (equal ranges, genuinely square
-                // data), so there's no meaningful shape to preserve; setting
-                // this to the canvas's own ratio makes the plot fill the
-                // whole cell instead of leaving black bars on the sides.
+                // regl-scatterplot letterboxes at aspectRatio 1; use the canvas ratio so the [-1, 1] domains fill the cell.
                 aspectRatio: innerDims.width / innerDims.height,
                 pointSize: 2,
                 pointColor,
@@ -299,10 +223,7 @@ function PairPlotCell({
                 if (r != null) rows.push(r);
             }
             latestRef.current.onLasso(rows);
-            // Drop the lib's transient `select` state immediately — we
-            // visualise clusters via our own category-colour pipeline, so
-            // letting regl hold onto its own highlighted set would just
-            // double-render the most recent cluster.
+            // Drop the lib's `select` state: clusters are drawn by our own colour pipeline and it would double-render the latest one.
             inst.deselect({ preventEvent: true });
         });
         // No 'deselect' subscription — clearing happens via parent state.
@@ -350,8 +271,7 @@ function PairPlotCell({
             latestRef.current.onHover(null);
         });
 
-        // regl-scatterplot draws on its own hidden WebGL canvas and copies to `canvasRef`
-        // (a 2D canvas), so the context events fire only on the hidden one.
+        // regl draws on a hidden WebGL canvas and copies to `canvasRef`, so context events fire only on the hidden one.
         const glCanvas: HTMLCanvasElement | undefined = inst.get?.('renderer')?.canvas;
         const onContextLost = (e: Event) => { e.preventDefault(); setContextLost(true); };
         // A fresh instance, not the old one resumed: it re-uploads the current points.
@@ -380,9 +300,7 @@ function PairPlotCell({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [innerDims.width, innerDims.height, rebuildNonce]);
 
-    // Push fresh data whenever the source rows / chosen sensors / instance
-    // changes. Also (re)builds the row↔point lookups used by the linked
-    // highlight + hover handlers.
+    // Push data when rows, sensors or the instance change; rebuilds the row/point lookups.
     useEffect(() => {
         if (!sc || liveScRef.current !== sc) return;
         const xIdxRaw = sensorX != null ? headers.indexOf(sensorX) : -1;
@@ -393,11 +311,7 @@ function PairPlotCell({
         const xs: number[] = [];
         const ys: number[] = [];
         const orig: number[] = [];
-        // Defensive cap: the Dashboard already feeds each cell a bounded sample,
-        // but if raw data ever reaches here, stride it down so no single cell
-        // pushes a GPU-unsafe point count (would lose the WebGL context →
-        // black cell). `orig` keeps the TRUE row index, so cluster colouring
-        // (valueA) + hover still map back correctly.
+        // Defensive cap: stride down raw data so a cell never exceeds a GPU-safe count. `orig` keeps the true row indices.
         const RENDER_CAP = 100_000;
         const step = data.length > RENDER_CAP ? Math.ceil(data.length / RENDER_CAP) : 1;
         let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
@@ -448,9 +362,7 @@ function PairPlotCell({
         rowToPointRef.current = rowToPoint;
         dataBoundsRef.current = { xLo, xHi, yLo, yHi };
         drawDataRef.current = { x: xArr, y: yArr };
-        // Build category dim aligned to the rendered points using the
-        // CURRENT cluster list. 0 = no cluster (default colour); 1..N =
-        // index into the colour palette built below.
+        // Category dim aligned to rendered points: 0 = no cluster, 1..N = palette index.
         const valueA = new Float32Array(orig.length);
         for (let ci = 0; ci < clusters.length; ci++) {
             const cluster = clusters[ci];
@@ -474,8 +386,7 @@ function PairPlotCell({
         const sameView = was !== null && sameInstance && was.data === data && was.x === sensorX && was.y === sensorY
             && was.time === !!isTimeAxis && was.xLo === xLo && was.xHi === xHi && was.yLo === yLo && was.yHi === yHi;
         if (!sameView) {
-            // The old camera means another region under the new mapping, so the ticks would lie.
-            // A brand-new instance already sits at the default camera.
+            // The old camera maps to another region under the new mapping, so reset it. A new instance is already at the default.
             if (sameInstance) sc.reset();
             setVisibleBounds({ xMin: xLo, xMax: xHi, yMin: yLo, yMax: yHi });
             reportZoomed(false);
@@ -485,8 +396,7 @@ function PairPlotCell({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [sc, data, sensorX, sensorY, isTimeAxis, headers]);
 
-    // Cluster changes → rebuild valueA in-place + re-upload + bump palette.
-    // No need to recompute x/y arrays since the data didn't change.
+    // Cluster change: rebuild valueA in place and re-upload; x/y unchanged.
     useEffect(() => {
         if (!sc || liveScRef.current !== sc) return;
         const draw = drawDataRef.current;
@@ -515,8 +425,7 @@ function PairPlotCell({
         sc.set({ mouseMode: tool === 'lasso' ? 'lasso' : 'panZoom' });
     }, [sc, tool]);
 
-    // Reset broadcast — when the parent's resetTick increments, snap the
-    // camera back to the full extent + clear any visible visible-bounds drift.
+    // Reset broadcast: when the parent's resetTick increments, snap the camera to the full extent.
     useEffect(() => {
         if (!sc) return;
         // Replaced in this commit: the new instance is already at the default camera.

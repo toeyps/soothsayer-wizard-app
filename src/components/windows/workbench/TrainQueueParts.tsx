@@ -23,20 +23,9 @@ import {
 } from '../../../utils/trainQueue';
 import { fgLabel } from '../../../utils/fgLabel';
 
-/*
- * Train sensor / Train all with a queue (DESIGN_SYSTEM §4.1 "Train sensor /
- * Train all"). Presentational parts only:
- * the queue itself is `useTrainQueue` (src/hooks), owned by BuildModelWindow,
- * which trains through the window's own per-model train, one model at a time.
- *
- * Every part here reads the run it is given; none of them owns a timer, so a
- * run's progress re-renders only these parts and the list badges — never the
- * Model fit charts (they are memoised, see ModelFitPage).
- */
+/* Presentational parts of Train sensor / Train all; the queue is `useTrainQueue`, owned by BuildModelWindow. No part owns a timer, so run progress doesn't re-render the memoised Model fit charts. */
 
-/** Kind names as the Workbench tabs and the Train menu show them — "Relation
- *  model", never "Relationship" and never the algorithm's name. Used by the run
- *  strip, the Train-all rows and the close-during-run dialog. */
+/** Kind names as the Workbench shows them: 'Relation model', never 'Relationship' or the algorithm name. */
 export const TRAIN_KIND_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 const KIND_LETTER: Record<ModelKind, string> = { individual: 'I', relationship: 'R', clustering: 'C' };
 
@@ -100,9 +89,6 @@ function Who({ m }: { m: TrainRowModel | undefined }) {
     return <span className="tq-who"><SensorInline tag={m.tag} size="sm" /> · {TRAIN_KIND_LABEL[m.kind]}</span>;
 }
 
-// ---------------------------------------------------------------------------
-// Train all (above the sensor list)
-// ---------------------------------------------------------------------------
 
 export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
     counts: { ready: number; upToDate: number; missing: number };
@@ -134,9 +120,6 @@ export function TrainAllBar({ counts, running, reason, reasonTone, onOpen }: {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Train sensor (detail header)
-// ---------------------------------------------------------------------------
 
 export interface TrainMenuItem {
     key: string;
@@ -150,8 +133,7 @@ export interface TrainMenuItem {
 export interface SensorTrainMenuModel {
     kind: ModelKind;
     plan: TrainPlan;
-    /** The model has a previous train record (`FailureModel.lastTrainedAt`, the same
-     *  field `isModelStale` / the "up to date" rule read as "was trained"). */
+    /** Has a previous train record (`FailureModel.lastTrainedAt`, the field `isModelStale` reads). */
     trainedBefore: boolean;
     /** Its last train (or load) of this session failed. */
     failedLastRun?: boolean;
@@ -171,9 +153,7 @@ const MENU_KIND = TRAIN_KIND_LABEL;
 /** A kind inside a sentence: "the Individual model", "the Relation model". */
 const MENU_KIND_MODEL: Record<ModelKind, string> = { individual: 'Individual model', relationship: 'Relation model', clustering: 'Clustering model' };
 
-/** The small state line under a model's menu row: where the model stands and the
- *  rough time, or why it can't train. "≈ 15 s" is the
- *  Relation model's time; the other kinds print their own (≈ 1 s / ≈ 2 s). */
+/** State line under a model's menu row: where it stands plus rough time, or why it can't train. */
 export function trainMenuStateLine(m: SensorTrainMenuModel): string {
     const p = m.plan;
     if (p.kind === 'missing') return p.reason;
@@ -184,18 +164,7 @@ export function trainMenuStateLine(m: SensorTrainMenuModel): string {
     return `${m.trainedBefore ? 'Settings changed since it was trained' : 'Not trained yet'} · ${time}`;
 }
 
-/**
- * Labels and state lines of the Train sensor ▾ menu. "Re-train" is only said about a
- * model that HAS been trained before:
- *   - all row:   "Train all N models" — "Re-train all N models" only when EVERY model of
- *                the sensor was trained before. A sensor with ONE model has no all row.
- *   - model row: "Individual only" before its first train, "Re-train Individual only"
- *                after; the one model of a single-model sensor reads "Train the
- *                Individual model" / "Re-train the Individual model".
- * Every model row carries its state line (`trainMenuStateLine`). The all row says what
- * it adds to plain Train sensor — the up-to-date models, and that a Complete one becomes
- * Incomplete — and only when there is one; otherwise the rough time.
- */
+/** Labels and state lines of the Train sensor menu. 'Re-train' is said only for a model trained before; 'Re-train all' only when every model of the sensor was; a one-model sensor has no all row. */
 export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): SensorTrainMenuCopy {
     const n = models.length;
     const single = n === 1;
@@ -219,8 +188,7 @@ export function sensorTrainMenuCopy(models: readonly SensorTrainMenuModel[]): Se
 
 export function SensorTrainButton({ label, filled, disabled, title, why, whyTone, onTrain, menu, buttonRef, menuButtonRef }: {
     label: ReactNode;
-    /** Filled (primary) only while it is THE next action — a model of this sensor
-     *  needs training; a ghost otherwise ("at most one filled button on screen"). */
+    /** Filled (primary) only while it is THE next action (a model needs training); otherwise ghost: at most one filled button on screen. */
     filled: boolean;
     disabled: boolean;
     title?: string;
@@ -228,9 +196,7 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
     why: string;
     whyTone: TrainReasonTone;
     onTrain: () => void;
-    /** The ▾ menu (`sensorTrainMenuCopy`): "Train all N models" / "Re-train all N models",
-     *  then "Individual only" / "Re-train Individual only" per model, each with its
-     *  small state line. */
+    /** The ▾ menu from `sensorTrainMenuCopy`, each row with its state line. */
     menu: TrainMenuItem[];
     buttonRef?: Ref<HTMLButtonElement>;
     /** The ▾ button (a sentence that points at the menu focuses and opens it). */
@@ -301,9 +267,6 @@ export function SensorTrainButton({ label, filled, disabled, title, why, whyTone
     );
 }
 
-// ---------------------------------------------------------------------------
-// Run strip (under the Step-1 card) — its own memoised component
-// ---------------------------------------------------------------------------
 
 interface RunStripProps {
     run: TrainRun;
@@ -387,9 +350,6 @@ function RunStripImpl({ run, summary, timeLeftMs, rows, onDetails, onCancel, onD
 /** Re-renders only when the run, its estimate or the rows change (not on every window render). */
 export const RunStrip = memo(RunStripImpl);
 
-// ---------------------------------------------------------------------------
-// Locked settings / queued body / Health score banner
-// ---------------------------------------------------------------------------
 
 /** "Model settings" while the model is queued or training: read-only, with "Remove from run" when queued. */
 export function LockedSettingsHeader({ summary, queued, onRemove }: { summary: string; queued: boolean; onRemove: () => void }) {
@@ -429,8 +389,7 @@ export function QueuedCard({ kind, position, waitSeconds, current }: {
     );
 }
 
-/** Health score page, after a run — ONE line:
- *  "Trained in the run 22:41 · 7 need set points · this is 3 of 7 · Next needing set points ›". */
+/** Health score page banner after a run, e.g. 'Trained in the run 22:41 · 7 need set points · this is 3 of 7'. */
 export function RunSetPointsBanner({ at, inRun, position, onNext, nextDisabled }: {
     at: number;
     /** Models trained in that run that still need set points. */
@@ -458,25 +417,19 @@ export function RunSetPointsBanner({ at, inRun, position, onNext, nextDisabled }
     );
 }
 
-// ---------------------------------------------------------------------------
-// Train all modal: preflight, then the run's details
-// ---------------------------------------------------------------------------
 
 interface RowStatus {
     tone: 'ready' | 'up' | 'cant' | 'now' | 'done' | 'err';
     text: string;
 }
 
-/** A train error as the run's details show it: the app's own wording for a known
- *  code, first line only, capped — never a raw multi-line traceback. The full
- *  text stays in the tooltip. */
+/** A train error for the details: app wording for a known code, first line only, capped at 200 chars. */
 export function shortTrainError(raw: string): string {
     const line = parseHealthError(raw).message.split(/\r?\n/).map(l => l.trim()).find(Boolean) ?? '';
     return line.length > 200 ? `${line.slice(0, 199)}…` : line;
 }
 
-/** A row the run leaves out because it can't train: amber "Skipped", the long
- *  reason on a second line under the row (never squeezed into the status). */
+/** A row the run leaves out: amber 'Skipped'; the long reason goes on a second line, not in the status. */
 const CANT_STATUS: RowStatus = { tone: 'cant', text: 'Skipped' };
 
 function QRow({ m, st, act, err, note }: { m: TrainRowModel; st: RowStatus; act?: ReactNode; err?: string; note?: string }) {
@@ -709,12 +662,8 @@ export function TrainAllModal(props: TrainAllModalProps) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Close while a run is active
-// ---------------------------------------------------------------------------
 
-/** In-window alertdialog. Numbers are live; if the run ends while it is open it
- *  becomes "Run finished — close?" with one Close. "Keep training" is the default. */
+/** Alertdialog with live numbers; turns into 'Run finished — close?' if the run ends while open. Default is 'Keep training'. */
 export function CloseRunDialog({ run, summary, current, onKeep, onStopAndClose, onClose }: {
     run: TrainRun;
     summary: TrainRunSummary;
@@ -728,8 +677,7 @@ export function CloseRunDialog({ run, summary, current, onKeep, onStopAndClose, 
     const finished = run.phase !== 'running';
     // Tab / Shift+Tab stay inside the dialog; the focus goes back where it was on close.
     useModalFocus(dialogRef, true);
-    // ...and the focus opens on the safe choice ("Keep training"; "Close" once the run
-    // has finished) — declared after the trap, so it wins over "first focusable".
+    // Focus opens on the safe choice ('Keep training', or 'Close' once finished); declared after the focus trap so it wins.
     useEffect(() => { keepRef.current?.focus(); }, [finished]);
     useEffect(() => {
         const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.preventDefault(); onKeep(); } };

@@ -1,5 +1,4 @@
-# Generates the timestamp-format test files used by IMP-89..IMP-99 and workflow WFI in docs/testing/MANUAL_TEST_PLAN.md.
-# Usage: python scripts/make-ts-testdata.py C:\WizardTestData\TS   (standard library only; scripts/make-all-testdata.py runs it for you)
+# Generates the timestamp-format test files (IMP-89..99, WFI). Usage: python scripts/make-ts-testdata.py C:\WizardTestData\TS
 #
 # formats/  one file per timestamp shape, each covering its OWN day (288 rows, every 5 minutes) so all of
 #           them can be imported into ONE project together; EXPECTED.txt lists what each file must give.
@@ -34,7 +33,6 @@ def ampm(t, fmt_date):
 def excel_serial(t):
     return f"{(t - datetime(1899, 12, 30)).total_seconds() / 86400:.10f}"
 
-# (file, start, formatter, expected warning in the Import page's yellow box)
 FILES = [
     ('F01_us_month_day.csv', datetime(2026,3,4,12,0), lambda t: f"{t.month}/{t.day}/{t.year} {t.hour}:{t.minute:02d}",
      'Dates in F01_us_month_day.csv read as month/day/year (…)'),
@@ -116,9 +114,7 @@ write(MRG, 'M3_column_twice.csv', ['Timestamp', 'FLOW_A', 'FLOW_A'], [[f"{t:%Y-%
 expected += ['', 'merge/', 'M1_iso + M1_us_ampm: 288 rows (not 576), FLOW_A and FLOW_B both filled on every row; lines: M1_us_ampm read as month/day/year … check the dates, and 288 duplicate timestamp(s) found across files.',
              'M2_part1 + M2_part2: 576 rows, no "Duplicate column" line. CORRECT = 2026/06/02 → 2026/06/03 23:55. KNOWN 2026-10-19: M2_part2 (every row 03/06/2026 = 3 June) is read as 6 March with a "check the dates" line.',
              "M3_column_twice: CORRECT = a Duplicate column 'flow_a' line. KNOWN 2026-10-19: no line when it is the only file, and two FLOW_A columns are kept."]
-# scenario/ (workflow WFI): six months of one machine, exported by three different tools.
-#   Jan–Feb from a historian (`01-Jan-25 12:00 AM`, BOM header), Mar–Apr re-saved by a US Excel
-#   (`3/1/2025 1:05 PM`), May–Jun from a system writing ISO. Motor stopped 2025-03-10..12 (KW = 0).
+# scenario/ (WFI): six months of one machine from three tools (historian, US Excel, ISO); motor stopped 2025-03-10..12 (KW = 0).
 import random
 random.seed(7)
 SCN = os.path.join(out, 'scenario'); os.makedirs(SCN, exist_ok=True)

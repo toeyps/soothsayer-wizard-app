@@ -8,19 +8,12 @@ import type { PeriodCountsState } from '../utils/periodCounts';
 
 afterEach(cleanup);
 
-/*
- * The Scoring periods list of the Running condition modal / a Custom model's
- * settings.
- * SPEC docs/design/handoff/workbench-redesign/README.md §2 "just score it": a
- * scoring period is only start → end — no Normal / Known problem label, no
- * event time, no "From Highlights". §5: one quiet line per period (with Rust's
- * per-period running days), one reason line when invalid, no boxes.
- */
+/* Scoring periods list: start -> end only, one quiet line per period with Rust's running days, one reason line when invalid. */
 
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-06-30 23:50:00' };
 const TRAIN: TimePeriod[] = [{ id: 'p1', start: '2026-01-01T00:00', end: '2026-01-31T23:59' }];
 const t = (id: string, start: string, end: string): TestPeriod => ({ id, start, end });
-/** A period as a workspace saved BEFORE stored it. */
+/** A period carrying the old label, event time and highlight keys. */
 const legacy = (id: string, start: string, end: string, over: Partial<TestPeriod> = {}): TestPeriod =>
     ({ id, start, end, label: 'problem', eventTime: '2026-02-10T08:00', fromHighlight: 'Bearing trip', ...over });
 
@@ -92,7 +85,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect((screen.getByLabelText('Scoring period 1 start') as HTMLInputElement).value).toBe('2026/02/01 00:00');
         expect((screen.getByLabelText('Scoring period 1 end') as HTMLInputElement).value).toBe('2026/02/15 00:00');
         expect(screen.getByTestId('test-days-1').textContent).toBe('14 d');
-        // The removed controls: label buttons, event time, From Highlights.
+        // No label buttons, event time or From Highlights controls.
         expect(row.querySelectorAll('input')).toHaveLength(2);
         // one calendar button per date field, and Remove — nothing else
         expect(within(row).getAllByLabelText('Open date picker')).toHaveLength(2);
@@ -106,8 +99,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(onChange).toHaveBeenLastCalledWith([]);
     });
 
-    // Real-app bug: the scoring date fields had no calendar button (the shared field style hides
-    // the browser's own icon), so a scoring date could only be typed — unlike a train date.
+    // The shared field style hides the browser's date icon, so each scoring date needs its own calendar button.
     it('each date field has a calendar button that opens the 24-hour picker of ITS field', () => {
         setup({ tests: [t('a', '2026-02-01T00:00', '2026-02-15T13:30')] });
         const [calStart, calEnd] = screen.getAllByLabelText('Open date picker');
@@ -127,8 +119,7 @@ describe('TestPeriodsEditor (scoring periods)', () => {
         expect(buttons).toEqual(['Open date picker', 'Open date picker', 'Remove scoring period 1', 'Add scoring period']);
     });
 
-    // A COMPLETE date goes to the parent on change, so
-    // the timeline, the counts and the impact line follow it before Apply can be pressed.
+    // A complete date goes to the parent on change, so the timeline, counts and impact line follow before Apply.
     it('a complete typed date is handed up at once; the blur after it hands nothing up again', () => {
         const onChange = live([t('a', '2026-02-01T00:00', '2026-02-15T00:00')]);
         const end = screen.getByLabelText('Scoring period 1 end');

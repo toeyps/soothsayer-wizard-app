@@ -5,33 +5,9 @@ import { demoteModelsForRecipeChange } from './specialSensorSignature';
 import { withFailureGroupState } from './failureGroupState';
 import { excelRoundCalls } from './formulaTokens';
 
-/**
- * Auto-convert legacy spreadsheet-style `round($A, 2)` on workspace open.
- * The engine's two-value round is `round(step, x)`, so `round($A, 2)`
- * would round the CONSTANT 2 to a multiple of $A; Rust refuses it
- * (`round_excel` — the sensor then has no data). Rust's
- * `convert_legacy_formula` rewrites every such call to the engine form
- * `round($A * 100) / 100`; this module runs it over the stored recipes, and
- * persists the result with the model demotion in ONE workspace write.
- *
- * Flow on open (`DataUploadPage.handleLoadWorkspace`):
- *   1. `convertLegacyFormulaRecipes(recipes, invoke)` -- BEFORE the replay
- *      (pure text, no dataset; once per open, outside the load retry loop);
- *   2. replay the CONVERTED recipes (`replaySpecialSensorRecipes`);
- *   3. `saveLegacyFormulaConversion(id, converted)` (workspaceManager.ts) --
- *      one write: the new formula text + every model trained on a converted
- *      sensor (or on one built on it) back to Incomplete and out of date;
- *   4. hand the Dashboard the WRITTEN state (its recipes and models), never
- *      the state read before step 3 -- the Dashboard's full-overwrite autosave
- *      would otherwise write the old `round($A, 2)` text straight back;
- *   5. show `legacyConversionMessage(...)`.
- * Idempotent: a converted formula has no spreadsheet-order round left, so the
- * next open finds nothing to convert and writes nothing.
- */
+/** Auto-converts legacy spreadsheet-style `round($A, 2)` on workspace open. The engine's two-value round is `round(step, x)`, so that would round the CONSTANT 2 to a multiple of $A; Rust refuses it (`round_excel`). Rust's `convert_legacy_formula` rewrites such calls to `round($A * 100) / 100`. Order on open (`DataUploadPage.handleLoadWorkspace`): convert BEFORE the replay (pure text, once per open); replay the converted recipes; `saveLegacyFormulaConversion` writes new text + demotes models on converted sensors in ONE write; hand the Dashboard the WRITTEN state (its full-overwrite autosave would write the old text back); show `legacyConversionMessage`. Idempotent. */
 
-/** Pre-filter: only a formula with a spreadsheet-order `round(x, n)` call is
- *  sent to Rust. `excelRoundCalls` is the local twin of Rust's own scan, so an
- *  already-converted `round(x * 100) / 100` costs no IPC call on every open. */
+/** Pre-filter: only a formula with a spreadsheet-order `round(x, n)` goes to Rust (`excelRoundCalls` is the local twin of Rust's scan), so a converted formula costs no IPC on open. */
 const mayNeedConversion = (formula: string): boolean => excelRoundCalls(formula).length > 0;
 
 export interface LegacyConversionPass {
@@ -41,9 +17,7 @@ export interface LegacyConversionPass {
     converted: LegacyFormulaConversion[];
 }
 
-/** Ask Rust to convert every stored formula that may hold a spreadsheet-order
- *  round. A failed call (an old backend) leaves that recipe as it is -- the
- *  replay then reports it as before. */
+/** Asks Rust to convert stored formulas that may hold a spreadsheet-order round; a failed call leaves that recipe as is and the replay reports it. */
 export async function convertLegacyFormulaRecipes(
     recipes: SpecialSensorRecipe[] | null | undefined,
     invoker: Invoker,
@@ -81,14 +55,7 @@ export interface LegacyConversionApplied {
     retrain: string[];
 }
 
-/**
- * Pure: `state` (what is on DISK in the write) with each conversion applied
- * and the models trained on the changed sensors demoted -- the updater
- * `saveLegacyFormulaConversion` runs inside `updateWorkspaceData`. A recipe
- * whose text is no longer `from` (edited since it was read) is not touched.
- * `applyIncompleteRule` would demote the same models on its own (a recipe
- * change); doing it here as well yields the count for the notice. Idempotent.
- */
+/** Pure: `state` (what is on DISK in the write) with each conversion applied and models trained on changed sensors demoted; runs inside `updateWorkspaceData` via `saveLegacyFormulaConversion`. A recipe whose text is no longer `from` (edited since read) is untouched. `applyIncompleteRule` would demote the same models; doing it here gives the count for the notice. Idempotent. */
 export function applyLegacyConversion(state: WorkspaceState, conversions: LegacyFormulaConversion[]): LegacyConversionApplied {
     const before = state.specialSensorRecipes;
     if (!Array.isArray(before) || conversions.length === 0) return { state, applied: [], retrain: [] };

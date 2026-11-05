@@ -1,18 +1,10 @@
 import { hexToRgba, rgbaToHex } from './pairPlotColors';
 
-/**
- * Pair Plot lasso clusters — naming and default-colour rules. Pure helpers so
- * the rules are testable without a WebGL cell. Clusters are session-only
- * (never persisted).
- */
+/** Pair Plot lasso clusters: naming and default-colour rules. Pure; clusters are session-only. */
 
 type Rgba = [number, number, number, number];
 
-/** Default cluster colours, in the order new clusters take them. Same hue
- *  order the Pair Plot always used (amber, emerald, fuchsia, rose, sky,
- *  orange, lime, violet), but each one is now the matching swatch of the
- *  shared ColourPicker palette, so opening the picker shows a check on the
- *  current colour instead of jumping to "Custom colour". */
+/** Default cluster colours in the order new clusters take them; each is a swatch of the shared ColourPicker palette. */
 export const CLUSTER_PALETTE_HEX = [
     '#f59e0b', // amber
     '#10b981', // emerald
@@ -29,9 +21,7 @@ export const CLUSTER_PALETTE: readonly Rgba[] = CLUSTER_PALETTE_HEX.map(h => hex
 /** Longest cluster name (characters, after trimming). */
 export const CLUSTER_NAME_MAX = 40;
 
-/** "Cluster N" with the smallest N not already taken. Only names that are
- *  still exactly "Cluster N" count as taken — a renamed cluster frees its
- *  number, and removing "Cluster 1" gives "Cluster 1" back on the next lasso. */
+/** First palette colour no current cluster uses; once all eight are in use it cycles by cluster count. */
 export function nextClusterName(existing: readonly { label: string }[]): string {
     const names = new Set(existing.map(c => c.label));
     let n = 1;

@@ -1,18 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
-/**
- * The ONE resize handle for a list pane next to long sensor names (DESIGN_SYSTEM §4 rule 7).
- * Drag; ← / → one step (Shift ×3); Home = narrowest, End = widest; double-click = the default width.
- * Range: 260 px (or the default, when that is narrower) to 60 % of the host. The width is saved per viewer
- * after every action; a browser with no storage just does not remember it.
- *
- * The parent owns the width and must be `position: relative`, with the pane starting at its left edge:
- *   const [w, setW] = useState(() => readSavedPaneWidth(KEY, 300));
- *   <div style={{ position: 'relative' }}>
- *     <div id="list" style={{ width: w }} />
- *     <PaneResizeHandle width={w} defaultWidth={300} onChange={setW} storageKey={KEY} label="Resize sensor list" controls="list" />
- *   </div>
- */
+/** The one resize handle for a list pane beside long sensor names. Drag; arrows step (Shift x3); Home/End = narrowest/widest; double-click = default. Range 260 px (or the default if narrower) to 60 % of host; width saved per viewer. The parent owns the width and must be `position: relative` with the pane at its left edge. */
 export const PANE_MIN_PX = 260;
 export const PANE_MAX_RATIO = 0.6;
 export const PANE_STEP_PX = 20;
@@ -74,8 +62,7 @@ export function PaneResizeHandle({ width, defaultWidth, onChange, storageKey, la
     const clamp = (w: number) => Math.round(Math.max(min, Math.min(max, w)));
     const now = clamp(width);
 
-    // The window got narrower (or a saved width no longer fits): the pane follows. The saved width stays, and the
-    // pane grows back toward the width it was pulled in from as the window widens, until the user picks a new one.
+    // When the window narrows the pane follows; the saved width stays and the pane grows back toward it until the user picks a new one.
     const pulledFrom = useRef<number | null>(null);
     useEffect(() => {
         if (host <= 0) return;

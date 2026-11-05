@@ -3,11 +3,7 @@ import { formatDateTime24 } from '../utils/dateTime24';
 import { render, screen, fireEvent, act, cleanup, within, waitFor } from '@testing-library/react';
 
 const mockClose = vi.fn().mockResolvedValue(undefined);
-// `onCloseRequested` — the close-flush effect (mirrors Dashboard.test.tsx's
-// own mock of the same Tauri API). `mockCloseRequestedHandler` captures the
-// registered handler so tests can invoke it directly, simulating a native
-// window close (titlebar X / Alt+F4 / OS shutdown) — a path that bypasses
-// the toolbar's own Close button (`handleClose`) entirely.
+// Captures the registered close handler so tests can simulate a native window close (X / Alt+F4).
 let mockCloseRequestedHandler: ((event: { preventDefault: () => void }) => void | Promise<void>) | null = null;
 const mockOnCloseRequested = vi.fn((handler: (event: { preventDefault: () => void }) => void | Promise<void>) => {
     mockCloseRequestedHandler = handler;
@@ -74,20 +70,11 @@ vi.mock('../components/charts/ResponsiveECharts', () => ({
     ),
 }));
 
-// The Workbench's sensor-picker adapter (SensorPickers.tsx) is stubbed with a minimal
-// stand-in - the real shared picker's search / grouping / single-vs-multi behaviour is
-// tested directly in SensorPicker.test.tsx (+ the adapter in SensorPickers.test.tsx).
-// BuildModelWindow's tests only assert its own wiring (props passed in, the callbacks it
-// reacts to). The Fit chart's X selector is the REAL compact picker (ModelFitPage imports
-// it from components/sensor directly) and is driven with helpers/sensorPicker.
+// Stubs the sensor-picker adapter (tested in SensorPicker(s).test.tsx); the Fit chart X selector is the real picker.
 const sensorPickerModalProps: any[] = [];
 const extraTagsSeenByPicker: (readonly string[])[] = [];
 vi.mock('../components/windows/SensorPickers', () => ({
-    // Minimal stand-in for the popup picker — its own search/collapsible-
-    // group/checkbox/single-vs-multi behavior is tested directly against the
-    // real implementation in SensorPickers.test.tsx. Typing a value
-    // and firing change stands in for "open the popup, pick it" in one step,
-    // branching on `single` the same way the real component's trigger does.
+    // Stand-in for the popup picker: typing a value and firing change replaces open-and-pick; branches on `single`.
     SensorPickerModal: (props: any) => {
         sensorPickerModalProps.push(props);
         extraTagsSeenByPicker.push(useContext(SensorSetExtraContext));
@@ -126,8 +113,7 @@ import { openTabStatus } from './helpers/workbenchStatus';
 import { TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQueue';
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
-// jsdom does not load App.css (vitest also stubs `?raw` CSS imports to ''; cwd is the repo root), so layout
-// rules that used to be inline styles are asserted against the stylesheet source itself.
+// jsdom does not load App.css, so layout rules are asserted against the stylesheet source.
 const APP_CSS: string = readFileSync('src/App.css', 'utf-8');
 const cssBlock = (selector: string): string => {
     const esc = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -136,12 +122,9 @@ const cssBlock = (selector: string): string => {
     return m[1];
 };
 
-/** The detail header's sensor-level "▶ Train sensor · n of m" (
- *  items 8 + 9) — it replaced the footer's per-model "▶ Train model" / "↻ Re-train". It
- *  trains every model of the sensor that needs it through the train queue. */
+/** Detail header's sensor-level Train button; trains every model of the sensor that needs it via the queue. */
 const trainSensorBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
-/** The status of the model whose kind tab is open — "Complete" / "Trained" / "Incomplete" — read from the
- *  status words on that tab (there is no footer pill any more: Workbench detail v2 §4). */
+/** Status of the open kind tab, read from its status words. */
 const tabStatus = () => openTabStatus();
 /** The text of the notice line at the bottom of the detail pane, or '' when there is none. */
 const noticeText = () => screen.queryByTestId('wb-notice')?.textContent ?? '';
@@ -163,15 +146,7 @@ function makeModel(overrides: Record<string, any> = {}) {
     };
 }
 
-/** Seeds a model as Trained-and-fresh — `lastTrainedAt` set plus a
- *  `trainedFingerprint` computed the same way the real component does, so
- *  `isModelTrainedFresh` reads true against whatever workspace shape the
- *  test delivers `model` into. `fg` must match the OTHER failureGroupState
- *  fields (`runningConditionFilters`/combine/periods/noneConfirmed) the test
- *  actually delivers, since the fingerprint folds those in too — tests that
- *  don't override the running-condition defaults can rely on the default
- *  shown here (matches `deliverData`'s own fixture normalization: `and`
- *  combine, the one "TAG1 > 0" condition — `RC_ON`). */
+/** Seeds a trained, fresh model; `fg` must match the delivered failureGroupState (the fingerprint includes it). */
 function withTrained(model: Record<string, any>, fg: Record<string, any> = {
     models: [model], runningConditionCombine: 'and',
     runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionFilters: [RC_ON],
@@ -183,17 +158,7 @@ function withTrained(model: Record<string, any>, fg: Record<string, any> = {
     };
 }
 
-/** The default `mockUpdateWorkspaceData` implementation (see `beforeEach`)
- *  always patches the SAME hard-coded, unchanging `prev` snapshot — fine for
- *  tests that only inspect ONE write's return value, but wrong for a test
- *  whose model id/kind doesn't match that hard-coded default AND that then
- *  re-renders off a SECOND write (e.g. trainForQueue's commit-then-train,
- *  two persist calls back to back): each call would independently start
- *  from the same stale snapshot instead of building on the previous write.
- *  This variant threads real state through repeated calls, like the
- *  hand-rolled overrides a few existing tests already use (e.g. "a Complete
- *  model shows Mark incomplete instead" below) — factored out since it is
- *  needed more than once. */
+/** Update mock that threads state through repeated writes; the default always patches the same fixed snapshot. */
 function statefulUpdateMock(models: any[], extra: Record<string, any> = {}) {
     let ws: any = {
         id: 'ws1',
@@ -228,21 +193,13 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
         failureGroupState: { groups: [makeGroup()], models: [makeModel()] },
         ...overrides,
     };
-    // Fixtures read as a CONFIGURED workspace (the one
-    // "TAG1 > 0" condition, `RC_ON`) with the legacy notice already handled, so tests that
-    // are about something else don't trip the running-condition gate or the
-    // hydration write-back. A test about the gate passes the key explicitly
-    // (even as `undefined`), which is respected.
+    // Fixtures default to a configured workspace (RC_ON) with the legacy notice settled; a gate test passes the key explicitly.
     if (ws.failureGroupState) {
         const fg = ws.failureGroupState;
         ws.failureGroupState = {
             ...(!('runningConditionNoneConfirmed' in fg) ? { runningConditionFilters: [RC_ON] } : {}),
             ...(!('rcLegacyNotice' in fg) ? { rcLegacyNotice: null } : {}),
-            // Already-migrated periods, so the periods migration's
-            // write-back doesn't fire in tests about something else.
-            // A train period is required to Train and a scoring
-            // period to Mark complete — default
-            // to having both.
+            // Default to migrated periods with a train and a scoring period (both required to Train / Mark complete).
             ...(!('runningConditionTimePeriods' in fg) ? { runningConditionTimePeriods: ALL_TIME_TRAIN } : {}),
             ...(!('runningConditionTestPeriods' in fg) ? { runningConditionTestPeriods: ONE_TEST } : {}),
             ...fg,
@@ -256,29 +213,20 @@ async function deliverData(overrides: Record<string, any> = {}, payloadOver: Rec
     });
 }
 
-/** Selects the first sensor row shown in the left list (whatever grouping is
- *  active) so the detail pane renders for it — the Workbench's replacement
- *  for the old accordion's "click to open a row". */
 const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-/** Fills the running-condition modal's one line ("Machine is running when
- *  <sensor> is above <value>"); `null` leaves that half as it is. The sensor
- *  goes through the stubbed single picker (an input). */
+/** Fills the running-condition line; `null` leaves that half unchanged. The sensor goes through the stubbed picker input. */
 const setRcLine = (sensor: string | null, value: string | null, root: HTMLElement = screen.getByTestId('rc-one')) => {
     if (sensor !== null) fireEvent.change(root.querySelector('.rs-pick input')!, { target: { value: sensor } });
     if (value !== null) fireEvent.change(within(root).getByLabelText('Running above this value'), { target: { value } });
 };
 /** The modal line's value input. */
 const rcValueInput = (root: HTMLElement = screen.getByTestId('rc-one')) => within(root).getByLabelText('Running above this value') as HTMLInputElement;
-/** The "Model settings" section auto-collapses once a model is fully
- *  configured — open it first when a test needs to reach a
- *  field inside it. A no-op if it's already open (incomplete model). */
+/** Opens Model settings if collapsed; it auto-collapses once the model is fully configured. */
 const openSettings = () => {
     if (!screen.queryByTestId('add-model-form')) fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
 };
 
-/** The default fake Rust of this file: the Train previews + the health preview
- *  (`compute_health_preview`, answered for whatever the request asks). Tests that
- *  override `mockInvoke` fall back to this for every command they do not care about. */
+/** Default fake Rust: Train previews and health preview; tests overriding `mockInvoke` fall back to it. */
 function defaultInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'compute_sensor_stats') {
         return Promise.resolve({ mean: 5, sd: 1, min: 0, max: 10, count: 100, lower1: 4, upper1: 6, lower3: 2, upper3: 8 });
@@ -300,9 +248,7 @@ function defaultInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'count_period_rows') return Promise.resolve(fakePeriodCounts(args));
     return Promise.resolve({});
 }
-/** `count_period_rows` stand-in (the Running-condition settings' per-period counts): every period
- *  holds 1,000 rows; with a condition 800 of them are running (20 d), without one all are (25 d).
- *  The dataset has 5,000 rows. */
+/** `count_period_rows` stand-in: 1,000 rows per period; 800 running with a condition, all without. Dataset has 5,000 rows. */
 function fakePeriodCounts(args: any) {
     const cond = !!args?.filter;
     const periods = ((args?.periods ?? []) as { start?: string | null; end?: string | null }[]).map((p, i) => ({
@@ -322,18 +268,14 @@ function fakePeriodCounts(args: any) {
 }
 /** The `count_period_rows` calls so far: `[periods, filter]` per call. */
 const periodCountCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'count_period_rows').map(c => c[1] as { periods: { start: string | null; end: string | null }[]; filter: unknown; expected_generation: unknown });
-/**
- * User decision 2026-10-14: the Build Model window never says how many data rows are used.
- * The running-condition card prints NO count in any state of `count_period_rows` (counting,
- * counted, failed): no "N rows · x%", no "Counting rows…", no "— rows", no share meter.
- */
+/** The running-condition card prints no row count in any state. */
 const expectCardHasNoRowCount = () => {
     const card = screen.getByTestId('rc-card');
     for (const id of ['rc-card-rows', 'rc-card-pct', 'rc-card-rows-loading', 'rc-card-rows-error']) expect(within(card).queryByTestId(id)).toBeNull();
     expect(card.querySelector('.rcc-meter')).toBeNull();
     expect(card.textContent).not.toMatch(/\d[\d,]*\s*rows?\b|Counting rows|— rows|%/);
 };
-/** The settings' caption has no rows part: no "N of M rows (x%) used for training", no "Counting rows…", no "… to count the rows". */
+/** The caption has no rows part: no 'N of M rows (x%) used for training', 'Counting rows…' or '… to count the rows'. */
 const expectCaptionHasNoRowCount = (root: HTMLElement = document.body) => {
     const cap = within(root).getByTestId('rc-caption');
     expect(within(root).queryByTestId('rc-caption-rows')).toBeNull();
@@ -344,10 +286,7 @@ const healthCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_he
 const checkCalls = () => healthCalls().filter(r => r.max_points === 8 && r.max_scatter_points === 1);
 /** Is this `compute_health_preview` call Mark complete's check (not the page's own preview)? */
 const isCheck = (cmd: string, args?: any) => cmd === 'compute_health_preview' && args?.request?.max_points === 8 && args?.request?.max_scatter_points === 1;
-/** A Relation model whose preview keeps answering NOT_FITTED: the window re-fits it silently ONCE and
- *  only then settles on the "Fit no longer in memory" state. Waits until that board is on screen and
- *  the fake Rust has been quiet for a moment (longer than the preview's debounce), so nothing is
- *  asserted in the moment between the first answer and the re-fit. */
+/** Waits for the NOT_FITTED board after the silent re-fit and for fake Rust to go quiet (beyond the preview debounce). */
 const fitGoneSettled = async (boardId: 'results-not-fitted' | 'health-not-fitted' = 'results-not-fitted') => {
     for (let i = 0; i < 12; i++) {
         await waitFor(() => expect(screen.getByTestId(boardId)).toBeTruthy(), { timeout: 3000 });
@@ -358,14 +297,12 @@ const fitGoneSettled = async (boardId: 'results-not-fitted' | 'health-not-fitted
     throw new Error('the "Fit no longer in memory" state never settled');
 };
 
-/** Health score page (3b-2): `defaultInvoke` + a health preview that FOLLOWS the request's set points
- *  (empty -> `required` issues, filled -> valid with a score). */
+/** `defaultInvoke` plus a health preview that follows the request's set points (empty -> `required` issues, filled -> valid). */
 function healthInvoke(cmd: string, args?: any): Promise<unknown> {
     if (cmd === 'compute_health_preview') return Promise.resolve(makeSetPointAwarePreview(args?.request));
     return defaultInvoke(cmd, args);
 }
-/** `export_model_files` calls: Mark complete writes NO files any more (Export results
- *  does), so every test expects none. */
+/** `export_model_files` calls: Mark complete writes no files (only Export results does), so tests expect none. */
 const exportCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files').map(c => (c[1] as any).request);
 /** Set points that are valid for the Individual fixture (3SD band 2..8): L below 2, H above 8. */
 const VALID_IND = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
@@ -524,8 +461,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(list.getByText('Pump Temp')).toBeTruthy();
         });
 
-        // The row is the stacked SensorLabel; its description line is
-        // the single-line ellipsis (`.sl-desc`), the full name is in the title.
         it('the sensor row is the stacked SensorLabel; the description stays on one line (single-line ellipsis)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
@@ -624,7 +559,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [clu, ind, rel] } });
             const tabs = screen.getAllByRole('tab');
             expect(tabs.map(t => t.querySelector('.f4-tab-l')!.textContent)).toEqual(['Individual', 'Relation model', 'Clustering']);
-            // Workbench redesign §1: ONE state dot per tab (the words are its tooltip) and no text pill at all.
+            // One state dot per tab (the words are its tooltip) and no text pill.
             for (const [i, id] of ['i1', 'r1', 'c1'].entries()) {
                 expect(tabs[i].querySelectorAll('.f4-sdot')).toHaveLength(1);
                 expect(tabs[i].querySelector('.f4-pill')).toBeNull();
@@ -699,8 +634,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
             openSettings();
-            // Predictors are the multi picker's chips + "Add…" (the adapter is
-            // stubbed here; its chips are tested in SensorPicker(s).test.tsx).
             const predictorPicker = sensorPickerModalProps.filter(pr => !pr.single && pr.noun === 'predictors').pop();
             expect(predictorPicker.selected).toEqual(['TAG2']);
             expect(predictorPicker.excluded).toEqual(['TAG1']);
@@ -815,9 +748,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(document.body.textContent).not.toMatch(/Relationship/);
         });
 
-        // A workspace saved earlier holds names the old
-        // suggestion wrote ("X (Relationship)"). They are the user's data and their
-        // export file names — shown and kept exactly as saved, never re-suggested.
+        // Legacy names like "X (Relationship)" are user data and export file names: kept as saved, never re-suggested.
         it('a model saved as "TAG1 (Relationship)" keeps its name: shown as saved, no warning, nothing written; a NEW suggestion skips its twin', async () => {
             render(<BuildModelWindow />);
             await deliverData({
@@ -838,9 +769,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             // opening the model rewrote nothing
             expect(mockUpdateWorkspaceData.mock.calls.length).toBe(writesBefore);
 
-            // Typing the Individual model's name: the suggestion is the NEW wording, and it
-            // steps past the legacy twin a sibling could hold (here the model itself owns
-            // the legacy name, so the plain suggestion is free).
+            // The suggestion uses the new wording and steps past a sibling's legacy name.
             fireEvent.change(nameInput, { target: { value: 'TAG1' } });
             expect(screen.getByTestId('use-suggested-name').textContent).toBe("Use 'TAG1 (Relation model)'");
             // Back to the saved legacy name: not a conflict, Save is not held back by the name.
@@ -860,16 +789,12 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData();
             const readout = screen.queryByText('Pump Pressure (TAG1)', { selector: '.f4-readout span' });
-            // Individual doesn't render a locked readout of its own in Model settings
-            // (its identity IS the detail header) -- Clustering's X does, though:
+            // Individual has no locked readout in Model settings; Clustering's X does.
             expect(readout).toBeNull();
         });
     });
 
-    // Model settings is ONE three-column grid for all three kinds (SPEC
-    // docs/design/handoff/model-settings-layout, 2026-10-12): row 1 is always
-    // Model name · the kind's own setting · Training data; the sensors follow. The DOM is in
-    // that order (so Tab walks the form as it reads); `.bmw-sets-kind` only groups.
+    // Model settings is one three-column grid; DOM order is Model name, the kind's setting, Training data, then sensors.
     describe('Model settings layout: one grid, the same first row in every kind', () => {
         it('Model name has a title attribute (full text on hover) and the shared width class, in every kind', async () => {
             const longName = 'GENERATOR BEARING METAL TEMPERATURE DRIVE END';
@@ -943,7 +868,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             const train = screen.getByText('Training data').closest('.f4-fld')!;
             expect(groups[0].compareDocumentPosition(train) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
             expect(train.compareDocumentPosition(groups[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-            // the predictors take a full row; the old inline flex sizing is gone
+            // the predictors take a full row; no inline flex sizing
             const pred = screen.getByText('Predictor sensors (≥ 1)').closest('.f4-fld') as HTMLElement;
             expect(pred.className).toBe('f4-fld f4-fld--grow');
             expect(pred.getAttribute('style')).toBeNull();
@@ -961,7 +886,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 expect(cssBlock(`.bmw-sets-body .f4-fld > ${control}`), control).toMatch(/height:\s*30px/);
             }
             expect(APP_CSS).toMatch(/@container \(max-width: 780px\) \{\s*\.bmw-sets-body \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}\s*\.bmw-sets-body \.f4-fld--name \{ grid-column: 1 \/ -1; \}/);
-            // the old flex-wrap flow and Clustering's own 4-track grid are gone
+            // no flex-wrap flow and no Clustering-specific grid class
             expect(cssBlock('.bmw-sets-body')).not.toMatch(/flex-wrap/);
             expect(APP_CSS).not.toMatch(/bmw-sets-body--clustering/);
         });
@@ -985,11 +910,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(document.activeElement).toBe(trainSensorBtn());
         });
 
-        // `renderResultsStage` checks `buildBlockReason` (the gate) before
-        // `!m.lastTrainedAt` BY DESIGN ("incomplete config/gate" outranks "never
-        // trained"): while the running condition is not set the user sees "N items
-        // to fix", and once the settings modal's write lands the gate clears and
-        // "Not trained yet" appears immediately.
+        // The gate check runs before `!m.lastTrainedAt` by design: an incomplete config outranks "never trained".
         it('a model stuck on "N items to fix" shows "Not trained yet" the moment the running-condition gate actually clears', async () => {
             let disk: any = { id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionNoneConfirmed: false, runningConditionFilters: [], rcLegacyNotice: null } };
             mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
@@ -1017,8 +938,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(screen.getByTestId('results-placeholder').textContent).toMatch(/Marked complete/);
         });
 
-        // Train sensor never trains an up-to-date Complete model (and is
-        // disabled when nothing else needs training) — only the ▾ menu's "<Kind> only" does.
+        // Train sensor never trains an up-to-date Complete model; only the menu's "<Kind> only" does.
         it('a Complete model with no train record: the board points at the Train sensor ▾ menu (not at the disabled Train sensor), and the link opens it', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel({ status: true })] } });
@@ -1212,17 +1132,14 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(trainSensorBtn().disabled).toBe(false);
             expect(trainSensorBtn().textContent).toBe('▶ Train sensor · 1 of 1');
             expect(screen.getByTestId('footer-status').textContent).toBe('Settings or running condition changed · train again with Train sensor ↑'); // footer message
-            expect(screen.queryByText('↻ Re-train')).toBeNull(); // the per-model footer button is gone
+            expect(screen.queryByText('↻ Re-train')).toBeNull(); // no per-model footer button
             fireEvent.click(trainSensorBtn());
             await flush();
             expect(mockInvoke).toHaveBeenCalledWith('compute_sensor_stats', expect.anything());
         });
 
         it('shows an inline error and re-enables the button when the preview command rejects', async () => {
-            // Targeted rejection (not a blanket mockRejectedValueOnce) since
-            // `useDatasetTimeBounds` also calls `invoke` during mount — a
-            // once-rejection would land on THAT call instead of the Train
-            // click's `compute_sensor_stats`.
+            // Reject only `compute_sensor_stats`: `useDatasetTimeBounds` also invokes on mount, so a once-rejection would hit that.
             mockInvoke.mockImplementation((cmd: string) =>
                 cmd === 'compute_sensor_stats' ? Promise.reject(new Error('stats exploded')) : Promise.resolve({}));
             render(<BuildModelWindow />);
@@ -1256,8 +1173,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [trained] } });
             await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-            // Only the model's silent re-run: the running-condition card counts with
-            // `count_period_rows` (one call), never with `compute_sensor_stats`.
+            // Only the model's re-run uses `compute_sensor_stats`; the card counts via `count_period_rows`.
             expect(mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats')).toHaveLength(1);
             await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
@@ -1586,9 +1502,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 
     describe('Running Condition bar and Edit… modal', () => {
-        /** Tracks a "disk" the same way the real store would, so a hydration
-         *  write-back (e.g. settling `rcLegacyNotice`) is applied to what was
-         *  actually delivered instead of the generic beforeEach default. */
+        /** Tracks a fake disk so a hydration write-back applies to the delivered state. */
         function deliverTracked(fg: Record<string, any>) {
             let disk: any = { id: 'ws1', failureGroupState: fg };
             mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => { disk = patch(disk); return disk; });
@@ -1676,9 +1590,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
     });
 
-    // Multi-project isolation. This window is a singleton that
-    // fetches its data once; with a second project loaded in `main` it could
-    // be left showing (or being fed) the previous project's data.
+    // The window is a singleton fetching data once; it must not show or accept another project's data.
     describe('multi-project isolation', () => {
         async function fire(event: string, payload: any) {
             await act(async () => {
@@ -1867,17 +1779,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(mockClose).toHaveBeenCalledTimes(1);
         });
 
-        // `TimePeriodsEditor`'s date
-        // fields commit to the parent on blur/Enter ONLY (never per keystroke,
-        // see that file's own top comment), so typing a period edit and then
-        // closing the Edit… modal WITHOUT the input separately losing focus
-        // first (e.g. clicking straight from the date field to the X button)
-        // used to discard the keystroke entirely: `setRcFilterOpen(false)`
-        // just unmounted the panel, `onCommit` never ran, `onPeriodsChange`
-        // never fired, nothing was ever tracked in `pendingSaveRef`. These two
-        // tests exercise exactly that "type, don't blur, close" sequence —
-        // the fix is `flushFocusedInput()` (forces the blur synchronously
-        // before the close proceeds), called from both close paths below.
+        // Type a date without blurring, then close: `flushFocusedInput()` must commit it first.
         describe('a Running Condition period edit that never naturally blurs before closing (issue 1 root cause)', () => {
             const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
             function deliverWithPeriod() {
@@ -1891,9 +1793,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 });
             }
 
-            // With the explicit Apply step the half-typed date's
-            // fate is decided by the Apply click (or the discard prompt on X),
-            // not by a silent write on close.
+            // Apply decides a half-typed date's fate, not a silent write on close.
             it('Apply when the write fails: the modal and its draft stay, and the window says it was not saved', async () => {
                 const err = vi.spyOn(console, 'error').mockImplementation(() => {});
                 render(<BuildModelWindow />);
@@ -1931,10 +1831,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
                 });
                 fireEvent.click(screen.getByTestId('rc-card-open'));
                 const endField = screen.getByLabelText('P1 end') as HTMLInputElement;
-                // A real user's mouse click moves focus to the field first —
-                // reproduce that (fireEvent.change alone does not) — then type,
-                // WITHOUT ever separately blurring/pressing Enter before the
-                // very next thing the user does: click Apply.
+                // A real click focuses the field first; type, then click Apply without blurring.
                 endField.focus();
                 fireEvent.change(endField, { target: { value: '2024-02-15T12:00' } });
                 expect(document.activeElement).toBe(endField); // still focused, nothing committed it yet
@@ -2047,9 +1944,6 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
     });
 });
 
-// Custom running-condition editor, Relationship X-axis
-// switcher, Clustering cluster-range slider (mockups
-// NHHcRb7pib9d5wwXqyZEDN + XidcSEavkVnzLvSibRdDzQ, ported into the Workbench).
 describe('Custom running-condition editor (2026-09-30 port)', () => {
     it('switching to Custom seeds from the workspace conditions/periods once, shows the seed note, and Save changes persists the edited fields', async () => {
         const ws = [{ id: 'rcf1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' }];
@@ -2096,10 +1990,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Workspace' }));
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
         fireEvent.click(screen.getByRole('button', { name: 'Custom' }));
-        // The previously-seeded condition is still there (the switch back to
-        // Workspace never discarded it) and, because the draft's own custom
-        // list is no longer empty, this second switch does not re-seed (no
-        // note this time).
+        // Switching back to Workspace keeps the seeded condition, so a second switch does not re-seed.
         expect((within(screen.getByTestId('custom-condition')).getByLabelText('Running above this value') as HTMLInputElement).value).toBe('5');
         expect(screen.queryByTestId('pm-seed-note')).toBeNull();
     });
@@ -2135,8 +2026,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(screen.getByText(/Custom · own running condition · 0 train · 0 scoring/)).toBeTruthy();
     });
 
-    // Workbench redesign §5 "Custom running condition": a reason about the model's OWN running
-    // condition says where to fix it — and, once Model settings is open, points at the field.
+    // A reason about the model's own running condition says where to fix it, and points at the field when settings are open.
     it('own invalid train period: "Fix P1\'s end above" while Model settings is open, "Own running condition: P1 ends before it starts. Fix it in Model settings" once it is closed', async () => {
         const own = makeModel({
             runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON],
@@ -2188,8 +2078,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(screen.getByTestId('build-block-reason').textContent).toBe('P1 ends before it starts.');
     });
 
-    // Workbench redesign §5: the model's own running condition is the SAME panel as the
-    // workspace settings (timeline, one-line rows, caption), with its own period counts.
+    // The model's own panel matches the workspace one, with its own period counts.
     it("the model's own panel: timeline + rows + footnote, its scoring counts asked only while it is on screen, and the highlights re-read when it is shown", async () => {
         const ownCond = { id: 'c1', sensor: 'TAG2', operation: 'greater_than', value1: '7', value2: '' };
         const ownTrain = [{ id: 'o1', start: '2026-02-01T00:00', end: '2026-02-28T23:59' }];
@@ -2201,10 +2090,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
         await flush();
-        // Model settings is closed (nothing to fix). Two counts, ONE each: the running-condition
-        // card (the workspace's train periods) and this model's own TRAIN periods — its running
-        // days feed the amber "below the recommended train time" note on the charts. No scoring
-        // count: only the open panel prints one.
+        // Model settings closed: two counts, the card's and this model's train periods; no scoring count.
         expect(screen.queryByTestId('custom-rc-editor')).toBeNull();
         await waitFor(() => expect(periodCountCalls()).toHaveLength(2));
         await act(async () => { await new Promise(r => setTimeout(r, 400)); });
@@ -2232,7 +2118,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         const editor = within(screen.getByTestId('custom-rc-editor'));
         expect([...editor.getByTestId('custom-rc-panel').children].map(c => c.getAttribute('data-testid')))
             .toEqual(['rc-timeline', 'custom-periods', 'custom-test-periods', 'custom-condition', 'custom-rc-footnote']);
-        // the count arrives as running DAYS only — never as a number of rows (2026-10-14)
+        // Counts show running days only, never rows.
         await waitFor(() => expect(editor.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted'));
         await waitFor(() => expect(editor.getByTestId('rc-caption-train').textContent).toBe('28 d train (about 20 d running time)'));
         expectCaptionHasNoRowCount(screen.getByTestId('custom-rc-editor'));
@@ -2248,10 +2134,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(periodCountCalls()).toHaveLength(3);
     });
 
-    // Model settings — and with them the Custom panel — are
-    // drawn on the Model fit page only. `customPanelOpen` had no page term, so on the Health score
-    // page the panel's counts (`count_period_rows`, a full-dataset scan) kept running and the
-    // highlights were re-read from the workspace file for a panel that is not on screen.
+    // Model settings (and the Custom panel) exist on the Model fit page only: no counts or re-reads on the Health score page.
     it('on the Health score page nothing is counted or re-read for the Custom panel, even with Model settings left open', async () => {
         mockInvoke.mockImplementation(defaultInvoke);
         const own = withTrained(makeModel({
@@ -2280,8 +2163,7 @@ describe('Custom running-condition editor (2026-09-30 port)', () => {
         expect(periodCountCalls()).toHaveLength(counts);
         expect(mockLoadWorkspaceData.mock.calls.length).toBe(loads);
 
-        // back on Model fit (settings still open): the panel is on screen again, so it counts
-        // again (the answers of a closed panel are dropped) and re-reads the highlights once
+        // Back on Model fit the panel counts again and re-reads highlights once.
         fireEvent.click(screen.getByTestId('page-tab-model'));
         await waitFor(() => expect(screen.getByTestId('custom-rc-editor')).toBeTruthy());
         await waitFor(() => expect(periodCountCalls()).toHaveLength(counts + 2));
@@ -2347,8 +2229,7 @@ describe('Relationship X-axis switcher (2026-09-30 port)', () => {
             await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
         });
         await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
-        // The saved X predictor is not among the fitted ones: the request carries NO x_predictor,
-        // so the Fit chart falls back to the first predictor.
+        // A saved X predictor not among the fitted ones sends no x_predictor; the chart falls back to the first predictor.
         expect(healthCalls()[0].x_predictor).toBeUndefined();
         expect(within(screen.getByTestId('chart-card-fit')).getByTestId('echarts-mock').getAttribute('data-x-axis-name')).toBe('Pump Temp · C');
     });
@@ -2437,9 +2318,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(pill(1)).toBe('#2: 8 – 10');
     });
 
-    // The optional criteria sensor must be clearable.
-    // Without one there is only one cluster (Rust rejects n_clusters > 1 with no criteria
-    // sensor), so clearing it drops the count to 1 in the same draft edit.
+    // Clearing the criteria sensor drops the count to 1: Rust rejects n_clusters > 1 without one.
     it('clearing the criteria sensor (None / ×) leaves a valid one-cluster model; Save writes no criteria and no ranges', async () => {
         const clu = makeModel({
             id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', criteriaSensor: 'TAG3',
@@ -2544,11 +2423,8 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(trainSensorBtn().disabled).toBe(false);
     });
 
-    // A NEW Clustering model starts with 1 cluster and no ranges (Dashboard's
-    // default), so it has nothing to fix. Picking a criteria sensor whose stats are still in
-    // flight used to fix the range COUNT over a 0-100 placeholder and never re-divide once the
-    // real [min, max] arrived. That matters for 2+ clusters (the ranges split the rows); for
-    // 1 cluster Rust ignores `cluster_ranges`, so the re-divide only keeps the saved range tidy.
+    // A new Clustering model starts with 1 cluster and no ranges.
+    // Ranges must divide over the real [min, max], not the 0-100 placeholder.
     it('a new default model (1 cluster, no ranges) has nothing to fix; picking a criteria sensor divides over its REAL range once stats land, and the stepper still raises the count', async () => {
         let resolveStats: (v: unknown) => void = () => {};
         mockInvoke.mockImplementation((cmd: string) => {
@@ -2603,9 +2479,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(m).toMatchObject({ criteriaSensor: 'TAG3', numClusters: 1, clusterRanges: [{ min: 500, max: 900 }] });
     });
 
-    // Switching the criteria sensor A -> B used to divide B's ranges over A's
-    // still-loaded [min, max] (the stats reset runs in an effect, after the render that switched)
-    // and lock that result, so B never got its own real range.
+    // Switching criteria sensor A -> B must divide over B's stats, not A's still-loaded range.
     it("switching the criteria sensor A -> B divides over B's real range once B's stats land, never A's", async () => {
         let resolveB: (v: unknown) => void = () => {};
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
@@ -2641,9 +2515,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(m).toMatchObject({ criteriaSensor: 'TAG4', numClusters: 2, clusterRanges: [{ min: 500, max: 700 }, { min: 700, max: 900 }] });
     });
 
-    // While a division is pending ("Loading…"), Save and Train
-    // are blocked. Saving the placeholder ranges used to make them the saved key, so the real
-    // division never happened and a 2+-cluster model on a 500-900 sensor trained empty clusters.
+    // Save and Train are blocked while a division is pending, so placeholder ranges are never saved.
     describe('Save / Train are blocked while a cluster division waits for the criteria stats', () => {
         const STATS_500_900 = { mean: 700, sd: 10, min: 500, max: 900, count: 100, lower1: 690, upper1: 710, lower3: 670, upper3: 730 };
         const saveBtn = () => screen.getByText('Save changes').closest('button') as HTMLButtonElement;
@@ -2765,10 +2637,7 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
         expect(screen.queryByTestId('save-changes')).toBeNull();
     });
 
-    // Two workspaces can hold the same model id. The auto-divide memory
-    // and the criteria stats are keyed by model id, so a window re-pointed from W to another workspace W′
-    // used to read W's last division ("TAG3::3") as c1's own, see W′'s saved "TAG3::2" as a
-    // change, and re-divide W′'s saved uneven ranges into an unprompted "edited" draft.
+    // Model ids repeat across workspaces; auto-divide memory and stats are keyed by id, so a re-point must not reuse them.
     it('re-pointed at another workspace with the same model id: its saved uneven ranges are kept, its own stats are fetched, and no "edited" draft appears', async () => {
         let current = 'ws1';
         mockInvoke.mockImplementation((cmd: string, args?: any) => (cmd === 'compute_sensor_stats' && args?.sensor === 'TAG3'
@@ -2984,21 +2853,13 @@ describe('Cluster-range slider (2026-09-30 port)', () => {
     });
 
     it('App.css gives the Custom running-condition panel its own full-width row of the Model settings grid', () => {
-        expect(() => cssBlock('.rc-scroll')).toThrow(); // the scroll box of the old compact editor is gone
+        expect(() => cssBlock('.rc-scroll')).toThrow(); // no `.rc-scroll` class
         expect(APP_CSS).toMatch(/\.bmw-sets-body \.rc-custom \{ grid-column: 1 \/ -1; \}/);
         expect(cssBlock('.rc-custom')).not.toMatch(/flex:/);
     });
 });
 
-// Running Condition Filter modal: opening it and closing it again — via ANY
-// close path, with ZERO user edits — must not lose the already-saved workspace
-// running condition (periods + value conditions + AND/OR). This block seeds a
-// FULLY CONFIGURED workspace running condition, uses `statefulUpdateMock` so
-// every `updateWorkspaceData` call is applied (via the REAL `patch` function
-// BuildModelWindow builds) against an evolving in-memory "disk" snapshot —
-// exactly like the production read-modify-write — then opens/closes the modal
-// with no edits at all and asserts the on-disk snapshot (and the re-rendered
-// modal) still show the original condition.
+// Opening and closing the modal with no edits, by any close path, must not lose the saved running condition.
 describe('Running Condition Filter modal — open/close with ZERO edits must not lose the saved condition (2026-10-02 repro)', () => {
     const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
     const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
@@ -3034,8 +2895,7 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         expect((screen.getByLabelText('P1 end') as HTMLInputElement).value).toBe(formatDateTime24(seededPeriod.end));
         expect(screen.getByDisplayValue('5')).toBeTruthy();
 
-        // And the durable "disk" snapshot (what a reload / app relaunch would
-        // read back) must still carry it too, whether or not a write fired.
+        // The on-disk snapshot must still carry the condition.
         if (mockUpdateWorkspaceData.mock.calls.length > 0) {
             const lastWrite = await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value;
             expect(lastWrite.failureGroupState.runningConditionTimePeriods).toEqual([seededPeriod]);
@@ -3089,23 +2949,13 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         }
     });
 
-    // Hypothesis 3 (CLAUDE.md / the orchestrating session's brief): a
-    // Dashboard autosave racing in between BuildModelWindow's read-fresh and
-    // write could clobber a just-written running condition with a stale
-    // in-memory mirror. Simulated here directly against the real
-    // `updateWorkspaceData`/`withFailureGroupState` shape: a "Dashboard"
-    // actor holds a STALE mirror (captured before the RC edit) and performs
-    // its own full-slice overwrite a tick after BuildModelWindow's own
-    // persist resolves, using the SAME real `withFailureGroupState` used in
-    // production, against a shared fake "disk".
+    // A Dashboard autosave with a stale mirror races a real RC edit; it re-reads disk first, so the edit must survive.
     it('(d) a stale-mirror Dashboard-style autosave racing in right after a real RC edit does NOT clobber it, when the autosave re-reads disk fresh first (current Dashboard.tsx behavior)', async () => {
         const fg = seedConfiguredWs();
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: fg });
 
-        // Shared fake "disk", exactly like statefulUpdateMock but we also
-        // drive a second, independent "Dashboard" writer against the same
-        // object to simulate the cross-window race.
+        // Shared fake disk, also written by a second "Dashboard" writer to simulate the cross-window race.
         let disk: any = { id: 'ws1', failureGroupState: { ...fg } };
         mockUpdateWorkspaceData.mockImplementation(async (_id: string, patch: (s: any) => any) => {
             disk = patch(disk);
@@ -3119,62 +2969,16 @@ describe('Running Condition Filter modal — open/close with ZERO edits must not
         fireEvent.click(screen.getByTestId('rc-apply')); // Edits only land on Apply
         await flush();
 
-        // "Dashboard" (stale mirror captured BEFORE the edit above) now runs
-        // its autosave, re-reading disk fresh first — current production
-        // behavior in Dashboard.tsx's autosave effect (loadWorkspaceData
-        // right before the write). This must see the fresh combine, not the
-        // stale '5'.
+        // The Dashboard autosave re-reads disk, so it sees the new value, not the stale '5'.
         const freshFromDisk = disk.failureGroupState;
         expect(freshFromDisk.runningConditionFilters[0].value1).toBe('9'); // the real edit landed
         expect(freshFromDisk.runningConditionTimePeriods).toEqual([seededPeriod]); // untouched field survived
     });
 
-    // `BuildModelWindow` mounts
-    // under React.StrictMode in production (src/main.tsx) — every effect on
-    // this window's OWN first mount runs twice (mount -> cleanup -> mount) —
-    // and separately, Dashboard's `spawnBuildModel` re-sends `build-model-data`
-    // every time "Build Model" is clicked while the window is already open
-    // (re-pointing it, not just focusing it — see `Dashboard.tsx`). Either
-    // path can start a SECOND hydration pass's `loadWorkspaceData()` call
-    // while THIS window's own `persistRunningCondition` write (from the RC
-    // modal) is still in flight. Before this fix, `loadWorkspaceData` was a
-    // bare, unqueued read — not serialized against this window's own
-    // `updateWorkspaceData` writes the way `updateWorkspaceData`'s OWN
-    // internal read already was. A re-hydration whose read started before
-    // the edit but resolved after the edit's write landed would read
-    // pre-edit data and `applyFg` it straight over the just-saved local
-    // state, reverting the ON-SCREEN value back to the old one — even
-    // though the write itself had already landed correctly on disk. This
-    // is exactly what repeated user reports described ("regardless of how I
-    // close it, the value doesn't stay") and precisely why it looked like
-    // total data loss rather than a timing issue: from the user's side there
-    // is no way to tell "the edit never saved" apart from "the edit saved,
-    // then something reverted the display" — both look like the setting
-    // vanished the moment they look again.
-    //
-    // Confirmed with a real repro against this component with
-    // `workspaceManager` mocked out exactly the way it still is in this
-    // file (the SAME scenario below reliably reproduced the revert before
-    // `src/workspaceManager.ts`'s `loadWorkspaceData` was changed to route
-    // through the same `enqueue` queue `updateWorkspaceData` already used —
-    // see that file's own comment on both functions). Because this test
-    // file mocks `../workspaceManager` entirely, it cannot exercise the
-    // real queue the fix lives in; the regression test that actually proves
-    // the fix is `src/__tests__/workspaceManager.test.ts`'s "a
-    // `loadWorkspaceData` call started before an `updateWorkspaceData`
-    // write landed must not resolve with pre-write data" — that test goes
-    // red without the fix and green with it. This comment stays here as
-    // the pointer from BuildModelWindow's own test file to where the real
-    // coverage lives, since this is where the bug was actually found and
-    // where `BuildModelWindow.tsx`'s own hydration code (the `applyFg` call
-    // this bug clobbers) lives.
+    // Re-hydration must not read pre-edit data over a just-saved edit; the real queue is tested in workspaceManager.test.ts.
 });
 
-// Running Condition Filter modal — explicit Apply: the modal edits a LOCAL
-// DRAFT of all four workspace fields and only Apply writes (ONE
-// `persistRunningCondition` call) — same mental model as the Dashboard Filter
-// tab's "Apply filter". Persisted values (the card, the build gate, every
-// per-model Workspace mode) never see a dirty draft.
+// The modal edits a local draft; only Apply writes (one `persistRunningCondition` call).
 describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)', () => {
     const seededPeriod = { id: 'p1', start: '2024-01-01T00:00', end: '2024-01-31T23:59' };
     const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
@@ -3233,9 +3037,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(screen.queryByTestId('rc-impact')).toBeNull();
     });
 
-    // `persist` had the re-point guard, `persistRunningCondition` did
-    // not — an Apply whose write resolved after the window was re-pointed put the OLD workspace's
-    // slice into the new workspace's state (and broadcast it from this window).
+    // An Apply landing after a re-point must not put the old slice on screen or broadcast it.
     it('an Apply whose write lands after the window was re-pointed at another workspace never puts the old slice on screen, nor broadcasts it', async () => {
         const fg = fgSeed();
         render(<BuildModelWindow />);
@@ -3276,9 +3078,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(fgChangedEmits()).toHaveLength(0);
     });
 
-    // With "Only when running" and no complete condition the count
-    // is of EVERY row (an incomplete condition is not sent): that answer is not the
-    // condition's, so it is not read — no running time, while the header pill says "Required".
+    // With no complete condition the count covers every row, so it is not read and no running time is claimed.
     it('a half-filled line (no value yet): the caption claims no running time — no "100%", no running days on the rows, nothing about rows', async () => {
         // the condition row has no value yet: the workspace is "not set", so the modal opens by itself
         render(<BuildModelWindow />);
@@ -3302,8 +3102,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 
     describe('change warnings: the impact line before Apply, the notice after it (workbench redesign §5)', () => {
-        /** A real workspace: a trained model, a Complete model, a Complete model on its OWN (Custom)
-         *  running condition and an untrained one — train records computed against this very state. */
+        /** Real workspace: trained, Complete, Custom-condition Complete and untrained models, with matching train records. */
         const impactFg = () => {
             const base = {
                 runningConditionNoneConfirmed: false,
@@ -3379,10 +3178,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
             expect(screen.getByTestId('rc-apply-block').textContent).toBe('Fix P1 before applying');
         });
 
-        // A date typed or picked in a period row used to
-        // live in the editor until blur — so there was NO impact line, the timeline and the
-        // counts were stale, yet Apply was enabled and ONE click committed + persisted (a
-        // Complete model was demoted with the notice only afterwards).
+        // A typed date, before blur, must update the impact line and timeline; Apply is enabled only with the impact line shown.
         it('a typed date, no blur: the impact line and the timeline follow at once — Apply is enabled only with its impact line on screen, then one click applies it', async () => {
             await openModal(impactFg());
             const end = dlg().getByLabelText('P1 end');
@@ -3452,9 +3248,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
             expect(written.runningConditionTimePeriods).toEqual([seededPeriod]); // the end did NOT become "End of data"
         });
 
-        // A real datetime-local reports '' as soon as ONE
-        // segment is cleared, and '' is a valid value on P1's start ("Start of data") — the same
-        // Apply click (its blur) used to persist the cleared field as an OPEN bound.
+        // A cleared datetime-local reports ''; Apply must not persist that as an open bound on P1 start.
         it('P1 start cleared in the focused field, then Apply: the bound is not opened (the date comes back); the × is the only way to open it', async () => {
             await openModal(impactFg());
             const start = dlg().getByLabelText('P1 start') as HTMLInputElement;
@@ -3579,7 +3373,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
         expect(writes()).toBe(1);
         const written = (await mockUpdateWorkspaceData.mock.results[0].value).failureGroupState;
         expect(written.runningConditionFilters).toEqual([{ ...seededFilter, value1: '9' }]);
-        expect(written.runningConditionCombine).toBe('or'); // an old file's value is left alone (one condition: it no longer matters)
+        expect(written.runningConditionCombine).toBe('or'); // the saved combine value is left unchanged
         expect(written.runningConditionTimePeriods).toEqual([seededPeriod]);
         expect(written.runningConditionNoneConfirmed).toBe(false);
         expect(fgChangedEmits()).toHaveLength(1);
@@ -3692,13 +3486,7 @@ describe('Running Condition Filter modal — draft + explicit Apply (2026-10-03)
     });
 });
 
-// The Step-1 card
-// (replaces the one-line rcbar), the redesigned settings modal and its live
-// per-period counts (`count_period_rows`, of the DRAFT). The card asks
-// `count_period_rows` too (ONE call for the persisted condition) — for its
-// "nothing to train on" verdict only: since 2026-10-14 neither the card nor the
-// modal prints a number of rows. Nothing here counts through `compute_sensor_stats`.
-// The draft / Apply guarantees themselves are tested in the describe above.
+// Card, settings modal and per-period counts (`count_period_rows`) of the draft; neither prints a row count.
 describe('Running condition Step 1 — header, card, settings modal preview (2026-10-03)', () => {
     const periods = [
         { id: 'p1', start: '2026-01-01T00:00', end: '2026-03-31T23:59' },
@@ -3714,8 +3502,6 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
     const statsCalls = () => mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats').map(c => c[1] as any);
     const state = () => screen.getByTestId('rc-card').getAttribute('data-state');
 
-    // The 5-step progress bar in the window header was removed at the
-    // user's request (building goes back and forth; a linear progress did not fit).
     describe('window header (no step bar)', () => {
         it('shows only the title and Close — no step bar — while the Step-1 card stays', async () => {
             render(<BuildModelWindow />);
@@ -3756,8 +3542,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card-test').textContent).toBe('Scoring 1 period');
             expect(screen.getByTestId('rc-card-cond').textContent).toBe('Running when Pump PressureTAG1 is above 5 bar');
             expect(screen.getByTestId('rc-card').textContent).not.toMatch(/Step\s*1/i);
-            // Rust's `count_period_rows` of the persisted condition is asked (2 periods x 800 running
-            // rows of 5,000) and settles — the line prints none of it ("1,600 rows · 32%" is gone).
+            // `count_period_rows` is asked for the persisted condition (2 periods x 800 running rows) but nothing is printed.
             await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await flush();
             expectCardHasNoRowCount();
@@ -3775,15 +3560,13 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--ok');
         });
 
-        // The card and the modal read ONE source (`count_period_rows`) for the applied condition —
-        // nothing goes through `compute_sensor_stats` — and since 2026-10-14 NEITHER prints its
-        // rows: the card says nothing, the modal's caption gives the running days only.
+        // Card and modal read one source, `count_period_rows`; the card says nothing and the modal gives running days only.
         it('the card and the settings modal count the applied condition from one source (count_period_rows) and neither prints a number of rows', async () => {
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: setFg() });
             await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await flush();
-            expect(statsCalls()).toEqual([]); // nothing is counted through compute_sensor_stats any more
+            expect(statsCalls()).toEqual([]); // nothing is counted through compute_sensor_stats
             expectCardHasNoRowCount();
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await waitFor(() => expect(screen.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted'));
@@ -3799,15 +3582,14 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
                 ? Promise.resolve({ min: '2025-01-01 00:00:00', max: '2026-07-31 23:50:00' })
                 : cmd === 'compute_sensor_stats' ? Promise.resolve({ count: 100 }) : Promise.resolve({});
             mockInvoke.mockImplementation(impl);
-            // The suite's saved 2024 scoring period lies OUTSIDE this test's data
-            // (2025-01 … 2026-07): a saved period only warns, it must not block this Apply.
+            // A saved 2024 scoring period outside the data only warns; it must not block Apply.
             const fg = setFg();
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: fg });
             statefulUpdateMock(fg.models, fg);
             await flush();
             const cardCov = () => within(screen.getByTestId('rc-card')).getByTestId('period-coverage');
-            // The one-line card carries no strip (2026-10-11) — it is in the Details view.
+            // The one-line card has no strip; it is in the Details view.
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(cardCov().querySelectorAll('.f4-strip i')).toHaveLength(2);
@@ -3822,7 +3604,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             fireEvent.click(screen.getByTestId('rc-card-open'));
             await flush();
             const dlg = within(screen.getByRole('dialog', { name: 'Running condition' }));
-            // the modal has its own timeline hero (no coverage strip inside it any more)
+            // the modal has its own timeline hero, no coverage strip inside it
             expect(dlg.queryByTestId('period-coverage')).toBeNull();
             const modalDays = () => dlg.getByTestId('rc-caption-train').textContent;
             const modalBefore = modalDays();
@@ -3846,8 +3628,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await waitFor(() => expect(periodCountCalls()).toHaveLength(1));
             await flush();
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
-            // …and with no count to print either, the Details view's right column is EMPTY
-            // (`.rcc-use:empty` hides it — no blank gap where the rows-used block was).
+            // With no count to print, the Details right column is empty (`.rcc-use:empty` hides it).
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(within(screen.getByTestId('rc-card')).queryByTestId('period-coverage')).toBeNull();
             expect(screen.getByTestId('rc-card-use').childNodes).toHaveLength(0);
@@ -3933,8 +3714,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(screen.getByTestId('rc-card').className).toContain('rcc-card--req');
             expect(screen.getByTestId('rc-card').textContent).toContain('Set the running condition');
             expect(screen.getByTestId('rc-card-open').textContent).toBe('Set running condition →');
-            // the card asks nothing while unset: the ONE count is the auto-opened modal's own
-            // (its scoring period — this workspace has no train period yet)
+            // While unset the card asks nothing; the one count is the auto-opened modal's own (scoring period).
             await act(async () => { await new Promise(r => setTimeout(r, 50)); });
             expect(periodCountCalls().map(c => c.periods)).toEqual([ONE_TEST.map(t => ({ start: t.start, end: t.end }))]);
             expect(statsCalls()).toHaveLength(0);
@@ -3976,8 +3756,8 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(notice.textContent).toMatch(/taken from the export’s running status line/);
             expect(notice.textContent).not.toMatch(/Models/); // nothing was set back to Incomplete
             expect(screen.queryByTestId('rc-legacy-banner')).toBeNull();
-            expect(screen.queryByTestId('rc-blocked-summary')).toBeNull(); // the blocked-models line is gone (workbench redesign)
-            // ...and the old one-line bar is gone
+            expect(screen.queryByTestId('rc-blocked-summary')).toBeNull(); // no blocked-models line
+            // no one-line bar
             expect(document.querySelector('.bmw-rcbar')).toBeNull();
             expect(screen.queryByText('RUNNING CONDITION')).toBeNull();
         });
@@ -4025,13 +3805,11 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await flush();
         }
 
-        /** The caption's train part — "N d train (about M d running time)". The running DAYS are all
-         *  the settings print of a count: there is no rows part (user decision 2026-10-14). */
+        /** Caption's train part: running days only, no rows. */
         const caption = () => screen.getByTestId('rc-caption-train').textContent ?? '';
         /** "M" of "(about M d running time)", or null while no running time is claimed. */
         const runningTime = () => caption().match(/\(about (.+) d running time\)$/)?.[1] ?? null;
-        /** The running-condition card's own count of the PERSISTED condition: one call, made
-         *  when the window loads (before the modal opens). Everything after it is the modal's. */
+        /** The card's own count of the persisted condition: one call on window load, before the modal opens. */
         const CARD = 1;
         /** `count_period_rows` held / answered per condition value. */
         const countsWith = (running: (value1: number | undefined) => number | Promise<unknown> | Error) =>
@@ -4054,12 +3832,12 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(dlg.getByText('Default for every model · a model can use its own on its settings (Custom)')).toBeTruthy();
             expect([...dialog.querySelectorAll('.rcx-sec-h b')].map(b => b.textContent)).toEqual(['Train periods', 'Scoring periods', 'When the machine is running']);
             expect(dlg.getByTestId('rc-timeline')).toBeTruthy();
-            // set: no "N conditions" / "No condition" pill any more (only Required while it is not set)
+            // set: no "N conditions" / "No condition" pill (only Required while it is not set)
             expect(dlg.queryByTestId('rc-count-pill')).toBeNull();
             expect(dlg.queryByTestId('rc-required-pill')).toBeNull();
             expect(dlg.getByTestId('rc-one-note').textContent).toBe('At or below 5 bar the machine counts as stopped — those rows are left out, and the export writes the same line as the machine’s running status.');
             expect(dlg.getAllByTestId(/^period-row-/)).toHaveLength(2);
-            // gone with the redesign: the right-hand column, the numbered steps, the callouts
+            // not rendered: the right-hand column, the numbered steps, the callouts
             expect(dlg.queryByTestId('rc-preview')).toBeNull();
             expect(dialog.textContent).not.toMatch(/Data used for training|Which time/);
             expect(dialog.querySelector('.tpe-callout, .rcm-preview, .rcm-num')).toBeNull();
@@ -4124,8 +3902,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             expect(periodCountCalls()[CARD + 2].periods).toHaveLength(1);
         });
 
-        // A typed date reaches the draft on change — but the count
-        // stays debounced: several keystrokes that each give a complete date are ONE count.
+        // Typed dates reach the draft on change, but counting is debounced: several complete dates are one count.
         it('typing a date key by key (each key a complete date) counts ONCE for the final date, not per keystroke', async () => {
             await open();
             await waitFor(() => expect(periodCountCalls()).toHaveLength(CARD + 2));
@@ -4225,9 +4002,7 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
             await flush();
             fireEvent.click(screen.getByTestId('rc-card-details'));
             expect(screen.getByTestId('rc-card-cond-chip').textContent).toContain('is above 9');
-            // ONE new count for the newly persisted condition (the modal never counted "> 9": Apply
-            // came before its debounce), and the optimistic mirror + the write's confirmation are
-            // one settled state — not two calls
+            // One new count for the persisted condition; the optimistic mirror and the write's confirmation are one settled state.
             await waitFor(() => expect(periodCountCalls().filter(c => (c.filter as any)?.value_filters?.[0]?.value1 === 9)).toHaveLength(1), { timeout: 3000 });
             await act(async () => { await new Promise(r => setTimeout(r, 450)); });
             expect(periodCountCalls().filter(c => (c.filter as any)?.value_filters?.[0]?.value1 === 9)).toHaveLength(1);
@@ -4339,18 +4114,14 @@ describe('Running condition Step 1 — header, card, settings modal preview (202
         expect(cssBlock('.rcm-per--bad')).toMatch(/border-left-color:\s*var\(--danger\)/);
         expect(cssBlock('.rcm-per--bad')).not.toMatch(/background/);
         for (const gone of ['.bmw-rcbar', '.f4-rc', '.f4-rc-h', '.f4-prow', '.wb2-steps', '.wb2-stp', '.wb2-sn', '.wb2-sline', '.rcm-preview', '.rcm-mcard', '.rcm-step', '.tpe-callout', '.rcm-sentence',
-            // the multi-condition editor and the separate running-status line (2026-10-26)
+            // Selectors of the multi-condition editor and the running-status line do not exist.
             '.rcm-cond', '.rcm-joinbtn', '.rcm-ops', '.rcx-radio', '.rs-line', '.rs-note', '.rcc-andor']) {
             expect(() => cssBlock(gone), gone).toThrow();
         }
     });
 });
 
-// "Incomplete immediately" + the
-// Relationship train's cached-fit key. The rule itself is tested in
-// incompleteRule.test.ts / workspaceManager.test.ts; these pin that THIS
-// window's own writers apply it (the mocked `updateWorkspaceData` here never
-// runs workspaceManager's central guard) and what its UI shows afterwards.
+// Pins that this window's writers apply the incomplete rule (the mocked `updateWorkspaceData` skips workspaceManager's guard).
 describe('Incomplete immediately + Relationship fit cache key (health score phase 3a)', () => {
     const SP = { kind: 'relationship', residualAt80Lower: -1.5, residualAt80Upper: 1.5, residualAt0Lower: -3, residualAt0Upper: 3 };
     const relComplete = () => withTrained(makeModel({
@@ -4437,8 +4208,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
     });
 
-    // The recipes come from the workspace FILE (never a payload);
-    // a special sensor the model was trained on whose formula changed since makes it stale.
+    // Recipes come from the workspace file, never a payload; a changed formula on a trained-on special sensor makes it stale.
     it('READ side: a Complete model trained on a special sensor whose formula changed since is stale (recipes read from disk)', async () => {
         const fresh = withTrained(makeModel({ id: 'sp', status: true, targetSensor: 'TAG1' }));
         const trainedFormulas = { tag1: 'sig-at-train' };
@@ -4522,10 +4292,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
             expect(screen.getByTestId('sensor-kind-badge-dot-sp').className).not.toMatch(/f4-kb-dot--complete/);
         });
 
-        // The reported bug: Repair -> the Dashboard writes the demotion and broadcasts -> this
-        // window reads disk BEFORE the autosave writes the new recipe -> no later broadcast ->
-        // a freshly trained model showed "Settings changed -- re-train" forever. The Train's own
-        // write result now carries the recipes it stamped against, and this window adopts them.
+        // Train's write result carries the stamped recipes; this window adopts them, so a fresh model is not stale after Repair.
         for (const [label, diskRecipes] of [
             ['Repair (the trained-on sensor gets a new formula)', [{ ...R1[0], formula: '$RAW * 5' }]],
             ['an unused sensor edited', [...R1, { kind: 'formula' as const, tag: 'TAG3', formula: '$RAW + 2' }]],
@@ -4609,28 +4376,20 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
     });
 });
 
-// The Workbench's two pages per model.
-// Shell (page switch, list hide/show, dots, stale banner, overlay — the header step bar was removed) and
-// the Model fit page wired to `useHealthPreview` / the shared Sub-models modal.
-// The pure chart builders and the presentational pieces have their own files
-// (healthCharts.test.ts, WorkbenchShell.test.tsx, ModelFitPage.test.tsx,
-// SubModelsModal.test.tsx); this block pins the WIRING inside the window.
+// Wiring of the shell and Model fit page to `useHealthPreview` and the Sub-models modal.
 describe('Workbench two pages — shell + Model fit page (health score 3b-1)', () => {
     const REL = (over: Record<string, any> = {}) =>
         makeModel({ id: 'r1', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG2', 'TAG3'], relStiffness: 10_000, ...over });
     const trainedRel = (over: Record<string, any> = {}) => withTrained(REL(over));
     const chartsReady = () => waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
     const mount = async (models: any[], extraFg: Record<string, any> = {}, payload: Record<string, any> = {}) => {
-        // Writes (the first-open set-point snapshot of an Individual model, ...) must build on THESE
-        // models, not on the file-wide default snapshot of `beforeEach`.
+        // Writes must build on these models, not on `beforeEach`'s default snapshot.
         statefulUpdateMock(models, extraFg);
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models, ...extraFg } }, payload);
     };
 
-    // Workbench detail v2 §3: the two pages of a model are a tab row under the kind tabs —
-    // "① Model fit" / "② Health score". (The header's segmented "Model fit | Health score"
-    // switch stays removed, and there is no "Next: Health score →" either: tab ② is the one door.)
+    // The two pages are a tab row under the kind tabs; tab 2 is the only door to Health score.
     describe('the two pages are a tab row under the kind tabs (no page switch in the header)', () => {
         const pageTabs = () => screen.getByTestId('page-tabs');
         const tabModel = () => screen.getByTestId('page-tab-model');
@@ -4663,7 +4422,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(tabHealth().getAttribute('aria-current')).toBeNull();
             expect(tabHealth().getAttribute('aria-disabled')).toBeNull();
             expect(tabHealth().className).toBe('wb3-page');
-            // the old header switch is not back
+            // no header page switch
             expect(screen.queryByTestId('page-switch')).toBeNull();
             expect(screen.queryByRole('group', { name: 'Model pages' })).toBeNull();
         });
@@ -4692,7 +4451,6 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('next-health-score')).toBeNull();
         });
 
-        // "Next: Health score →" was removed (2026-10-14): it went to the same place as tab ②.
         it.each([
             ['never trained', () => [makeModel()]],
             ['stale', () => [{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]],
@@ -4784,8 +4542,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             });
         });
 
-        // A closed ②: aria-disabled (never `disabled` — it stays focusable), its REASON in place of
-        // the caption, and a click that does nothing. The reasons are `healthPageBlock`'s own strings.
+        // A closed tab 2 is aria-disabled (stays focusable), shows its reason instead of the caption, and ignores clicks.
         it.each([
             ['Train the model first', () => [makeModel()]],
             ['Re-train first', () => [{ ...withTrained(makeModel()), trainedFingerprint: 'old' }]],
@@ -4900,8 +4657,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('health-page')).toBeNull(); // the Relationship model is still on Model fit
             fireEvent.click(screen.getByRole('tab', { name: /Individual/ }));
             expect(screen.getByTestId('health-page')).toBeTruthy(); // ...and Individual kept its page
-            // Another window changes a training input of the Relationship model: it turns stale, so
-            // its page falls back to Model fit (the stored choice is not erased, just not shown).
+            // Another window changing a training input makes the model stale, so the page falls back to Model fit.
             fireEvent.click(screen.getByRole('tab', { name: /Relation model/ }));
             // Tab ② opens once the model's fit is on screen (it is closed while the fit loads).
             await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull());
@@ -4992,8 +4748,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.getByLabelText('Search sensors')).toBeTruthy();
             fireEvent.click(screen.getByTitle('Hide sensor list'));
             expect(screen.queryByLabelText('Search sensors')).toBeNull();
-            // Regression: the grid must be ONE column once the list is gone, else the
-            // detail pane lands in the old 0px track and disappears.
+            // The grid must be one column once the list is hidden, or the detail pane lands in a 0px track.
             const grid = document.querySelector('.bmw-wb') as HTMLElement;
             expect(grid.style.gridTemplateColumns).toBe('minmax(0,1fr)');
             expect(grid.className).toContain('bmw-wb--nolist');
@@ -5060,8 +4815,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
     });
 
     describe('stale banner + "Out of date" overlay', () => {
-        // SPEC workbench-redesign §6: the banner has NO button of its own — its sentence links
-        // to the header's Train sensor, the one place to train.
+        // The banner has no button; its sentence links to the header's Train sensor.
         it('shows the banner only while stale: the whole sentence, a "Train sensor ↑" link that focuses Train sensor — which trains the model', async () => {
             const stale = { ...withTrained(makeModel()), trainedFingerprint: 'old' };
             await mount([stale]);
@@ -5166,9 +4920,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(screen.queryByTestId('chart-overlay-ts')).toBeNull();
         });
 
-        // SPEC §4 NOT_FITTED: no in-pane Re-train button — ONE board with text links ("Load it
-        // again", and "Train sensor ↑" for a model it trains), and the model counts as "needs
-        // training" (Train sensor filled, footer, pill, tab words).
+        // NOT_FITTED: one board with text links, no in-pane Re-train; the model counts as needing training.
         it('a Relationship whose fit is gone from Rust (NOT_FITTED): one board with "Load it again" + "Train sensor ↑" links, no Re-train button; it counts as needing training and Train sensor trains it again', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? Promise.reject('NOT_FITTED: no fitted model for this key') : defaultInvoke(cmd, args));
@@ -5208,10 +4960,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(mockInvoke).toHaveBeenCalledWith('preview_relationship_model', expect.objectContaining({ cache_key: expect.stringContaining('r1::') }));
         });
 
-        // `reloadFit` refuses a model whose unsaved settings cannot be
-        // saved, so no enabled "Load it again" may be on screen then. On the Model fit page
-        // the board gives way to the list of what to fix (and wherever the link is still
-        // drawn it is disabled with that reason — `fitReloadBlock`).
+        // `reloadFit` refuses a model with unsaved, unsavable settings, so no enabled "Load it again" may show then.
         it('fit gone + an unsaved draft that cannot be saved: no "Load it again" that would do nothing — the page lists what to fix; the link is back with the setting', async () => {
             mockInvoke.mockImplementation((cmd: string, args?: any) =>
                 cmd === 'compute_health_preview' ? Promise.reject('NOT_FITTED: no fitted model for this key') : defaultInvoke(cmd, args));
@@ -5237,11 +4986,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             expect(link().disabled).toBe(false);
         });
 
-        // A COMPLETE model is "up to date" for Train sensor
-        // (`classifyTrainPlan`), so the board's "Train sensor ↑" pointed at a disabled button — a
-        // dead end reached by opening the same Relation model a third time in a workspace with
-        // more Relation models than the Rust fit cache holds. Nothing about the model changed:
-        // "Load it again" re-runs the silent re-fit — no write, status and fingerprint untouched.
+        // A Complete model is up to date, so "Load it again" re-fits silently: no write, status and fingerprint untouched.
         it('a COMPLETE Relation model whose fit is gone: "Load it again" (and no Train sensor link, which cannot train it) fits it again silently — still Complete, nothing re-trained; a load that fails comes back to the board with its reason', async () => {
             let gone = true;
             let fitMode: 'ok' | 'hold' | 'fail' = 'ok';
@@ -5434,8 +5179,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
         });
     });
 
-    // The amber note used to stand next to every training input of every model — it read as a
-    // warning that something was filled in wrong (real-app report 2026-10-12) and was removed.
+    // No "changing it sets the model to Incomplete" note beside the fields.
     describe('Model settings: no "changing it sets the model to Incomplete" note beside the fields', () => {
         it('Relationship: none next to the training data, predictors or stiffness — the labels stand alone', async () => {
             await mount([REL()]);
@@ -5459,9 +5203,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
     });
 });
 
-// The Health score page inside the window - the DRAFT set points,
-// when they are persisted (blur / Enter / leaving / closing), the first-open master snapshot, and the one
-// and only "Mark complete" flow. The page's own rendering is covered by HealthScorePage.test.tsx.
+// Health score page in the window: draft set points, when they persist, first-open master snapshot, Mark complete.
 const HS_SNAP = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 const HS_EMPTY_IND = { kind: 'individual', lower: null, upper: null, masterLower: null, masterUpper: null };
 const HS_IND = (over: Record<string, any> = {}) => withTrained(makeModel({ healthSetPoints: HS_SNAP, ...over }));
@@ -5478,8 +5220,7 @@ const hsInput = (id: string) => screen.getByTestId(id) as HTMLInputElement;
 const hsType = (id: string, value: string) => fireEvent.change(hsInput(id), { target: { value } });
 const hsLastModel = async (i = 0) =>
     (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState.models[i];
-/** How many of the recorded workspace writes CHANGED the first model's set points (a write that only
- *  stores the saved validation verdict - `healthVerdict` - is not one). */
+/** Counts writes that changed the first model's set points; a write storing only `healthVerdict` does not count. */
 const hsSetPointWrites = async (before: unknown) => {
     let prev = JSON.stringify(before);
     let n = 0;
@@ -5804,8 +5545,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(exportCalls()).toHaveLength(0);
     });
 
-    // The footer counts the EMPTY SET POINTS (Rust's `required` issues), not the Checks lines:
-    // a Relation model's 4 empty points are ONE Checks line, and the footer used to say "1".
+    // The footer counts empty set points (Rust `required` issues); 4 empty Relationship points are one Checks line.
     it('says how many set points are empty: 4 empty Relationship points read "4 set points still empty" (the Checks card still shows ONE line)', async () => {
         await hsMount([HS_REL({ healthSetPoints: { kind: 'relationship', residualAt80Lower: null, residualAt80Upper: null, residualAt0Lower: null, residualAt0Upper: null } })]);
         await openHealthPage();
@@ -5831,8 +5571,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         fireEvent.click(screen.getByTestId('page-tab-health'));
         expect(hsMarkBtn().disabled).toBe(true);
         expect(hsMarkBtn().title).toBe('Checking the set points…');
-        // said under the button, in neutral grey — a moment, not a warning: it is NOT a notice
-        // line (one that came and went with every keystroke would make the page jump)
+        // Neutral grey, not a notice line: one that came and went per keystroke would make the page jump.
         expect(screen.getByTestId('state-why').textContent).toBe('Checking the set points…');
         expect(screen.getByTestId('state-why').className).toBe('tq-why tq-why--neutral');
         expect(screen.queryByTestId('wb-notice')).toBeNull();
@@ -5928,8 +5667,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
         expect(noticeText()).toBe('Not marked complete · fix it, then Mark complete');
     });
 
-    // The page still showed a valid preview, so Mark complete
-    // stayed enabled and failed the same way on every click.
+    // When the check answers NOT_FITTED, Mark complete must not stay enabled and fail the same way on every click.
     it('the check answers NOT_FITTED: the fit is marked gone and the preview asked again — the "Load it again" board appears and Mark complete is disabled with that reason; loading it brings Mark complete back', async () => {
         let gone = false;
         let checkFails = true;
@@ -6058,8 +5796,7 @@ describe('Health score page - Mark complete (the ONLY way a model becomes Comple
             patch({ id: 'ws1', failureGroupState: { groups: [makeGroup()], models: [{ ...model, runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: [{ id: 'p', start: '2026-01-01T00:00', end: '2026-02-01T00:00' }] }], ...EMPTY_WS_FG } }));
         await hsClickMark();
         await flush();
-        // Not Complete: the disk copy is what counts, and it is no longer fresh. This window follows it
-        // (the page falls back to Model fit with the "Settings changed" banner).
+        // Not Complete: the disk copy counts and is no longer fresh; the window follows it.
         expect((await hsLastModel()).status).toBe(false);
         expect(screen.queryByTestId('mark-incomplete')).toBeNull();
         expect(screen.getByTestId('stale-banner')).toBeTruthy();
@@ -6257,7 +5994,7 @@ describe('Health score page - edge cases', () => {
         expect(board().querySelector('.wbx-msg-s')!.textContent).toBe('The fitted Relation model is no longer in memory (the data was reloaded, a special sensor changed, or many Relation models were opened). Nothing about the model changed — Load it again. Your set points are kept and scored again when it is loaded.');
         expect(within(board()).queryByTestId('health-go-train-sensor')).toBeNull();
         expect(within(board()).getAllByRole('button')).toHaveLength(1);
-        expect(trainSensorBtn().disabled).toBe(true); // "0 of 1 · up to date": it could not have trained it
+        expect(trainSensorBtn().disabled).toBe(true); // up to date: Train sensor has nothing to train
         expect(tabStatus()).toBe('Complete');
         const line = () => screen.getByTestId('footer-status');
         expect(line().textContent).toBe('Fit no longer in memory · load it again');
@@ -6285,7 +6022,7 @@ describe('Health score page - edge cases', () => {
         fitMode = 'ok';
         await act(async () => { release(); await Promise.resolve(); await Promise.resolve(); });
         await waitFor(() => expect(screen.getByTestId('set-points-card')).toBeTruthy());
-        await waitFor(() => expect(tabStatus()).toBe('Complete')); // "Files saved …" again
+        await waitFor(() => expect(tabStatus()).toBe('Complete')); // back to Complete
         expect(tabStatus()).toBe('Complete');
         expect(screen.getByTestId('mark-incomplete')).toBeTruthy();
         expect(mockInvoke.mock.calls.filter(c => c[0] === 'export_model_files')).toHaveLength(0);
@@ -6298,10 +6035,7 @@ describe('Health score page - edge cases', () => {
     });
 });
 
-// The persisted validation verdict, the
-// dataset-generation guard on Train, a window close during "Mark complete", and the refusal notice that
-// also shows on the Model fit page. The cross-window / multi-workspace halves of these live in the
-// HealthScore*.integration tests.
+// Persisted verdict, dataset-generation guard on Train, window close during Mark complete, refusal notice on Model fit.
 describe('Health score - QA fixes 2026-10-04', () => {
     const META1 = [{ tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmL: 1, alarmH: 90 }];
     const BAD_SP = { kind: 'individual', lower: 3, upper: 9, masterLower: null, masterUpper: null };
@@ -6592,13 +6326,7 @@ describe('Health score - QA fixes 2026-10-04', () => {
 });
 
 
-// ─────────────────────────────────────────────────────────────────────────
-// Train periods and scoring periods ("just score it"): the Running condition
-// modal's Apply gate, the workspace scoring periods (start → end only: no
-// label, no event time, no "From Highlights"), Mark complete needing a scoring
-// period, the "Scored · N" footer pill and the "Scoring periods changed"
-// notice under the Step-1 card.
-// ─────────────────────────────────────────────────────────────────────────
+// Train and scoring periods in the modal, Mark complete, the "Scored · N" pill and the "Scoring periods changed" notice.
 describe('Train periods and scoring periods in the Build Model window', () => {
     const seededFilter = { id: 'f1', sensor: 'TAG1', operation: 'greater_than' as const, value1: '5', value2: '' };
     const fgBase = (over: Record<string, any> = {}) => ({
@@ -6786,10 +6514,7 @@ describe('Train periods and scoring periods in the Build Model window', () => {
             expect(apply().disabled).toBe(false);
         });
 
-        // Test gap. Opening the modal is now the ONLY moment the Dashboard
-        // highlights are re-read (the scoring-period "From Highlights" menu, which also re-read
-        // them, is gone) - so a highlight the Dashboard added AFTER this window opened must show
-        // up the next time the modal opens, and one it removed must be gone the time after.
+        // Opening the modal is the only time Dashboard highlights are re-read.
         it('the Dashboard highlights are re-read each time the modal opens: one added after this window opened raises the warning, one removed since is gone on the next open', async () => {
             const fg = fgBase();
             const hl = { id: 'h1', start: '2024-01-10 00:00:00', end: '2024-01-12 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
@@ -6996,9 +6721,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             expect(customTests().getByTestId('test-invalid-1').textContent).toMatch(/^S1 ends before it starts — pick an end after /);
             const save = screen.getByText('Save changes') as HTMLButtonElement;
             expect(save.disabled).toBe(true);
-            // the footer says it like the workspace settings do ("Fix S1 before applying"), with
-            // "saving" — this model's own lists are saved with Save changes; the reason is on the
-            // row (above) and on the disabled button
+            // The footer says "saving" because the model's own lists are saved with Save changes.
             expect(screen.getByTestId('build-block-reason').textContent).toBe('Fix S1 before saving');
             expect(save.title).toBe('S1 ends before it starts.');
             mockUpdateWorkspaceData.mockClear();
@@ -7016,7 +6739,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             openSettings();
             expect(customTests().getAllByTestId(/^test-row-\d+$/).map(r => r.querySelector('.tpe-pn')!.textContent)).toEqual(['S1', 'S2']);
             expect(screen.getByTestId('custom-test-periods').textContent).not.toMatch(/Known problem|Bearing failure|event/i);
-            // a legacy event time is not validated any more
+            // an event time is not validated
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
             const end = customTests().getByLabelText('Scoring period 2 end');
             fireEvent.change(end, { target: { value: '2024-03-20T00:00' } });
@@ -7038,9 +6761,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
         });
     });
 
-    // Test gap: the Custom editor in Model settings has its OWN copy of the
-    // train-vs-highlight warning, fed by the model's own train periods and writing into the
-    // model's DRAFT (Save changes commits it) - it was only tested for the workspace modal.
+    // The Custom editor has its own train-vs-highlight warning, writing into the model's draft.
     describe('a Custom model\'s own train periods against the Dashboard highlights (test gap)', () => {
         // CUSTOM_TRAIN is 2024/01/01 -> 2024/01/11; the highlight sits inside it.
         const HL = { id: 'h1', start: '2024-01-05 00:00:00', end: '2024-01-07 00:00:00', label: 'Trip', color: '#f43f5e', enabled: true };
@@ -7055,8 +6776,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
 
         it('the warning names the model\'s own train period; "Remove the overlap" splits it in the DRAFT only, and Save changes writes the two periods to the model (workspace list untouched)', async () => {
             await mountCustom(customInd(), [HL]);
-            // Only the Custom editor's warning is on screen (the workspace's own all-time train
-            // period overlaps the highlight too, but that one lives in the closed modal).
+            // Only the Custom editor's warning shows; the workspace one is in the closed modal.
             expect(screen.getAllByTestId('train-hl-warning')).toHaveLength(1);
             expect(customPeriods().getByTestId('train-hl-warning').textContent).toContain('Train P1 overlaps the highlight “Trip”');
             expect(customPeriods().getAllByTestId(/^period-row-/)).toHaveLength(1);
@@ -7083,7 +6803,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             expect(fg.runningConditionTimePeriods).toEqual(ALL_TIME_TRAIN);
             // the model's scoring periods ride along unchanged
             expect(fg.models[0].customTestPeriods).toEqual(ONE_TEST);
-            // and the saved result raises no warning any more
+            // the saved result raises no warning
             expect(screen.queryByTestId('train-hl-warning')).toBeNull();
         });
 
@@ -7106,8 +6826,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
                     const req = args?.request;
                     return Promise.resolve(makeSetPointAwarePreview(req, {
                         test_validation: makeValidation({
-                            // one result per period SENT, numbered by wire position. Each keeps the fixture's own
-                            // start / end (inside the fixture's 5-point series).
+                            // One result per period sent, numbered by wire position.
                             tests: (req?.test_periods ?? []).map((_t: any, i: number) => makeTestResult({ index: i + 1, train_rows: 10, train_days: 2 })),
                         }),
                     }));
@@ -7118,16 +6837,14 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             statefulUpdateMock([model], { runningConditionTestPeriods: tests });
             render(<BuildModelWindow />);
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [model], runningConditionTestPeriods: tests } });
-            // Model fit: the time chart highlights the train period only (user decision 2026-10-12) — a scoring
-            // period has no band and no name there, so its number is read off the Health score page below.
-            // (The page has no "Train and scoring periods" table any more — removed 2026-10-11.)
+            // Model fit highlights the train period only; scoring periods have no band or name there.
             const strip = () => within(screen.getByTestId('chart-card-ts')).getByTestId('echarts-mock').getAttribute('data-strip');
             await waitFor(() => expect(strip()).toBe('TRAIN'));
             expect(healthCalls().slice(-1)[0].test_periods).toEqual([{ start: ONE_TEST[0].start, end: ONE_TEST[0].end }]);
             expect(screen.queryByTestId('train-test-card')).toBeNull();
             expect(screen.getByTestId('model-fit-individual').textContent).not.toMatch(/Train and scoring periods|includes 2 d of train running time/);
             await openHealthPage();
-            // ... which has no per-period tiles either (the "Scoring results" card was removed 2026-10-12)
+            // No per-period tiles.
             expect(screen.queryByTestId('test-results')).toBeNull();
             expect(screen.queryByTestId('test-result-2')).toBeNull();
         });
@@ -7231,8 +6948,7 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
             await deliverData({ failureGroupState: { groups: [makeGroup()], models: [own] } });
             await waitFor(() => expect(screen.getByTestId('train-days-warning').textContent).toContain('Only 10 d of train running time'));
             expect(screen.getByTestId('train-days-warning').textContent).toContain('You can still train.');
-            // ONE call for it (the train periods; Model settings is closed, so no scoring count),
-            // and nothing through compute_sensor_stats but the model's own re-run
+            // One count for the train periods; nothing through compute_sensor_stats except the model's own re-run.
             expect(periodCountCalls().filter(c => JSON.stringify(c.periods) === JSON.stringify(ownPeriods))).toHaveLength(1);
         });
     });
@@ -7277,16 +6993,11 @@ describe('Train periods and scoring periods — review fixes (2026-10-07)', () =
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// Train sensor / Train all with a queue:
-// the WIRING of `useTrainQueue` into this window. The parts themselves are
-// tested in TrainQueueParts.test.tsx, the queue rules in useTrainQueue.test.ts.
-// ─────────────────────────────────────────────────────────────────────────
+// Wiring of `useTrainQueue` into this window; queue rules are tested in useTrainQueue.test.ts.
 describe('train queue wiring (customer items 8 + 9)', () => {
     const IND2 = (over: Record<string, any> = {}) => makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2', ...over });
     const REL2 = (over: Record<string, any> = {}) => makeModel({ id: 'r2', name: 'Temp R', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'], ...over });
-    /** Holds every `compute_sensor_stats` of `sensor` (the Individual train) until `release()`.
-     *  The Step-1 row count asks for TAG1, so TAG2 / TAG3 are only ever a model's train. */
+    /** Holds every `compute_sensor_stats` of `sensor` until `release()`. */
     function holdStats(sensor = 'TAG2', base: (cmd: string, args?: any) => Promise<unknown> = defaultInvoke) {
         let release: () => void = () => {};
         const gate = new Promise<void>(r => { release = r; });
@@ -7326,8 +7037,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
         expect(models.every((m: any) => m.lastTrainedAt && m.status === false)).toBe(true);
     });
 
-    // The ▾ menu says "Re-train" only about a model that has a
-    // train record; the all-row says it only when EVERY model of the sensor has one.
+    // The menu says "Re-train" only for a model with a train record; the all-row only when every model has one.
     describe('Train sensor ▾ menu copy', () => {
         const openMenu = async () => { await flush(); fireEvent.click(screen.getByTestId('train-sensor-menu-toggle')); };
         const item = (key: string) => {
@@ -7372,8 +7082,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
             expect(item('only-relationship').label).toBe('Re-train Relation model only');
         });
 
-        // A sensor with ONE model never reads "Train all 1 model": no all-row, and its own
-        // row is a whole sentence that turns into "Re-train the …" once it was trained.
+        // One model: no all-row; its row reads "Re-train the …" once trained.
         it('a sensor with ONE model: no "Train all 1 model" row; "Train the Individual model" becomes "Re-train the Individual model" after training', async () => {
             await mountModels([IND2()]);
             await openMenu();
@@ -7591,9 +7300,7 @@ describe('train queue wiring (customer items 8 + 9)', () => {
     });
 });
 
-// Workspace-closing, a hung train at close, re-points
-// during waits, the sidecar overlap rules (Mark complete / Compare predictors /
-// Re-train while a run is active), and the NOT_FITTED re-fit plan.
+// Workspace close, hung train at close, re-points during waits, sidecar overlap rules, NOT_FITTED re-fit plan.
 describe('train queue wiring — review fixes (phase 4)', () => {
     const IND2 = (over: Record<string, any> = {}) => makeModel({ id: 'i2', name: 'Temp I', targetSensor: 'TAG2', ...over });
     const IND3T = (over: Record<string, any> = {}) => withTrained(makeModel({ id: 'i3', name: 'Other', targetSensor: 'TAG3', ...over }));
@@ -7667,14 +7374,9 @@ describe('train queue wiring — review fixes (phase 4)', () => {
         expect(mockClose).not.toHaveBeenCalled();
     });
 
-    // Split in two (was ONE test with a 30 ms real-time cap that then ran two more
-    // act() rounds assuming the wait was still pending - on a loaded machine one round took longer
-    // than 30 ms, the cap fired early, and the "second" Close simply closed the window). Each half
-    // is now independent of how long a step takes: the first never lets the cap elapse, the second
-    // does nothing between Stop and the notice.
+    // Neither half depends on step timing: the first never lets the cap elapse, the second does nothing before the notice.
     it('a hung train at close: a second "Stop after this model and close" while the first still waits is ignored - one wait, one close', async () => {
-        // The cap stays at its real value (90 s): it cannot elapse inside this test, so the
-        // first Stop is certainly still waiting whenever the second one arrives.
+        // The cap is its real 90 s, so the first Stop is still waiting when the second arrives.
         expect(MARK_COMPLETE_CLOSE_WAIT.ms).toBeGreaterThanOrEqual(60_000);
         const release = hold('TAG2'); // held: the sidecar is "still training"
         try {
@@ -8096,11 +7798,7 @@ describe('train queue wiring — review fixes (phase 4)', () => {
     });
 });
 
-// The Workbench page spine (spec
-// docs/design/handoff/workbench-redesign/README.md §1; DESIGN_SYSTEM §4 "Build Model
-// Workbench pages"): one control group in the header, one state dot per kind tab, one
-// status sentence in the footer, at most one filled button on screen, one board shape
-// for the chart-less states, one date format, scroll back to the top on a page / tab switch.
+// Page spine: one header control group, one state dot per kind tab, at most one filled button, scroll to top on switch.
 describe('Workbench redesign §1 — the page spine', () => {
     const record = { at: '2026-10-04T01:00:00.000Z', outputDir: 'C:/data/workspaces/ws1/output', setPoints: HS_SNAP, scoringIntervalSecs: 3600 };
     /** Every FILLED button in the window (a split button's ▾ half belongs to its main half; dialogs are not the page). */
@@ -8222,8 +7920,7 @@ describe('Workbench redesign §1 — the page spine', () => {
         });
     });
 
-    // Workbench detail v2 §2: the dot stays, and the status WORDS are shown beside it — the same
-    // string as the tooltip and the tab's name (one rule: `tabDotOf`).
+    // Status words show beside the dot, the same string as the tooltip and tab name (`tabDotOf`).
     describe('kind tab: ONE state dot in the list\'s colours + the status in words beside it (the same words in its tooltip)', () => {
         const tabWords = (id: string) => screen.getByTestId(`tab-words-${id}`);
         const tone = (id: string) => tabWords(id).getAttribute('data-tone');
@@ -8438,7 +8135,7 @@ describe('Workbench redesign §1 — the page spine', () => {
     });
 
     describe('Health score notice line: a failed Mark complete, the saved folder, a failed preview', () => {
-        // "Not saved" used to stay for the rest of the session and hide the real reason.
+        // A failed-attempt notice goes as soon as a set point changes and must not hide the real reason.
         it('a failed Mark complete says "Not marked complete · fix it, then Mark complete" with the red card — and both go as soon as a set point changes; a later empty point shows ITS reason', async () => {
             const why = 'Failed to read column TAG1: the file is open in another program.';
             mockInvoke.mockImplementation((cmd: string, args?: any) => isCheck(cmd, args) ? Promise.reject(why) : healthInvoke(cmd, args));
@@ -8560,9 +8257,7 @@ describe('Workbench redesign §1 — the page spine', () => {
         });
     });
 
-    // Workbench detail pages v2, phase 4b (§1 + §4): the footer bar is gone. Its buttons are the
-    // header's state buttons (one short reason line under a disabled one); its sentence is a
-    // NOTICE LINE that exists only while there is something to fix or wait for.
+    // Buttons live in the header; the notice line shows only while something needs fixing or waiting.
     describe('detail v2 — the header\'s state buttons, their reason line, and the notice line', () => {
         const notice = () => screen.queryByTestId('wb-notice');
         const noticeLine = () => notice()?.querySelector('.wbx-reason')?.textContent ?? null;
@@ -8949,18 +8644,9 @@ describe('Workbench redesign §1 — the page spine', () => {
 });
 
 
-// ─────────────────────────────────────────────────────────────────────────
-// Spec workbench-redesign §6 (Train sensor /
-// Train all copy) and §7 (page states). Every chart-less state of every KIND
-// follows the spine rules: ONE board shape (title · one sentence · optional mono
-// line) whose actions are text links, the status said once in the footer
-// sentence, at most one filled button (`data-primary`), "Loading the … model…"
-// for a trained model being worked out again vs "Training the … · about N s"
-// for a model in the run — and no state is a dead end.
-// ─────────────────────────────────────────────────────────────────────────
+// Train copy and page states: one board shape with link actions, at most one filled button, never a dead end.
 describe('Workbench redesign §7 — page states of every kind (phase D)', () => {
-    // The Step-1 row count asks `compute_sensor_stats` for TAG1, so the Individual model sits
-    // on TAG2: its own train can then be held / failed without touching that count.
+    // The Step-1 count asks `compute_sensor_stats` for TAG1, so Individual sits on TAG2 to hold or fail its train alone.
     const KINDS = [
         {
             kind: 'individual', name: 'Individual model', tab: 'Individual', trains: 'Trains Individual', secs: '1 s',
@@ -9175,9 +8861,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         await waitFor(async () => expect((await lastModel(k.make().id)).lastTrainedAt).toBeTruthy());
     });
 
-    // Leftover of 0ce26a9: a COMPLETE model whose silent load on open failed (not a lost fit)
-    // used to show "Training failed … Train sensor ↑" — but Train sensor never trains an
-    // up-to-date Complete model, so that was a dead end.
+    // A Complete model whose silent load failed must not point at Train sensor, which skips an up-to-date Complete model.
     each('%s — COMPLETE and its load failed: "Couldn\'t load the …" with "Load it again" (nothing written, stays Complete) and the ▾ menu — never Train sensor ↑', async (_n, k) => {
         const mode = { current: 'fail' as 'ok' | 'fail' | 'hold' };
         trainAnswers(k, mode);
@@ -9261,9 +8945,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         expect(screen.queryByTestId('results-health-error')).toBeNull();
     });
 
-    // Leftover 3: with the workspace running condition unset, "Set running condition →" is the
-    // only filled button — but a model on its OWN (Custom) condition is not blocked: its
-    // Train sensor is a ghost that works, and the line under it must say so.
+    // With the workspace condition unset, a Custom-mode model is not blocked: Train sensor works and says so.
     each('%s — a Custom-mode model while the workspace running condition is unset: Train sensor is a working ghost and its line says nothing is blocked', async (_n, k) => {
         mockInvoke.mockImplementation(healthInvoke);
         const custom = k.make({ runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], filterTimePeriods: ALL_TIME_TRAIN });
@@ -9327,11 +9009,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         expect(screen.getByTestId('train-all-modal').textContent).not.toMatch(/Fill in the required fields|above first/);
     });
 
-    // ---- Follow-up cases ----
 
-    // A1: a Complete model with NO train record ("Marked complete" before train records
-    // existed) whose train from the ▾ row failed used to read "Couldn't load the model · load
-    // it again" — a link that did nothing (there is no fit to load), with the reason nowhere.
+    // A Complete model with no train record whose ▾ train failed: "load it again" does nothing (no fit), so show the reason.
     each('%s — COMPLETE with no train record whose ▾ train failed: "Training failed", the reason on the "Marked complete" board, the ▾ menu as the way out — never "load it again"', async (_n, k) => {
         const mode = { current: 'fail' as 'ok' | 'fail' | 'hold' };
         trainAnswers(k, mode);
@@ -9373,8 +9052,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         await waitFor(async () => expect((await lastModel(model.id)).lastTrainedAt).toBeTruthy());
     });
 
-    // A2: the stale banner's "Train sensor ↑" was a dead link whenever Train sensor would not
-    // train THIS model.
+    // The stale banner shows no "Train sensor ↑" link when Train sensor would not train THIS model.
     describe('stale banner: no link when Train sensor would not train this model', () => {
         const banner = () => screen.getByTestId('stale-banner');
 
@@ -9426,13 +9104,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         });
     });
 
-    // A6: on the Health score page a train that failed leaves no preview to ask for — the page
-    // used to be able to hang on "Loading…". (The page keeps the last answer of the model it
-    // shows, so the state without one is reached from another tab: the model's Health score
-    // page was open, a sibling's tab was opened, the model's ▾ re-train failed from there.)
-    /** A TRAINED sibling model of another kind on the SAME sensor (its train is never
-     *  `k.isTrain`): opening its tab asks for ITS preview, which replaces the answer the
-     *  window held for the first model. */
+    // On the Health score page a failed train leaves no preview; the page must not hang on "Loading…".
+    /** Trained sibling of another kind on the same sensor; opening its tab replaces the held preview. */
     const siblingOf = (k: K) => withTrained(k.kind === 'individual'
         ? makeModel({ id: 'sib', name: 'Sibling', kind: 'relationship', targetSensor: 'TAG2', predictorSensors: ['TAG1'] })
         : makeModel({ id: 'sib', name: 'Sibling', targetSensor: 'TAG1' }));
@@ -9509,8 +9182,7 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
         }
     });
 
-    // A3: while the user's "load it again" runs, an earlier answer may still be on screen —
-    // "Mark complete again" must not be enabled from it.
+    // While "load it again" runs, an earlier answer may still show; "Mark complete again" must not be enabled from it.
     it('Complete + a failed ▾ re-train: "Couldn\'t load the model · load it again" on the Health score page, and no "Mark complete again" at any point', async () => {
         const k = KINDS[0];
         const mode = { current: 'ok' as 'ok' | 'fail' | 'hold' };
@@ -9631,21 +9303,8 @@ describe('Workbench redesign §7 — page states of every kind (phase D)', () =>
     });
 });
 
-// "no data to train on" is stopped at the UI instead of letting
-// the engine fail — "the data is 2025-01 … 2025-12: a period chosen beyond that must be warned
-// about at once". Two guards, both from what the window already has (no new request beyond the
-// dataset bounds, asked once per dataset):
-//   B1 a period against the loaded data's time range (the dataset bounds of the timeline);
-//   B2 / B3 a SETTLED count of zero running rows in the train periods.
-// The rule ("stop a train that has no data and warn at
-// once — NOT take away results that already exist"):
-//   R1 bounds are known only for the CURRENT dataset; unknown = nothing is judged
-//   R2 a period NEW / CHANGED in a draft and entirely outside the data is invalid (Apply / Save)
-//   R3 a period exactly as it was SAVED and outside the data only WARNS (row + card)
-//   R4 Train is blocked only when there truly is no data (no train period inside it / zero rows)
-//   R5 the guards block ACTIONS only (Apply, Save changes, Train) — never a read path
-// Nothing is written and no model's status changes.
-// The pure rules: periodDataGuards.test.ts; the rows / timeline / card: RunningConditionDataGuards.test.tsx.
+// Guards for "no data to train on": R1 bounds are per current dataset, R2 a new/changed period outside the data is invalid,
+// R3 a saved one only warns, R4 Train is blocked only with no data, R5 guards block actions, never reads.
 describe('Guards against "no data to train on" (2026-10-10)', () => {
     const DATA = { min: '2025-01-01 00:00:00', max: '2025-12-31 23:59:00' };
     const P_IN = { id: 'p1', start: '2025-03-01T00:00', end: '2025-04-30T23:59' };
@@ -9671,9 +9330,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         compute_health_preview: 'NO_DATA: no rows in the training scope',
     };
     const engineCalls = (cmd: string) => mockInvoke.mock.calls.filter(c => c[0] === cmd);
-    /** The fake Rust of this block: the dataset bounds, (optionally) its own row counts — and, with
-     *  `noRows`, an engine that answers like the real one for an EMPTY training scope (every train /
-     *  preview / export is refused with its "no rows" sentence instead of made-up numbers). */
+    /** Fake Rust: dataset bounds, optional row counts; `noRows` rejects the commands in ENGINE_NO_ROWS like the real engine. */
     const rust = (opts: { bounds?: unknown; noRows?: boolean; running?: (p: { start: string | null; end: string | null }, i: number, args: CountArgs) => number | Error } = {}) =>
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
             if (opts.noRows && cmd in ENGINE_NO_ROWS) return Promise.reject(ENGINE_NO_ROWS[cmd]);
@@ -9825,11 +9482,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(mockInvoke.mock.calls.filter(c => c[0] === 'compute_sensor_stats')).toHaveLength(0);
         });
 
-        // The fake engine now answers like the real one for an EMPTY scope (`noRows`).
-        // This test used to pass only because the mock drew charts whatever the filter was — in the
-        // app the charts are computed from the loaded data, so with no row for the model there is
-        // nothing to draw. What is true is said instead: the model is unchanged, ONE board names the
-        // cause and the one place to fix it. Never "Couldn't load… Load it again" / "Training failed".
+        // The fake engine answers like the real one for an empty scope: nothing to draw, so one board names the cause.
         it('a COMPLETE model with NO train period inside the data stays Complete (tab words, dots, filter counts): ONE "No data for this model in the loaded file" board with the cause and a working "Running condition ↑" link — no "Load it again", no dead Train link — on BOTH pages; Mark incomplete works, nothing else is written', async () => {
             rust({ running: () => 800, noRows: true });
             const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT] };
@@ -9837,7 +9490,6 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             const done: Record<string, any> = { ...withTrained(base, { models: [base], ...fgShape }), status: true };
             await mountB([done], { runningConditionTimePeriods: [P_OUT] });
             await waitFor(() => expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBe('true'));
-            // ── the ONE board: the title, the cause from the guard, one link ──
             const board = await waitFor(() => screen.getByTestId('results-no-data'));
             expect(board.querySelector('.wbx-msg-t')!.textContent).toBe('No data for this model in the loaded file');
             expect(within(board).getByTestId('no-data-cause').textContent).toBe('None of its train periods is inside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
@@ -9852,7 +9504,6 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
                 expect(screen.queryByTestId(id), id).toBeNull();
             }
             expect(document.body.textContent).not.toMatch(/Couldn't load|Load it again|load it again|Training failed|No valid numeric values|NO_DATA/);
-            // ── the model's OWN words stay ──
             expect(tabStatus()).toBe('Complete');
             expect(screen.getByTestId('footer-no-data').textContent).toBe('Complete · no rows for it in the loaded file — fix the running condition to see its charts');
             expect(screen.queryByTestId('build-block-reason')).toBeNull();
@@ -9873,13 +9524,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
             // no filled "next step": the Health score page is the same board
             expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
-            // the engine is not asked again and again for a scope that has no row (at most the one
-            // load that started before the data's range was known), and never for a health preview
+            // The engine is not asked repeatedly for an empty scope, and never for a health preview.
             await act(async () => { await new Promise(r => setTimeout(r, 400)); });
             expect(engineCalls('compute_sensor_stats').length).toBeLessThanOrEqual(1);
             expect(engineCalls('compute_health_preview')).toHaveLength(0);
 
-            // ── the Health score page: open (not a closed tab), the SAME board, Mark incomplete reachable ──
+            // Health score page: the tab is open, shows the SAME board, and Mark incomplete is reachable.
             const healthTab = screen.getByTestId('page-tab-health') as HTMLButtonElement;
             expect(healthTab.getAttribute('aria-disabled')).toBeNull();
             expect(screen.queryByTestId('page-tab-health-dot')).toBeNull(); // Complete: no set-point cue
@@ -9896,12 +9546,11 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(engineCalls('compute_health_preview')).toHaveLength(0);
             expect(exportCalls()).toHaveLength(0);
 
-            // ── the link WORKS: it opens the Running-condition settings ──
             fireEvent.click(within(hBoard).getByTestId('board-open-rc'));
             expect(screen.getByRole('dialog', { name: 'Running condition' })).toBeTruthy();
             fireEvent.click(screen.getByTestId('rc-cancel'));
 
-            // ── Mark incomplete: the one write the user asked for — then it is "Trained", still with no data ──
+            // Mark incomplete is the one write the user asked for; the model becomes Trained, still with no data.
             await act(async () => { fireEvent.click(screen.getByTestId('mark-incomplete')); await Promise.resolve(); });
             await flush();
             expect(mockUpdateWorkspaceData).toHaveBeenCalledTimes(1);
@@ -9916,9 +9565,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(exportCalls()).toHaveLength(0);
         });
 
-        // The rule behind finding 1: a sentence never links to a control that is disabled.
-        // A load that failed for ANOTHER reason before the data's range was known keeps its own board —
-        // but once the guard holds, the menu row / Train sensor it pointed at cannot train the model.
+        // A sentence never links to a disabled control: once the guard holds, the menu row / Train sensor cannot train the model.
         it('a load that failed for another reason, then "no train period inside the data" becomes known: the "Couldn\'t load…" board drops its Train sensor ▾ menu link and the "Training failed" board says "Train sensor ↑" as plain text — never a link to a disabled control', async () => {
             const fgShape = { runningConditionFilters: [RC_ON], runningConditionCombine: 'and', runningConditionTimePeriods: [P_OUT] };
             const base = makeModel({ id: 'm1', targetSensor: 'TAG1', healthSetPoints: HS_SNAP });
@@ -9997,8 +9644,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running });
             await mountB([makeModel()], fgCond);
             const dlg = openRc();
-            /** "(about M d running time)" of the caption: 800 running rows = 2.8 d. The caption
-             *  never prints the rows themselves (user decision 2026-10-14). */
+            /** 800 running rows = 2.8 d; the caption never prints rows. */
             const runningTime = () => dlg.getByTestId('rc-caption-train').textContent!.match(/\(about (.+) d running time\)$/)?.[1] ?? null;
             await waitFor(() => expect(runningTime()).toBe('2.8'));
             expect(dlg.getByTestId('rc-caption').getAttribute('data-rows')).toBe('counted');
@@ -10119,9 +9765,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
         });
 
-        // With an engine that answers like the real one for an empty scope (`noRows`), a
-        // TRAINED model whose scope counts zero rows has no charts to draw. It is NOT "Training failed"
-        // (nobody trained it) and NOT "Incomplete" (nothing about it changed): it stays "Trained".
+        // A trained model with zero rows has no charts: it stays "Trained", not "Training failed" or "Incomplete".
         it('a TRAINED model whose scope counts ZERO rows stays "Trained" (tab words, amber dot — never "Training failed" / "Incomplete" / a red dot): the "No data…" board with the cause and "Running condition ↑" on both pages, Mark complete disabled with the reason — and nothing is written', async () => {
             rust({ running: () => 0, noRows: true });
             const fgShape = { runningConditionFilters: [COND], runningConditionCombine: 'and', runningConditionTimePeriods: [P_IN], runningConditionNoneConfirmed: false };
@@ -10162,7 +9806,6 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
             expect(screen.getByTestId('wb-actions').getAttribute('data-primary')).toBe('none');
 
-            // ── the Health score page: the same board; Mark complete could only fail ──
             fireEvent.click(screen.getByTestId('page-tab-health'));
             await waitFor(() => expect(screen.getByTestId('page-tab-health').getAttribute('aria-current')).toBe('page'));
             expect(screen.getByTestId('results-no-data')).toBeTruthy();
@@ -10174,7 +9817,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(tabStatus()).toBe('Trained');
             fireEvent.click(hsMarkBtn());
             await act(async () => { await new Promise(r => setTimeout(r, 400)); });
-            // ── nothing written, nothing exported, the engine not asked for a preview ──
+            // Nothing written, nothing exported, the engine not asked for a preview.
             expect(mockUpdateWorkspaceData).not.toHaveBeenCalled();
             expect(exportCalls()).toHaveLength(0);
             expect(engineCalls('compute_health_preview')).toHaveLength(0);
@@ -10285,7 +9928,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             rust({ running: () => 800 });
             await mountB([customModel()]);
             openSettings();
-            // a reversed TRAIN period (it used to block Train only, never Save)
+            // a reversed TRAIN period blocks Save
             type(own().getByLabelText('P1 end'), '2025-02-01T00:00');
             expect(own().getByTestId('period-invalid-1').textContent).toMatch(/^P1 ends before it starts/);
             expect(save().disabled).toBe(true);
@@ -10378,9 +10021,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         });
     });
 
-    // The stricter rule took a Complete model's charts away, called it
-    // "Marked complete — it has no charts to show", gave it a green dot titled "Fix periods" and made
-    // Next / Health score / Mark incomplete / Mark complete again unreachable.
+    // A saved train period outside the data only warns; it must not remove a Complete model's charts or actions.
     describe('R3 / R5 — a SAVED train period outside the data next to one inside it: an amber warning, nothing else changes', () => {
         const P_OUT2 = { ...P_OUT, id: 'p2' };
         const WARN = '⚠ P2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59) — it is not used';
@@ -10400,13 +10041,12 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(card.getAttribute('data-state')).toBe('set');
             expect(card.getAttribute('data-norows')).toBeNull();
             expect(card.className).toContain('rcc-card--ok');
-            // the count of the persisted condition is still asked (the outside period simply holds no row) —
-            // it is never shown: the card stays the green line, with no number of rows
+            // The count is still asked (the outside period holds no row) but never shown.
             await waitFor(() => expect(periodCountCalls().length).toBeGreaterThan(0));
             await flush();
             expect(screen.getByTestId('rc-card').getAttribute('data-norows')).toBeNull();
             expectCardHasNoRowCount();
-            // read paths: exactly as before the guards existed
+            // read paths are not affected by the guards
             await waitFor(() => expect(screen.getByTestId('results-chart')).toBeTruthy());
             expect(healthCalls().length).toBeGreaterThan(0);
             expect(tabStatus()).toBe('Trained');
@@ -10468,9 +10108,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         });
     });
 
-    // S1: a SAVED scoring period outside the data was ignored while nothing was edited
-    // and then blocked as soon as ANY draft existed — typing a model name made the pill "Incomplete",
-    // replaced the charts by "S1 is outside the data" and disabled Save with no way back.
+    // A saved scoring period outside the data must only warn, not block unrelated edits such as renaming.
     describe('S1 — the legacy state "a saved scoring period outside the data": it warns, and never blocks an unrelated edit', () => {
         const S_OUT = [{ id: 's1', start: '2024-02-01T00:00', end: '2024-03-01T00:00' }];
         const S_WARN = 'S1 is outside the data — nothing is scored there';
@@ -10556,8 +10194,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
             expect(written.filterTimePeriods.map((x: any) => [x.start, x.end])).toEqual([[P_IN.start, P_IN.end], [P_OUT.start, P_OUT.end]]);
         });
 
-        // The engine answers like the real one for an empty scope (`noRows`) — the charts
-        // cannot be drawn, and the board says so with ONE link into the model's OWN settings (Custom).
+        // Charts can't be drawn; one board links to the model's own (Custom) settings.
         it('a Custom TRAINED model whose own scope holds no rows any more: it stays "Trained", the "No data…" board points at its Model settings (a working link) — and renaming it still saves (the scope did not change)', async () => {
             rust({ running: () => 0, noRows: true });
             const base = makeModel({
@@ -10593,9 +10230,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         });
     });
 
-    // S2: the Custom zero-rows guard only knew the model on screen, so with two Custom
-    // models of one sensor on the same empty condition the story flipped with the open tab and the sibling
-    // went to the engine.
+    // The Custom zero-rows guard must cover Custom models that are not the open tab.
     describe('S2 — a Custom model that is NOT the open one', () => {
         const ownLists = { runningConditionMode: 'custom', customRunningConditionFilters: [RC_ON], customTestPeriods: S_IN };
 
@@ -10690,9 +10325,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
         });
     });
 
-    // M1: the bounds were fetched once on mount, so a window re-pointed at another
-    // workspace judged the new periods against the OLD data — "P1 is outside the data (2025/01/01 00:00 –
-    // 2025/12/31 23:59)" for a valid 2027 period of 2027 data, Train disabled, not repairable.
+    // Dataset bounds belong to the dataset on screen; a re-point must refetch them.
     describe('M1 — the dataset bounds belong to the dataset on screen (R1)', () => {
         const DATA_2027 = { min: '2027-01-01 00:00:00', max: '2027-12-31 23:59:00' };
         const P_2027 = { id: 'p1', start: '2027-03-01T00:00', end: '2027-04-30T23:59' };
@@ -10757,11 +10390,7 @@ describe('Guards against "no data to train on" (2026-10-10)', () => {
 });
 
 
-// ─────────────────────────────────────────────────────────────────────────
-// Export results (2026-10-20): the export's running status in the running-
-// condition editor, workspace-wide unique model names, and Project details
-// following a save made in another window.
-// ─────────────────────────────────────────────────────────────────────────
+// Running-condition line; workspace-wide unique model names; Project details following another window's save.
 describe('The ONE running-condition line ("Machine is running when … is above …", 2026-10-26)', () => {
     const ABOVE1 = { id: 'f1', sensor: 'TAG1', operation: 'greater_than', value1: '5', value2: '' };
     const WHY = 'Set “Machine is running when … is above …” before applying';

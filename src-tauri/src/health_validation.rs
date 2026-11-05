@@ -1,49 +1,5 @@
-//! Scoring periods ("just score it").
-//!
-//! A model is fitted ONLY on the training scope (healthy periods). A scoring
-//! period (wire name `test_periods`) is nothing but a time range,
-//! `start` -> `end`: the train-only model gives a health score for that time and
-//! the user reads the chart. Nothing is judged here - there is no Normal /
-//! Known-problem label, no event time, no lead time and no detection verdict
-//! (see `docs/design/handoff/workbench-redesign/README.md` section 2).
-//!
-//! This module is the one implementation of that maths. The three previews
-//! (`health_preview`) feed it the rows they already scored with the TRAIN-only
-//! model and it returns the `test_validation` block of `compute_health_preview`;
-//!
-//! Semantics (all three kinds - [`build_hourly`]; since 2026-10-11 the health
-//! score is computed on 1-HOUR AVERAGES, see `health_hourly`):
-//!   * Scoring rows = rows inside the scoring period that also pass the running
-//!     condition's VALUE conditions (and AND/OR mode) of the training scope.
-//!     The training TIME periods do not apply to them. A scoring period MAY
-//!     overlap the training periods; results use the whole period and
-//!     `train_rows` / `train_days` / `train_hours` report the overlap.
-//!   * `rows`, `days`, `train_rows`, `train_days` stay RAW facts (dataset rows;
-//!     "running time days" = rows x the dataset's median sample interval).
-//!   * `hours` = the period's hourly points (clock hours with at least one of
-//!     its scoring rows); `train_hours` = those that also hold a training row.
-//!     A boundary hour's point averages every in-scope row of that hour (rows
-//!     of the training periods and of other scoring periods included).
-//!   * `scored` = hours that got a score; `pct_below_80` = share of the SCORED
-//!     hours whose score is below 80.
-//!   * `lowest` = the lowest hourly score of the period (rounded to a whole
-//!     score); `lowest_at` = the START of that hour. The hourly mean already is
-//!     "the level held for an hour", so there is no extra sustain window.
-//!   * The kind metrics of a period are computed over its hourly points; the
-//!     `train` block's metrics stay the model's own RAW training numbers.
-//!
-//! The Relation model needs one thing more: the engine's prediction for every
-//! hourly point (the hour's MEAN predictors go through the fitted model - the
-//! raw rows of a scoring period are never predicted one by one). [`RelHours`]
-//! is the one implementation of "which hours, which mean inputs, which points
-//! to ask the engine for"; the preview, the Train pre-warm, the later
-//! `predict_relationship` run and the export all use it. An hour without a
-//! prediction has no score (missing, never 0).
-//!
-//! Naming: the Rust types and the wire keys keep their `test_*` names
-//! (`TestPeriodArg`, `test_periods`, `test_validation`, `tests`) so nothing on
-//! the wire is renamed; only the user-facing wording says "scoring period" and
-//! numbers them `S1`, `S2`, ... by list position.
+//! Scoring periods: time ranges scored with the train-only model, on 1-hour averages; no labels, event times or verdicts.
+//! Training-scope value conditions apply, not its periods; no prediction = no score, never 0. `test_*` wire names stay.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -53,18 +9,9 @@ use crate::health_hourly::HourGroups;
 use crate::health_score::{Issue, RelExtra, RelFit, RelHourPoints, Severity, SCORE_AT_3SD};
 use crate::{parse_time_bound, PreviewFilter, ResolvedFilter, TimeRangeArg};
 
-// ---------------------------------------------------------------------------
-// Request
-// ---------------------------------------------------------------------------
 
-/// One scoring period as sent by the frontend (`test_periods[]`): only
-/// `start` -> `end`. Same datetime strings as the training periods; `None` /
-/// blank = open bound.
-///
-/// Older callers also send `label` (`"normal"` | `"problem"`) and `event_time`
-/// (or `eventTime`). Those keys are still ACCEPTED - serde skips keys it does
-/// not know, and this struct must never get `deny_unknown_fields` - but they
-/// are not read: whatever they hold, the period is scored the same way.
+/// One scoring period from the frontend: `start` -> `end`, `None`/blank = open bound.
+/// Never add `deny_unknown_fields`: old callers still send `label`/`event_time`, which are ignored.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct TestPeriodArg {
     #[serde(default)]
@@ -89,9 +36,7 @@ fn err_issue(code: &str, field: String, message: String) -> Issue {
     }
 }
 
-/// One resolved scoring period. `filter` is `None` when the period is invalid
-/// (the matching issue is in [`TestPlan::issues`]): it is skipped, its result
-/// has no rows and no metrics.
+/// Resolved scoring period; `filter` is `None` when invalid (see `TestPlan::issues`), so it is skipped.
 pub struct PlannedTest {
     /// 1-based position in the request (`S1`, `S2`, ...).
     pub index: usize,
@@ -115,11 +60,8 @@ pub struct TestPlan {
 }
 
 impl TestPlan {
-    /// Parse and check every scoring period against the training scope `base`.
-    ///
-    /// Issue codes (field `test_period_<n>_start` / `test_period_<n>_end`):
-    /// `test_start_unparseable`, `test_end_unparseable`,
-    /// `test_ends_before_start`.
+    /// Parse and check each period against `base`.
+    /// Issue codes: `test_start_unparseable`, `test_end_unparseable`, `test_ends_before_start`.
     pub fn resolve(args: &[TestPeriodArg], base: Option<&PreviewFilter>, headers: &[String]) -> TestPlan {
         let mut tests = Vec::with_capacity(args.len());
         let mut issues = Vec::new();
@@ -193,9 +135,7 @@ impl TestPlan {
         }
     }
 
-    /// Dataset rows of each test (ascending), one `Vec` per planned test (empty
-    /// for an invalid one): rows that pass `finite` (the kind's "has all its
-    /// inputs" test) and the test's filter.
+    /// Dataset rows per test, ascending (empty if invalid): rows passing `finite` and the test's filter.
     pub fn collect_rows(
         &self,
         data: &ColumnarData,
@@ -215,8 +155,7 @@ impl TestPlan {
     }
 }
 
-/// Relationship: the rows of each test period that have all inputs
-/// (`target_col` + `pred_cols` finite), one ascending `Vec` per planned test.
+/// Rows of each test period with all inputs finite (`target_col` + `pred_cols`), ascending.
 pub fn rel_test_rows(
     plan: &TestPlan,
     data: &ColumnarData,
@@ -242,9 +181,6 @@ fn rows_outside_training(per_test: &[Vec<u32>], train_rows: &[u32]) -> Vec<u32> 
     rows
 }
 
-// ---------------------------------------------------------------------------
-// Relation model: the hourly table
-// ---------------------------------------------------------------------------
 
 /// The predictor values of a fit's training rows, in either layout.
 #[derive(Clone, Copy)]
@@ -264,9 +200,7 @@ impl RelX<'_> {
     }
 }
 
-/// The training rows of a Relation model and their values, exactly as the
-/// model was fitted on them (a cached fit keeps its own copy, so the hourly
-/// means of the training rows never depend on the live dataset columns).
+/// Training rows and values as fitted; a cached fit keeps its own copy, so hourly means don't depend on live columns.
 #[derive(Clone, Copy)]
 pub struct RelTrain<'a> {
     /// Dataset rows the model was fitted on, ascending.
@@ -299,30 +233,11 @@ pub struct RelCols<'a> {
     pub predictors: &'a [usize],
 }
 
-/// Most scoring periods that may share ONE clock hour for every combination of
-/// them to be prepared (see [`RelHours`], "removing a period"). Beyond it only
-/// the full hour and its training-only version are prepared.
+/// Most periods that may share an hour with every combination prepared; beyond it only the full and training-only hours.
 const MAX_SHARED_PERIODS: usize = 3;
 
-/// The hourly table of a Relation model: what its health score is computed on.
-///
-/// * **Universe** (unchanged): the training rows, plus the rows of every
-///   scoring period that have all inputs and pass the running condition's
-///   value conditions. Ascending dataset rows.
-/// * **Hourly point**: the universe rows of one clock hour (`health_hourly`):
-///   mean target and mean of each predictor. A boundary hour between the
-///   training periods and a scoring period averages rows of both.
-/// * **Prediction**: the engine's answer for the hour's mean predictors
-///   ([`RelHours::points`] is what to ask for, [`RelHours::predicted`] looks the
-///   answers up). It is never an average of per-row predictions.
-///
-/// **Removing a period never needs the engine.** An hour that holds rows of
-/// more than one source (training rows and a scoring period, or two scoring
-/// periods - typical for periods that share a boundary instant) changes its
-/// mean when one of them goes away. [`RelHours::points`] therefore also carries
-/// the mean of every such hour for each combination of scoring periods that
-/// could remain (training rows always stay). Shortening a period to an edge
-/// INSIDE an hour does make a new point (that hour is predicted once).
+/// Hourly table for the Relation health score: training plus scoring-period rows with all inputs, one mean point per clock hour.
+/// Prediction is on the mean predictors, never an average of row predictions. Shared hours carry a mean per period combination, so removing a period needs no engine call.
 pub struct RelHours {
     /// The universe: ascending dataset rows.
     pub rows: Vec<u32>,
@@ -344,9 +259,7 @@ pub struct RelHours {
 }
 
 impl RelHours {
-    /// Build the table. `scoring` = the scoring periods and the dataset columns
-    /// of the inputs (`None` = no scoring periods: the universe is the training
-    /// rows and the dataset columns are never read).
+    /// Build the table; `scoring` = None means the universe is the training rows and dataset columns are never read.
     pub fn build(
         data: &ColumnarData,
         train: &RelTrain,
@@ -386,8 +299,7 @@ impl RelHours {
             Some(t) => t.iter().map(|&x| x != NOT_TRAIN).collect(),
         };
         let cols = scoring.map(|(_, c)| *c);
-        // Input `k` (`None` = the target) of universe position `i`: a training
-        // row's value comes from the fit, any other row's from the dataset.
+        // Training rows take values from the fit, any other row from the dataset.
         let value = |k: Option<usize>, i: usize| -> f64 {
             let ti = match &tix {
                 None => Some(i),
@@ -432,12 +344,7 @@ impl RelHours {
         &self.x[h * self.n_pred..(h + 1) * self.n_pred]
     }
 
-    /// Every hourly point the engine has to predict for this table: one per
-    /// hour (its mean predictors) plus the shared-hour versions described on
-    /// the type. THE one implementation - the Train pre-warm, the later
-    /// `predict_relationship` run and the export all send exactly this (minus
-    /// what is already stored), so they can never disagree with the preview.
-    /// An hour whose mean is not finite is left out (it stays unscored).
+    /// Every hourly point the engine must predict (hour means plus shared-hour variants); non-finite means are left out.
     pub fn points(&self) -> RelHourPoints {
         let keys = self.groups.hour_keys();
         let mut hours: Vec<i64> = Vec::with_capacity(keys.len() + self.variants.0.len());
@@ -454,8 +361,7 @@ impl RelHours {
         RelHourPoints::from_unsorted(self.n_pred, hours, x)
     }
 
-    /// The engine's prediction of every hour (`NaN` = none stored for that hour
-    /// AND exactly its mean predictors - the hour is then unscored).
+    /// Engine prediction per hour; `NaN` = none stored for exactly that hour's mean predictors (hour unscored).
     pub fn predicted(&self, extra: Option<&RelExtra>) -> Vec<f64> {
         self.groups
             .hour_keys()
@@ -466,21 +372,8 @@ impl RelHours {
     }
 }
 
-/// The mean predictors of every hour that holds rows of more than one source
-/// (training rows / each scoring period), for each combination of scoring
-/// periods that could remain after some are removed - the training rows always
-/// stay, the full hour itself is not repeated. Returns (hour numbers, row-major
-/// means). The sums run in ascending row order and divide like
-/// [`HourGroups::mean`], so a value is bit-identical to what a later table
-/// without those periods computes for the hour.
-///
-/// Only an hour whose rows do NOT all belong to the same sources can change:
-/// when every row of the hour is a training row AND a row of period 1 (a
-/// scoring period laid over the training range), whatever remains keeps either
-/// all of its rows or none, so its mean is the one already in the table. Such
-/// hours are skipped up front - the pass is linear in the universe however much
-/// the periods overlap the training range, and only the few boundary hours are
-/// looked at row by row. `rows` and every list of `test_rows` are ascending.
+/// Mean predictors of shared hours (rows of several sources), per combination of remaining scoring periods; training stays.
+/// Bit-identical to a table built without those periods. Single-source hours are skipped, keeping the pass linear.
 fn shared_hour_variants(
     rows: &[u32],
     is_train: &[bool],
@@ -581,10 +474,7 @@ fn shared_hour_variants(
     (out_h, out_x)
 }
 
-/// First position `>= from` of the ascending `rows` whose row is `>= r`
-/// (`rows.len()` when there is none). Looks right next to `from` first and
-/// widens the search exponentially, so walking a dense ascending list of rows
-/// through `rows` is linear, and a sparse one costs a logarithm of each gap.
+/// First position >= `from` in ascending `rows` with row >= `r` (`rows.len()` if none), by exponential search.
 fn first_at_or_after(rows: &[u32], from: usize, r: u32) -> usize {
     let mut step = 1usize;
     while from + step < rows.len() && rows[from + step] < r {
@@ -594,29 +484,15 @@ fn first_at_or_after(rows: &[u32], from: usize, r: u32) -> usize {
     from + rows[from.min(end)..end].partition_point(|&u| u < r)
 }
 
-/// Stable code of the warning added when the Relation model's health score
-/// could not be calculated and trying again may help (engine error / timeout).
-/// The codes keep their `test_scoring_*` names (nothing on the wire is renamed)
-/// although the warning can now also appear WITHOUT scoring periods: the
-/// training hours need the engine's prediction too.
+/// Warning: Relation health score failed, a retry may help (engine error/timeout). Can occur without scoring periods.
 pub const TEST_SCORING_FAILED: &str = "test_scoring_failed";
-/// Stable code of the warning added when the bundled Relation model engine is
-/// too old to predict hourly points: a retry can never help (only an updated
-/// install), so the frontend shows no "Try again" for it.
+/// Warning code when the bundled engine is too old for hourly predictions; retry can't help, so no 'Try again'.
 pub const TEST_SCORING_OUTDATED: &str = "test_scoring_outdated";
 
-/// Warning code when the hourly predictions do not fit the model cache's memory
-/// budget: retrying the same periods fails the same way, so it gets its own code
-/// and the frontend offers no "Try again" -- the user has to shorten the train
-/// or the scoring periods (it can fire with NO scoring period: the training
-/// hours alone can be over the budget).
+/// Warning: hourly predictions exceed the cache budget, so no 'Try again'. Can fire with no scoring period.
 pub const TEST_SCORING_TOO_LARGE: &str = "test_scoring_too_large";
 
-/// Why the health score of a Relationship preview could not be calculated
-/// (the engine's predictions for its hourly points are missing). Picks the
-/// warning's code and user-facing wording; also kept with the cache's
-/// "last attempt failed" marker, so a remembered failure is reported with the
-/// same wording as the original one.
+/// Why a Relationship health score failed; picks the warning code and wording, and is stored in the cache's failure marker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestScoringFailure {
     /// The engine failed, timed out or answered something unusable.
@@ -627,10 +503,7 @@ pub enum TestScoringFailure {
     Outdated,
 }
 
-/// The warning `compute_health_preview` adds when the prediction step for the
-/// hourly points failed (never an error: the model fit is still valid). Hours
-/// without a prediction have no score. The wording never carries the engine's
-/// own text.
+/// Warning for a failed hourly prediction, never an error (the fit is valid). Carries no engine text.
 pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
     let (code, message) = match kind {
         TestScoringFailure::Outdated => (
@@ -657,12 +530,7 @@ pub fn test_scoring_issue(kind: TestScoringFailure) -> Issue {
     }
 }
 
-/// Turn a finished `test_validation` into "nothing could be scored": every
-/// period keeps its identity and its raw facts (index, period, days, rows,
-/// hours, the training overlap) but has no score, no metrics and none of the
-/// nullable score fields - never a half-filled result that looks like a real
-/// one. (The counts need no fixing: the hourly table does not depend on which
-/// predictions arrived.)
+/// Turn a finished `test_validation` into 'nothing scored': keep identity and raw facts, drop scores and metrics.
 pub fn mark_unscored(v: &mut TestValidation) {
     for t in v.tests.iter_mut() {
         t.scored = 0;
@@ -673,8 +541,7 @@ pub fn mark_unscored(v: &mut TestValidation) {
     }
 }
 
-/// The training periods as echoed in `train_ranges` (the new `timestamp_ranges`,
-/// or the legacy start/end pair as one range).
+/// The training periods as echoed in `train_ranges`: `timestamp_ranges`, or the start/end pair as one range.
 fn train_ranges_of(base: Option<&PreviewFilter>) -> Vec<TrainRange> {
     let Some(b) = base else {
         return Vec::new();
@@ -697,12 +564,8 @@ fn train_ranges_of(base: Option<&PreviewFilter>) -> Vec<TrainRange> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Response
-// ---------------------------------------------------------------------------
 
-/// The metrics that make sense for the model kind; every other field stays
-/// `None` and is OMITTED from the JSON (undefined on the TS side).
+/// Metrics for the model kind; other fields stay `None` and are omitted from the JSON.
 #[derive(Debug, Clone, Default, Serialize, PartialEq)]
 pub struct KindMetrics {
     // Relationship (residual = actual - predicted)
@@ -768,8 +631,7 @@ pub struct TestResult {
     /// Share (%) of the scored HOURS whose score is below 80. `None` = nothing
     /// was scored.
     pub pct_below_80: Option<f64>,
-    /// The lowest hourly score of the period (rounded to a whole score), and
-    /// the START of that hour (`2024-01-05T13:00:00`).
+    /// Lowest hourly score of the period (whole score) and the START of that hour (`2024-01-05T13:00:00`).
     pub lowest: Option<f64>,
     pub lowest_at: Option<String>,
 }
@@ -781,9 +643,6 @@ pub struct TestValidation {
     pub tests: Vec<TestResult>,
 }
 
-// ---------------------------------------------------------------------------
-// Maths
-// ---------------------------------------------------------------------------
 
 /// `-0.0` -> `0.0` (adding +0.0 does it) so a rounded tiny negative never
 /// shows up as `-0.0` in the JSON.
@@ -804,25 +663,16 @@ pub fn r3dp(x: f64) -> f64 {
     nz((x * 1000.0).round() / 1000.0)
 }
 
-/// Median sample interval of the dataset in seconds (`None` below 2 valid
-/// timestamps). Constant for a loaded dataset and cached on it (computed at
-/// most once, normally by `load_csv`) - see
-/// [`ColumnarData::sample_interval_secs`]; this is never a scan per call.
+/// Median sample interval in seconds (`None` below 2 valid timestamps); cached on the dataset, never a scan per call.
 pub fn sample_interval_secs(data: &ColumnarData) -> Option<f64> {
     data.sample_interval_secs()
 }
 
-/// "Running time days" of `rows` dataset rows: rows x the dataset's median
-/// sample interval, one decimal (`0.0` when the interval is unknown). THE one
-/// definition - the scoring results' `days` and the Running-condition modal's
-/// per-period "d running" (`period_counts`) both come from here.
+/// Running-time days: rows x median sample interval, one decimal (`0.0` if unknown); also used by the Running-condition modal.
 pub(crate) fn days_of(rows: usize, interval_secs: Option<f64>) -> f64 {
     interval_secs.map_or(0.0, |iv| r1(rows as f64 * iv / 86_400.0))
 }
 
-// ---------------------------------------------------------------------------
-// The scoring results (the health score on 1-hour averages)
-// ---------------------------------------------------------------------------
 
 /// One scoring period as the hourly builder needs it.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -836,13 +686,8 @@ pub struct PeriodHours {
     pub hours: Vec<usize>,
 }
 
-/// The raw counts and the hourly points of every scoring period.
-///
-/// * `test_rows` - [`TestPlan::collect_rows`] output (ascending dataset rows per
-///   period); a row missing from the universe is dropped.
-/// * `urows` / `is_train` - the kind's row universe (ascending dataset rows) and
-///   each row's training flag.
-/// * `groups` - the hourly grouping of that same universe.
+/// Raw counts and hourly points per scoring period. `test_rows`: ascending rows per period; rows outside the universe are dropped.
+/// `urows`/`is_train`: the row universe and training flags; `groups`: its hourly grouping.
 pub fn period_hours(
     test_rows: &[Vec<u32>],
     urows: &[u32],
@@ -908,14 +753,8 @@ pub fn hour_facts(hours: &[usize], scores: &[f64]) -> HourFacts {
     f
 }
 
-/// Build the whole `test_validation` block from HOURLY points (all three
-/// kinds).
-///
-/// * `periods` - [`period_hours`] output, aligned with `plan.tests`.
-/// * `train_rows` / `train_metrics` - the kind's RAW train summary (unchanged
-///   by the hourly scoring).
-/// * `metrics_for(hours)` - the kind's metrics over a period's hourly points
-///   (called only for a period that has one).
+/// Build the whole `test_validation` block from hourly points (all kinds). `periods` aligns with `plan.tests`.
+/// `train_rows`/`train_metrics` stay the RAW train summary. `metrics_for(hours)` runs only for a period that has hourly points.
 pub fn build_hourly(
     plan: &TestPlan,
     periods: &[PeriodHours],
@@ -973,9 +812,6 @@ pub fn build_hourly(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Export block
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -992,7 +828,6 @@ mod tests {
         vec!["timestamp".into(), "S".into()]
     }
 
-    // ---------- test-scoring warnings ----------
 
     #[test]
     fn test_scoring_issue_codes_and_wording_per_kind() {
@@ -1002,8 +837,7 @@ mod tests {
         let big = test_scoring_issue(TestScoringFailure::OverBudget);
         assert_eq!(big.code, TEST_SCORING_TOO_LARGE, "own code: retrying the same periods cannot help");
         assert!(big.message.contains("too many hours to score in memory"), "{}", big.message);
-        // True with or without a scoring period: the training hours alone can
-        // be over the budget, so it never tells the user to "remove one".
+        // True with or without a scoring period: training hours alone can exceed the budget, so never say 'remove one'.
         assert!(big.message.contains("shorten the train or scoring periods"), "{}", big.message);
         assert!(!big.message.contains("remove"), "{}", big.message);
         assert!(!big.message.contains("did not answer"));
@@ -1013,8 +847,7 @@ mod tests {
         for i in [&out, &big, &eng] {
             assert_eq!(i.severity, Severity::Warning);
             assert_eq!(i.field, "test_periods");
-            // The whole health score of a Relation model depends on the engine's
-            // hourly predictions now - the wording says so, and that the fit is fine.
+            // The health score depends on hourly predictions, so the wording says that and that the fit is fine.
             assert!(i.message.starts_with("The health score could not be calculated"), "{}", i.message);
             assert!(i.message.contains("The model fit is not affected"), "{}", i.message);
             assert!(!i.message.contains("could not be scored"), "{}", i.message);
@@ -1044,7 +877,6 @@ mod tests {
         );
     }
 
-    // ---------- plan / issues ----------
 
     #[test]
     fn plan_parses_ranges_and_numbers_them_from_one() {
@@ -1091,9 +923,7 @@ mod tests {
 
     #[test]
     fn the_removed_label_and_event_time_are_accepted_on_the_wire_but_never_read() {
-        // What the frontend sent before the redesign, with values that used to be
-        // refused (`test_label_invalid`, `event_outside_test_period`,
-        // `event_unparseable`) - none of it matters any more.
+        // Old payload keys (`label`, `event_time`, ...) are ignored whatever their values.
         let (s, e) = ("2024-02-01T00:00", "2024-02-10T00:00");
         let plain: TestPeriodArg = serde_json::from_value(serde_json::json!({ "start": s, "end": e })).unwrap();
         for legacy in [
@@ -1128,7 +958,6 @@ mod tests {
         assert!(TestPlan::resolve(&[], None, &headers()).train_ranges.is_empty());
     }
 
-    // ---------- shared row selection / unscored ----------
 
     #[test]
     fn rows_outside_training_are_merged_sorted_unique_and_exclude_train_rows() {
@@ -1179,10 +1008,8 @@ mod tests {
         assert_eq!(v.train, before.train, "the train block is the model's own numbers: untouched");
     }
 
-    // ---------- the Relation model's hourly table ----------
 
-    /// 20-minute rows from 2024-01-01T00:00 (3 per hour): X = i, Z = 100 - i,
-    /// Y = 2X. Headers: timestamp, X, Z, Y.
+    /// 20-minute rows from 2024-01-01T00:00 (3 per hour): X = i, Z = 100 - i, Y = 2X. Headers: timestamp, X, Z, Y.
     fn rel_data(n: usize) -> ColumnarData {
         let x: Vec<f64> = (0..n).map(|i| i as f64).collect();
         let z: Vec<f64> = (0..n).map(|i| 100.0 - i as f64).collect();
@@ -1302,7 +1129,7 @@ mod tests {
         assert_eq!(hour4, vec![&[12.5, 87.5][..], &[13.0, 87.0][..]]);
     }
 
-    /// Is every point of `needed` among `asked`?
+    /// Number of `needed` points that are not among `asked`.
     fn missing_from(needed: &RelHourPoints, asked: &RelHourPoints) -> usize {
         let known = RelExtra::new(asked, &vec![0.0; asked.len()]).unwrap();
         (0..needed.len()).filter(|&i| !known.has(needed.hours()[i], needed.x(i))).count()
@@ -1310,8 +1137,7 @@ mod tests {
 
     #[test]
     fn removing_scoring_periods_never_needs_a_point_that_was_not_asked_for() {
-        // Training = rows 0..=13. S1 = 14..=20, S2 = 20..=27 (they share row 20
-        // and hour 6), S3 = 30..=31. Hour 4 is shared by training and S1.
+        // Training = rows 0..=13. S1 = 14..=20, S2 = 20..=27 (share row 20 and hour 6), S3 = 30..=31. Hour 4 is shared by training and S1.
         let d = rel_data(36);
         let fit = rel_fit(&d, (0..14).collect());
         let (s1, s2, s3) = ((14, 20), (20, 27), (30, 31));
@@ -1327,8 +1153,7 @@ mod tests {
         // The other way round is not free: ADDING a period brings new points...
         let two = rel_hours(&d, &fit, &[s1, s2]).points();
         assert!(missing_from(&asked, &two) > 0);
-        // ...and so does an edge moved INSIDE an hour: S1 cut to rows 14..=16
-        // leaves hour 5 with rows 15, 16 only - exactly one point nobody asked for.
+        // An edge moved inside an hour adds a point: S1 cut to 14..=16 leaves hour 5 with rows 15, 16 only.
         let cut = rel_hours(&d, &fit, &[(14, 16), s2, s3]).points();
         assert_eq!(missing_from(&cut, &asked), 1);
         // Shortening to an hour boundary is free again (S1 = 14..=17: hour 5 complete).
@@ -1350,9 +1175,7 @@ mod tests {
 
     #[test]
     fn a_scoring_period_over_the_training_range_adds_no_point_and_only_its_edge_hours_can_change() {
-        // Training = rows 0..=20 (hours 0..=6). S1 = rows 0..=20: every row of
-        // every hour is a training row AND a row of S1 - removing S1 changes no
-        // mean, so nothing but the 7 hours is asked for.
+        // Training = rows 0..=20 and S1 = the same rows: removing S1 changes no mean, so only the 7 hours are asked for.
         let d = rel_data(36);
         let fit = rel_fit(&d, (0..=20).collect());
         let base = rel_hours(&d, &fit, &[]).points();
@@ -1361,17 +1184,11 @@ mod tests {
         assert_eq!(over.points(), base);
         // Two periods over everything: still nothing.
         assert_eq!(rel_hours(&d, &fit, &[(0, 20), (0, 20)]).points(), base);
-        // S1 = rows 4..=22. Its edge hour 1 holds row 3 (training) and rows 4, 5
-        // (training + S1): the rows differ in their sources, but dropping S1
-        // keeps all three - no new point. Hours 2..=6 are uniform, and hour 7
-        // (rows 21, 22: S1 only) exists only with S1.
+        // S1 = rows 4..=22. Edge hour 1: dropping S1 keeps all its rows, no new point. Hours 2..=6 are uniform; hour 7 exists only with S1.
         let part = rel_hours(&d, &fit, &[(4, 22)]);
         assert_eq!(part.variants.0, Vec::<i64>::new());
         assert_eq!(part.points().len(), 8);
-        // S2 = rows 19..=25 beside it. Hour 6 holds row 18 (training + S1) and
-        // rows 19, 20 (training + S1 + S2): all training rows, nothing new.
-        // Hour 7 holds rows 21, 22 (S1 + S2) and row 23 (S2): dropping S1 keeps
-        // all three, dropping S2 leaves rows 21, 22 - exactly ONE new point.
+        // S2 = rows 19..=25. Hour 6 is all training rows. Hour 7 (rows 21-23): dropping S2 leaves rows 21, 22, exactly one new point.
         let two = rel_hours(&d, &fit, &[(4, 22), (19, 25)]);
         let keys = two.groups.hour_keys();
         assert_eq!(two.variants.0, vec![keys[7]]);
@@ -1380,9 +1197,7 @@ mod tests {
         assert_eq!(missing_from(&rel_hours(&d, &fit, &[(4, 22)]).points(), &two.points()), 0);
     }
 
-    /// The previous implementation of [`shared_hour_variants`] (every hour with
-    /// more than one source is walked row by row, each row's sources found by a
-    /// binary search per period) - kept as the oracle of the faster one.
+    /// Row-by-row reference for `shared_hour_variants` (binary search per period); the oracle for the faster one.
     fn shared_hour_variants_reference(
         rows: &[u32],
         is_train: &[bool],
@@ -1470,8 +1285,7 @@ mod tests {
         };
         let mut with_variants = 0;
         for case in 0..400 {
-            // 20-minute rows over up to 20 hours; the file is in time order for
-            // most cases and shuffled (rows of an hour far apart) for the rest.
+            // 20-minute rows over up to 20 hours; time order in most cases, shuffled for the rest.
             let n = 12 + next(48) as usize;
             let mut ts = ts20(n);
             if case % 4 == 3 {
@@ -1482,8 +1296,7 @@ mod tests {
             if case % 7 == 0 {
                 ts[next(n as u64) as usize] = crate::csv_processor::TS_MISSING;
             }
-            // Training rows: one or two runs. Periods: 0..=5 runs anywhere (over
-            // the training rows, beside them, over each other, repeated).
+            // Training: one or two runs. Periods: 0..=5 runs anywhere (over, beside, overlapping, repeated).
             let mut train = vec![false; n];
             for _ in 0..1 + next(2) {
                 let a = next(n as u64) as usize;
@@ -1526,8 +1339,7 @@ mod tests {
         let extra = RelExtra::new(&pts, &preds).unwrap();
         assert_eq!(base.predicted(Some(&extra)), vec![2.0, 8.0, 14.0, 20.0, 25.0]);
         assert!(base.predicted(None).iter().all(|v| v.is_nan()), "no predictions: every hour unscored");
-        // With a scoring period hour 4 has other means and hours 5, 6 are new:
-        // none of the three has a prediction yet - the old hour-4 answer is NOT reused.
+        // With a scoring period hour 4 has other means and hours 5, 6 are new: none has a prediction; the old hour-4 answer is not reused.
         let with = rel_hours(&d, &fit, &[(14, 20)]);
         let got = with.predicted(Some(&extra));
         assert_eq!(&got[..4], &[2.0, 8.0, 14.0, 20.0]);
@@ -1607,7 +1419,7 @@ mod tests {
         assert_eq!(hour_facts(&[], &scores).lowest, None);
     }
 
-    /// 20-minute rows, 2024-01-01 from 00:00: row `i` is at `i * 20` minutes.
+    /// 20-minute rows from 2024-01-01 00:00: row `i` is at `i * 20` minutes.
     fn ts20(n: usize) -> Vec<i64> {
         let t0 = chrono::NaiveDate::from_ymd_opt(2024, 1, 1).unwrap().and_hms_opt(0, 0, 0).unwrap();
         (0..n as i64).map(|i| t0.and_utc().timestamp_micros() + i * 20 * 60_000_000).collect()
@@ -1630,8 +1442,7 @@ mod tests {
 
     #[test]
     fn build_hourly_reports_raw_rows_beside_hours_and_judges_the_hourly_scores() {
-        // 20-minute rows (3 per hour), 6 hours. Training = hours 0..=1 plus row 6
-        // (the first row of hour 2). S1 = rows 7..=17 (the rest of hour 2 .. hour 5).
+        // 20-minute rows, 6 hours. Training = hours 0..=1 plus row 6; S1 = rows 7..=17.
         let n = 18;
         let urows: Vec<u32> = (0..n as u32).collect();
         let is_train: Vec<bool> = (0..n).map(|i| i <= 6).collect();

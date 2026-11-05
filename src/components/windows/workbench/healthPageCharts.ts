@@ -32,41 +32,13 @@ import {
     type TimeScopes,
 } from './healthCharts';
 
-/*
- * Pure ECharts option builders of the Health score page: the SET-POINT chart
- * (per kind) and the SCORE chart. Like
- * `healthCharts.ts` they take only the bounded `compute_health_preview` payload
- * plus the set points being edited (the draft), and return a plain option.
- *
- * The page hands every builder here the HOURLY series (`HealthPreview.hourly`:
- * one point per clock hour, every value the mean of the hour's running rows) —
- * never the raw `series`, which is the Model fit page's and carries no score.
- *
- * Lines for a value that is not entered yet (null / NaN) are simply absent;
- * they appear and move as the user types.
- *
- * The user's set points are the STRONGEST lines of a chart (solid, 1.5 px) and
- * carry their value inside the plot at the right end — in the form the user
- * typed (`typedText`: "H 4.6", "L 2.2", "80 · +5"), never padded or rounded.
- * The computed reference lines (±1SD, ±3SD, ±2RMSE) are thin and labelled
- * outside the plot.
- *
- * Hover sync: every time-based option (set-point chart of Individual /
- * Relationship, and the score chart) carries `axisPointer.link` on the X axis
- * and the page puts both charts in one ECharts group (`echarts.connect`), so the
- * same timestamp cursor and tooltip show on both. Both are drawn from the SAME
- * downsampled index set (`hourly`), which Rust guarantees.
- */
+/* Pure ECharts option builders for the Health score page, fed the bounded HOURLY series and the draft set points, never raw `series`. Time charts share `axisPointer.link` and one echarts group. */
 
 /** ECharts group id the two time charts are connected under. */
 export const HEALTH_SYNC_GROUP = 'health-score-sync';
-/** The group of the ENLARGED copy of the pair (the Expand overlay): its own, so the two
- *  charts in the overlay share a cursor while the pair under the backdrop stays still. */
+/** Group of the enlarged copy (Expand overlay), so its pair shares a cursor while the pair beneath stays still. */
 export const HEALTH_SYNC_GROUP_EXPANDED = 'health-score-sync-expanded';
 
-// ---------------------------------------------------------------------------
-// The stacked card: a time chart with the score chart right under it
-// ---------------------------------------------------------------------------
 
 /** What the two helpers below need of a time-chart option (`buildTimeSeriesOption`). */
 interface StackableOption {
@@ -75,16 +47,10 @@ interface StackableOption {
     series: Record<string, unknown>[];
 }
 
-/** Space under the upper plot / above the lower plot of the stack, px: room for the
- *  outermost Y tick label and nothing else, so the two plots read as one. */
+/** Gap between the upper and lower plots, px: room for the outermost Y tick label only. */
 export const STACK_INNER_GAP = 8;
 
-/**
- * The UPPER chart of the stacked card when the score chart sits right under it on the
- * SAME time axis: its X labels and ticks are left out (the lower chart prints them, once)
- * and the plot runs down to the divider. Only the look changes — the axis itself (type,
- * range, the tooltip heading) is untouched, so the two plots stay aligned.
- */
+/** Upper chart of the stacked card: X labels/ticks dropped (the lower chart prints them); axis type, range and tooltip heading are untouched so plots stay aligned. */
 export function asStackUpper<T extends StackableOption>(opt: T): T {
     const axisLabel = (opt.xAxis.axisLabel ?? {}) as Record<string, unknown>;
     return keepFollowY(opt, {
@@ -94,11 +60,7 @@ export function asStackUpper<T extends StackableOption>(opt: T): T {
     });
 }
 
-/**
- * The LOWER chart of the stacked card under a time chart: the train periods are NAMED
- * once, in the strip above the upper chart, so here the names are hidden (the bands
- * themselves stay) and the plot starts right under the divider.
- */
+/** Lower chart of the stack: train period names hidden (named once above; bands stay) and the plot starts under the divider. */
 export function asStackLower<T extends StackableOption>(opt: T): T {
     const series = opt.series.map(s => {
         if (s.name !== '__scopes') return s;
@@ -113,16 +75,7 @@ const finite = (v: number | null | undefined): v is number => typeof v === 'numb
 /** Width of a set-point line (a reference line is 1 px). */
 const SET_POINT_WIDTH = 1.5;
 
-/**
- * A set point as the user typed it: every decimal of its shortest exact form,
- * thousands separators only — "4.6" (never the padded "4.60"), "4.61234" (never
- * the rounded "4.612"). The same rule Rust's validation messages follow
- * (`fmt_typed`), so the chart, the Checks and the input agree.
- *
- * As a chart label a negative carries a real minus sign (U+2212), like the
- * "−1SD" and "0 · −9" labels beside it — never the ASCII hyphen — and a negative
- * zero reads "0".
- */
+/** Set point as typed: shortest exact form with thousands separators ('4.6', not '4.60'), same rule as Rust's `fmt_typed`. U+2212 for negatives; negative zero reads '0'. */
 export function typedText(v: number): string {
     return fmtNumExact(v === 0 ? 0 : v).replace(/^-/, '−');
 }
@@ -136,9 +89,6 @@ export function signedTypedText(v: number): string {
 /** `axisPointer.link` so two connected charts show one cursor. */
 const SYNC = { axisPointer: { ...HOVER_AXIS_POINTER, link: [{ xAxisIndex: 'all' }] } };
 
-// ---------------------------------------------------------------------------
-// Score colour (0-100)
-// ---------------------------------------------------------------------------
 
 /** The colour of a score: 80-100 green, 40-80 amber, below 40 red. */
 export function scoreColor(score: number | null | undefined, alpha = 1): string {
@@ -148,13 +98,8 @@ export function scoreColor(score: number | null | undefined, alpha = 1): string 
     return `rgba(238, 90, 69, ${alpha})`;
 }
 
-// ---------------------------------------------------------------------------
-// Set-point chart - Individual
-// ---------------------------------------------------------------------------
 
-/** The sensor's 1-hour average over time with the ±1SD band (the only fill), the dashed
- *  ±3SD lines and the L / H set-point lines ("H 4.6" above its line, "L 2.2"
- *  below). No histogram on this page. */
+/** Sensor's 1-hour average over time with the ±1SD band (only fill), dashed ±3SD lines and L / H set-point lines. No histogram. */
 export function buildIndividualSetPointOption(
     series: IndividualSeries,
     stats: IndividualStats,
@@ -177,14 +122,8 @@ export function buildIndividualSetPointOption(
     return keepFollowY(opt, { ...opt, ...SYNC });
 }
 
-// ---------------------------------------------------------------------------
-// Set-point chart - Relationship
-// ---------------------------------------------------------------------------
 
-/** The hourly residual over time ONLY, with ±2RMSE, a zero line and the four 80 / 0 lines
- *  (lower and upper) the user has entered so far — each labelled with its score
- *  and its value as typed ("80 · +5" above an upper line, "0 · −9" below a
- *  lower one). */
+/** Hourly residual over time with ±2RMSE, a zero line and the entered 80 / 0 lines, labelled '80 · +5' above an upper line, '0 · −9' below a lower one. */
 export function buildRelationshipSetPointOption(
     series: RelationshipSeries,
     twoRmse: number,
@@ -212,30 +151,14 @@ export function buildRelationshipSetPointOption(
     return keepFollowY(opt, { ...opt, ...SYNC });
 }
 
-/** The hourly Actual and Predicted lines, the top chart of the Relation model's card: the
- *  same two lines as Model fit's "Target vs predicted", over the Health score page's whole
- *  range. Actual − Predicted is the residual right under it, and the plot keeps the
- *  residual's right edge so a moment in time is at the same X in all three charts. */
+/** Hourly Actual and Predicted lines (top chart of the Relation card), as in Model fit's 'Target vs predicted'; keeps the residual's right edge so X lines up in all charts. */
 export function buildHealthFitOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
     const opt = buildTargetVsPredictedOption(series, unit, scopes);
     return keepFollowY(opt, { ...opt, ...SYNC, grid: { ...opt.grid, right: REF_LABEL_GUTTER } });
 }
 
-// ---------------------------------------------------------------------------
-// Set-point chart - Clustering
-// ---------------------------------------------------------------------------
 
-/**
- * Scatter of the (bounded) hourly points — one (mean x, mean y) per clock hour —
- * with the 1x, 3x and N x SD ring of EVERY cluster. Points come from `hourly`
- * (not the raw `cluster_scatter`) so a hovered point is exactly one entry of the
- * score series: they are coloured by score once the
- * set points are valid, by cluster before. The N x ring appears when N is a
- * number (any number; Rust judges it): it is the user's own set point, so it is
- * the strongest ring — solid red. Each ring LEVEL is named once, at the right
- * edge of the ring that reaches furthest right ("1× · 100", "3× · 80",
- * "5× · 0" with N as typed). `names` are the axis titles (description + unit).
- */
+/** Scatter of the bounded hourly points (one (mean x, mean y) per clock hour) with the 1x, 3x and N x SD rings of every cluster. Coloured by score once set points are valid, else by cluster. The N x ring is solid red. */
 export function buildClusterSetPointOption(
     series: ClusteringSeries,
     clusters: ClusterStat[],
@@ -321,13 +244,8 @@ export function buildClusterSetPointOption(
     }, names);
 }
 
-// ---------------------------------------------------------------------------
-// Score chart
-// ---------------------------------------------------------------------------
 
-/** Health score (0-100) over time: a dashed line at 80, the line coloured by the
- *  score band (green 80-100, amber 40-80, red below 40), gaps where an hour has no
- *  score (`null`, never 0). `timestamps` are the hour starts of `hourly`. */
+/** Health score (0-100) over time: dashed line at 80, coloured by band (green 80-100, amber 40-80, red below 40), gaps where an hour has no score (`null`, never 0). */
 export function buildScoreOption(timestamps: string[], score: (number | null)[], scopes: TimeScopes | null = null) {
     const base = buildTimeSeriesOption({
         timestamps,

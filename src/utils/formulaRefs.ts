@@ -1,19 +1,4 @@
-/**
- * Which sensors a formula names -- the TypeScript twin of Rust's
- * `scan_sensor_refs` (`src-tauri/src/lib.rs`), used for DISPLAY only (the
- * "Referenced sensors" chips under the Create formula box). Anything that
- * decides behaviour (dependencies, renames) still asks Rust
- * (`extract_formula_refs` / `rename_formula_refs`).
- *
- * Grammar, exactly as Rust scans it:
- *   - `${Anything Up To The First Brace}` -- an empty `${}` or an unclosed
- *     `${` names nothing;
- *   - `$Name` -- starts with an alphanumeric or `_`, then runs while the
- *     characters are alphanumeric, `_` or `.` (so `$11PT1214A.PV` is ONE
- *     sensor, and `$Total-Power` is `Total` minus something).
- * Rust's `char::is_alphanumeric` is Unicode `Alphabetic || Numeric`, hence
- * `\p{Alphabetic}` / `\p{N}` (a bare Thai name like `$อุณหภูมิ` is one name).
- */
+/** TS twin of Rust's scan_sensor_refs (lib.rs), for DISPLAY only; dependencies and renames still ask Rust. Grammar: `${Up To First Brace}` (empty or unclosed names nothing); `$Name` starts alphanumeric/`_` and continues alphanumeric/`_`/`.` (`$11PT1214A.PV` is one sensor, `$Total-Power` is `Total` minus something). Unicode Alphabetic || Numeric, as in Rust. */
 const REF = /\$\{([^}]+)\}|\$([\p{Alphabetic}\p{N}_][\p{Alphabetic}\p{N}_.]*)/gu;
 
 /** Distinct sensor names in order of first appearance. */

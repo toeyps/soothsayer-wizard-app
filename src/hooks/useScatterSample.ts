@@ -3,10 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 import type { CsvRecord } from '../types';
 import type { ScatterSample } from '../types/commands';
 
-/**
- * Filter payload for `get_scatter_sample` — mirrors the dashboard's
- * `get_chart_data` filter shape so the same value-filter format is reused.
- */
+/** Filter payload for get_scatter_sample; same shape as get_chart_data's. */
 export interface ScatterSampleFilter {
     sensors: string[];
     timestamp_start: string | null;
@@ -41,30 +38,15 @@ const EMPTY: UseScatterSampleResult = {
     error: null,
 };
 
-/** Debounce (ms) before hitting the backend, so rapid filter / sensor edits
- *  don't queue several full-dataset sampling passes back-to-back. */
+/** Debounce (ms) so rapid edits don't queue back-to-back full-dataset sampling passes. */
 const DEBOUNCE_MS = 200;
 
-/**
- * Fetch a bounded, GPU-safe sample of the dataset for the scatter / pair-plot
- * charts. The whole reason this exists: a 2 GB CSV is millions of rows, and
- * streaming/holding/uploading all of them blows up the renderer heap and the
- * WebGL context (black canvas). The Rust side reservoir-samples down to
- * `maxPoints` so the payload, heap, and GPU buffers all stay bounded no matter
- * how large the underlying dataset is.
- *
- * The fetch only runs while `enabled` is true (i.e. a scatter/pair chart is
- * actually on screen). Results are race-guarded so a stale in-flight request
- * can't overwrite a newer one, and debounced so filter edits don't spam the
- * backend.
- */
+/** Fetches a bounded sample for scatter/pair plot (Rust reservoir-samples to maxPoints); runs only while `enabled`, edits are debounced. */
 export function useScatterSample(
     filter: ScatterSampleFilter | null,
     maxPoints: number,
     enabled: boolean,
-    /** Bumped when the underlying columns are recomputed without the query
-     *  itself changing — see `ChartDataQuery.revision`. Part of the cache key
-     *  only; never sent to the backend. */
+    /** Bumped when columns are recomputed without the query changing; part of the cache key only, never sent. */
     revision: number = 0,
 ): UseScatterSampleResult {
     const [state, setState] = useState<UseScatterSampleResult>(EMPTY);
@@ -88,8 +70,7 @@ export function useScatterSample(
         setState(s => ({ ...s, loading: true, error: null }));
 
         const timer = setTimeout(() => {
-            // snake_case `max_points` to match the Rust param verbatim (same
-            // convention as the other commands — Tauri matches keys exactly).
+            // snake_case `max_points` to match the Rust param; Tauri matches keys exactly.
             invoke<ScatterSample>('get_scatter_sample', { filter, max_points: maxPoints })
                 .then(res => {
                     if (fetchIdRef.current !== myId) return; // superseded
@@ -110,11 +91,7 @@ export function useScatterSample(
 
         return () => {
             clearTimeout(timer);
-            // Invalidate the in-flight request so its late resolve is ignored.
-            // exhaustive-deps warns about reading a ref in cleanup because
-            // that advice is written for refs holding DOM nodes; this one is a
-            // monotonic race-guard counter and the cleanup MUST see its live
-            // value — copying it into a local would defeat the whole guard.
+            // Invalidate the in-flight request so its late resolve is ignored; the ref is a counter, so the exhaustive-deps warning does not apply.
             // eslint-disable-next-line react-hooks/exhaustive-deps
             fetchIdRef.current++;
         };

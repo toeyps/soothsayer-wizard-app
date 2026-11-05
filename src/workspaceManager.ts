@@ -33,8 +33,7 @@ async function storedRecentList(): Promise<WorkspaceMetadata[]> {
     return Array.isArray(workspaces) ? workspaces : [];
 }
 
-// The list as stored. Code already running inside the queue uses this one:
-// `getRecentWorkspaces` may enqueue, which would deadlock there.
+// For code already inside the queue: `getRecentWorkspaces` may enqueue and would deadlock there.
 async function readRecentList(): Promise<WorkspaceMetadata[]> {
     try {
         return await storedRecentList();
@@ -67,8 +66,7 @@ async function metaFromFile(id: string, filePath: string): Promise<WorkspaceMeta
     }
 }
 
-// Puts back projects that fell off the list when it was capped at 10. Only the
-// files not on the list are parsed. Never throws: the list still reads as stored.
+// Restores projects that fell off the list when it was capped at 10; parses only unlisted files. Never throws.
 async function recoverUnlistedWorkspaces(): Promise<void> {
     try {
         const entries = await readDir('workspaces', { baseDir: BaseDirectory.AppData });
@@ -137,41 +135,19 @@ export async function setLastExportDir(dir: string): Promise<void> {
     }
 }
 
-// Serializes every disk-touching operation below (within THIS window's own
-// module instance — each Tauri webview loads its own copy of this module,
-// so this queue does NOT coordinate across windows; see updateWorkspaceData's
-// own doc comment for that residual gap) into strict FIFO order. A later
-// operation's `await` on this chain never resolves until every earlier one
-// has fully finished writing.
-//
-// The READ of a read-modify-write is serialized too, not just the write:
-// `updateWorkspaceData` reads the CURRENT file before applying a patch
-// (e.g. "add this specific model") and writing. If only the write were
-// queued, a second call could read the disk while the first call's write
-// was still in flight, compute its patch against that stale snapshot and
-// overwrite the first call's change. Serialized, every call sees the
-// fully-committed result of every earlier one.
+// Serializes this window's disk operations in strict FIFO, reads included, so a read-modify-write sees every earlier write.
+// Not shared across windows: each webview has its own copy.
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Runs `op` after every previously enqueued operation has settled
- *  (resolved OR rejected — a failed operation must not wedge every later
- *  one forever), and only after. */
+/** Runs `op` after earlier operations settle (resolved or rejected, so one failure doesn't wedge the queue). */
 function enqueue<T>(op: () => Promise<T>): Promise<T> {
     const result = queue.then(op, op);
     queue = result.then(() => undefined, () => undefined);
     return result;
 }
 
-// `writeTextFile` is NOT atomic (it truncates the file, then writes).
-// Dashboard and the Build Model window are separate OS windows, each with its
-// own write queue, so one could READ the workspace file in the few
-// milliseconds the other has it truncated: the read would come back empty and
-// `JSON.parse` would throw. Writing to a sibling temp file and
-// renaming it over the real one means a reader only ever sees the old or the
-// new file, never a half-written one. `rename` replaces an existing file on
-// Windows/macOS/Linux alike. If the rename is refused (an older capability
-// without `fs:allow-rename`), fall back to the plain write so saving still
-// works — the readers' retry below covers that case.
+// `writeTextFile` is not atomic and other windows read this file: write a temp file and rename it over the real one so readers see old or new, never half.
+// If rename is refused, fall back to a plain write (readers retry).
 async function writeWorkspaceJsonAtomically(filePath: string, json: string): Promise<void> {
     const tmpPath = `${filePath}.${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}.tmp`;
     try {
@@ -188,7 +164,6 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     debugLog("Saving Workspace Data for:", state.id);
     const workspacesDir = 'workspaces';
 
-    // Ensure directory exists
     const dirExists = await exists(workspacesDir, { baseDir: BaseDirectory.AppData });
     if (!dirExists) {
         debugLog("Creating workspaces directory in AppData...");
@@ -198,11 +173,9 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     const filePath = `${workspacesDir}/${state.id}.json`;
     debugLog("Writing workspace JSON to:", filePath);
 
-    // Serialize state
     const json = JSON.stringify(state);
     await writeWorkspaceJsonAtomically(filePath, json);
 
-    // Update recent workspaces list
     const recent = await readRecentList();
     const meta: WorkspaceMetadata = {
         id: state.id,
@@ -213,15 +186,7 @@ async function writeWorkspaceFile(state: WorkspaceState): Promise<void> {
     };
 
     const existingIdx = recent.findIndex(w => w.id === state.id);
-    // The recent-project chip's Failure
-    // Group count + colours. Derived from the groups being written HERE —
-    // every save and every `updateWorkspaceData` (Dashboard autosave and FG
-    // edits, Build Model window writes, rename, duplicate) funnels through
-    // this function and already rewrites this entry, so the chip can never
-    // go stale and keeping it current costs no extra disk write. A state
-    // with no Failure Group slice keeps the entry's previous values (so a
-    // project saved before these fields existed stays `undefined` = no
-    // chip, rather than turning into a fake "No failure groups").
+    // Recents chip count/colours come from the groups written here; with no group slice the previous values are kept.
     const fgMeta = failureGroupMetaFields(state.failureGroupState?.groups);
     const previous = existingIdx >= 0 ? recent[existingIdx] : undefined;
     if (fgMeta) {
@@ -246,19 +211,8 @@ export async function saveWorkspaceData(state: WorkspaceState): Promise<void> {
     await enqueue(() => writeWorkspaceFile(state));
 }
 
-// Read-modify-write: load workspace, apply a patch function, save. Use this
-// from step 2/3 windows to avoid clobbering fields owned by other windows.
-//
-// The read and write both run inside `enqueue`, so this call's `loadWorkspaceData`
-// cannot start until every earlier `updateWorkspaceData`/`saveWorkspaceData`
-// call FROM THIS SAME WINDOW has finished writing — see the queue's own
-// comment above for why that matters. This does NOT protect against a
-// DIFFERENT window (e.g. Dashboard vs. the Build Model window) writing to
-// the same workspace file at the same time — each window's webview loads
-// its own independent copy of this module, so `queue` is not shared across
-// them. That cross-window race is a real, separate, still-open gap.
-// Returns null only when the file does not exist. Rejects when it cannot be read
-// (nothing is written) or the write fails, so a caller never takes that for saved.
+// Read-modify-write inside the queue; protects only against this window's own writes, not another window's (open gap).
+// Null only when the file doesn't exist; rejects if unreadable (nothing written) or the write fails.
 export async function updateWorkspaceData(
     id: string,
     patch: (state: WorkspaceState) => WorkspaceState
@@ -268,26 +222,15 @@ export async function updateWorkspaceData(
         // it from inside this queued operation would deadlock.
         const read = await readWorkspaceFileAndText(id);
         if (!read) return null;
-        // "Incomplete immediately" — any write that
-        // changes what a Complete model is trained on (its own inputs, or the
-        // workspace running condition it follows) sets it back to Incomplete in
-        // THIS same write, whichever window or writer made it. Compared against
-        // what is on disk, never a caller's possibly stale mirror.
+        // Any write that changes what a Complete model is trained on sets it Incomplete in this same write, compared against disk, never a caller's mirror.
         const next = applyIncompleteRule(read.state, patch(read.state));
-        // Same text as the file: no write (it narrows the cross-window race) and no
-        // Recents bump. A read-path migration differs from the file, so it still lands.
+        // No write when the text is unchanged (narrows the cross-window race, no Recents bump); a read-path migration differs, so it still lands.
         if (JSON.stringify(next) !== read.text) await writeWorkspaceFile(next);
         return next;
     });
 }
 
-/**
- * One queued read-then-write: `compute` gets what is on disk and returns the
- * state to write, or null to write nothing. A write queued in this window can
- * never land between the read and the write. Rejects when the file exists but
- * cannot be read (`WorkspaceReadError`) or the write fails. Returns what was
- * written, else null.
- */
+/** Queued read-then-write: `compute` gets the disk state and returns the state to write, or null for no write. Rejects with `WorkspaceReadError` if unreadable, or when the write fails. Returns what was written, else null. */
 export async function saveWorkspaceFrom(
     id: string,
     compute: (disk: WorkspaceState | null) => WorkspaceState | null,
@@ -301,8 +244,7 @@ export async function saveWorkspaceFrom(
 
 /** What `saveLegacyFormulaConversion` wrote. */
 export interface LegacyConversionNotice {
-    /** The state now on disk -- hand THIS (its recipes and models) to the
-     *  Dashboard, or its full-overwrite autosave writes the old text back. */
+    /** State now on disk; hand THIS to Dashboard, or its autosave writes the old text back. */
     state: WorkspaceState;
     /** Conversions actually applied (a recipe edited meanwhile is skipped). */
     converted: LegacyFormulaConversion[];
@@ -312,15 +254,7 @@ export interface LegacyConversionNotice {
     message: string;
 }
 
-/**
- * Persist the legacy `round(x, n)` conversion of a workspace open (customer
- * batch 2026-10, item 6; see `utils/legacyFormulaConversion.ts`): the new
- * formula text and the demotion of every model trained on a converted sensor
- * (or one built on it), in ONE write, computed against what is on disk.
- * Nothing to convert = no write at all (returns null), so this is safe to
- * call on every open. Null too when the file does not exist; rejects when it
- * cannot be read or written.
- */
+/** Persists the legacy `round(x, n)` conversion in ONE write against disk: new formula text plus demotion of models trained on converted sensors. Nothing to convert = no write (null); also null if the file is missing; rejects if unreadable/unwritable. */
 export async function saveLegacyFormulaConversion(
     id: string,
     converted: LegacyFormulaConversion[],
@@ -343,9 +277,7 @@ export async function saveLegacyFormulaConversion(
     };
 }
 
-// Default PM build config for a model that never had one — mirrors
-// Dashboard.tsx's `spawnPredictiveModel` seed defaults so a freshly-migrated
-// model behaves identically to a brand-new one until the user configures it.
+// Default PM config for a model with none; mirrors the defaults of Dashboard's `makeDefaultModelForKind`.
 const DEFAULT_PM_SLICE = {
     individualChecked: true,
     rcMode: null as 'relationship' | 'clustering' | null,
@@ -353,9 +285,7 @@ const DEFAULT_PM_SLICE = {
     relModelName: '',
     relStiffness: 100_000,
     clusterModelName: '',
-    // One cluster by default — 2+ clusters need a criteria sensor (Rust
-    // refuses n_clusters > 1 without one). Picking a criteria sensor lets
-    // the stepper raise the count.
+    // One cluster by default: 2+ needs a criteria sensor (Rust refuses otherwise).
     numClusters: 1,
     criteriaSensor: '',
     clusterRanges: [],
@@ -365,10 +295,7 @@ const DEFAULT_PM_SLICE = {
     customRunningConditionCombine: 'and' as 'and' | 'or',
 };
 
-/** Best-effort detection of the new `ModelKind` from the old free-text
- *  `modelType` field, so migrated rows land in the right kind instead of
- *  dumping everything into `individual` and making the user re-classify
- *  every model by hand. Falls back to `individual` when nothing matches. */
+/** Best-effort kind from the old free-text `modelType`; falls back to `individual`. */
 function inferModelKind(modelType: string): ModelKind {
     const t = (modelType || '').toLowerCase();
     if (t.includes('relationship') || t.includes('relation')) return 'relationship';
@@ -376,14 +303,7 @@ function inferModelKind(modelType: string): ModelKind {
     return 'individual';
 }
 
-/**
- * Ensures every model has `groupNos: number[]` (a many-to-many
- * model<->group relationship; an old workspace carries a singular
- * `groupNo: number`). A model that
- * already has `groupNos` is returned as-is; one still carrying only the
- * old `groupNo` becomes `groupNos: [groupNo]` (falling back to `[0]` —
- * the permanent "Not in Group" sentinel — if even that's missing).
- */
+/** Gives every model `groupNos`: an old singular `groupNo` becomes `[groupNo]`, falling back to `[0]` ('Not in Group'). */
 function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
     return models.map(m => {
         const legacy = m as unknown as { groupNo?: number; groupNos?: number[] };
@@ -393,24 +313,10 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
     });
 }
 
-/**
- * One-time shim for legacy workspaces:
- * old `failureGroupState.rows: FailureSensorRow[]` +
- * global `predictiveModelState` become `failureGroupState.models: FailureModel[]`
- * with PM config folded per-model. Also runs `normalizeModelGroups` on the
- * already-migrated path, so a workspace whose models still carry the
- * singular `groupNo` opens correctly. Both steps no-op
- * once a workspace is fully current (`failureGroupState.models` exists and
- * every model already has `groupNos`).
- */
+/** Read-path shim: legacy `rows` + global `predictiveModelState` become `models` with PM config per model, and `groupNos` are normalised; then health set points and the single running condition. Idempotent. */
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
-    // Every read also gives each model the empty `healthSetPoints`
-    // shape for its kind if it has none (idempotent; same object when nothing
-    // to do). Runs AFTER the structural migration so legacy `rows` models count.
-    // Then the one-time conversion to the ONE running condition (2026-10-26):
-    // here, on the read path, so every window -- incl. the Dashboard's autosave,
-    // which adopts the on-disk slice -- sees the converted shape and no writer
-    // can put the old multi-condition set back; the first write persists it.
+    // Every read: give models their kind's empty `healthSetPoints`, then convert to the ONE running condition.
+    // On the read path so every window (incl. Dashboard autosave) sees the converted shape; the first write persists it.
     return migrateSingleRunningCondition(migrateHealthSetPoints(migrateFailureGroupStateStructure(state)));
 }
 
@@ -441,18 +347,13 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
     const models: FailureModel[] = legacyRows
         .filter(row => !!row.mappedSensorTag)
         .map(row => {
-            // Only the one model that was actually open in the (single,
-            // global) PM slice inherits its config — every other migrated
-            // model gets fresh defaults rather than someone else's settings.
+            // Only the model open in the global PM slice inherits its config.
             const matchesPm = !!pm && pm.targetSensor === row.mappedSensorTag;
             const kind = inferModelKind(row.modelType);
             return {
                 id: row.id,
                 groupNos: [row.groupNo],
-                // Leave name empty rather than falling back to the raw tag —
-                // FailureGroupsPanel's display already falls back to the
-                // sensor's description when name is unset, which reads far
-                // better than permanently echoing the tag back as a "name".
+                // Leave name empty: display falls back to the sensor description instead of echoing the tag.
                 name: row.conceptSensor ?? '',
                 kind,
                 category: null,
@@ -483,9 +384,7 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
                                 ? [{ id: 'legacy-1', start: old.filterTimeStart ?? '', end: old.filterTimeEnd ?? '' }]
                                 : [];
                         })(),
-                        // The legacy global PM slice predates this feature
-                        // entirely — nothing to inherit, same as every other
-                        // migrated model.
+                        // The legacy global slice has nothing to inherit.
                         runningConditionMode: DEFAULT_PM_SLICE.runningConditionMode,
                         customRunningConditionFilters: DEFAULT_PM_SLICE.customRunningConditionFilters,
                         customRunningConditionCombine: DEFAULT_PM_SLICE.customRunningConditionCombine,
@@ -494,8 +393,7 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
             };
         });
 
-    // `rows` is the legacy field this branch just converted — drop it, keep
-    // everything else (same reasoning as the groupNos branch above).
+    // Drop legacy `rows`, keep the rest.
     const { rows: _legacyRows, ...restOfFg } = fg;
     void _legacyRows;
     return {
@@ -510,16 +408,7 @@ function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceStat
     };
 }
 
-// The actual read, NOT enqueued. `updateWorkspaceData`
-// calls this (not the exported `loadWorkspaceData` below) so its own
-// read-inside-enqueue doesn't try to enqueue a second time onto a queue it is
-// already occupying (that would deadlock — the queued read would wait
-// forever for itself to finish).
-/** Thrown by `loadWorkspaceData` when the workspace file EXISTS but could not
- *  be read or parsed (after retries). Distinct from `null` = "no such
- *  workspace", so a caller that would otherwise overwrite the file from its
- *  own memory (Dashboard's autosave) can tell "nothing there" from "there is
- *  data there that I could not read" — and must not write in the second case. */
+/** Thrown when the file EXISTS but can't be read/parsed after retries (`null` = no workspace), so autosave never overwrites unreadable data. */
 export class WorkspaceReadError extends Error {
     constructor(public readonly workspaceId: string, cause: unknown) {
         super(`Could not read workspace ${workspaceId}: ${cause instanceof Error ? cause.message : String(cause)}`);
@@ -531,10 +420,8 @@ const READ_RETRY_ATTEMPTS = 4;
 const READ_RETRY_DELAY_MS = 40;
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-// A read that fails on an EXISTING file is retried a few times
-// before giving up — the file may be mid-write by another window (see
-// `writeWorkspaceJsonAtomically`). Gives up with `WorkspaceReadError`,
-// never with `null`.
+// Retries a failed read of an existing file (it may be mid-write by another window); ends in `WorkspaceReadError`, never `null`.
+// Not enqueued: callers already inside the queue use it, and enqueueing again would deadlock.
 async function readWorkspaceFile(id: string): Promise<WorkspaceState | null> {
     return (await readWorkspaceFileAndText(id))?.state ?? null;
 }
@@ -559,43 +446,23 @@ async function readWorkspaceFileAndText(id: string): Promise<{ state: WorkspaceS
         }
     }
     console.error("Failed to load workspace data:", lastError);
-    // Leave a trace in the log FILE (no toast): the caller skips its write
-    // because of this, and it is the only evidence if data ever goes missing.
+    // Log the failure: the caller skips its write, so this is the only evidence if data goes missing.
     logToFile('workspace-read',
         `Could not read workspace ${id} (${filePath}) after ${READ_RETRY_ATTEMPTS} tries; the save that needed it was skipped, nothing was overwritten`,
         lastError instanceof Error ? (lastError.stack ?? lastError.message) : String(lastError));
     throw new WorkspaceReadError(id, lastError);
 }
 
-// This read goes through the SAME `enqueue` queue as
-// `updateWorkspaceData`/`saveWorkspaceData`, so it can never start until
-// every earlier write queued by THIS window has fully landed.
-//
-// A caller that hydrates component state from this call can fire MORE THAN
-// ONCE per window (React StrictMode double-invokes the mount effect that
-// requests it, and Dashboard re-sends `build-model-data` every time "Build
-// Model" is clicked while the window is already open). Unqueued, a
-// re-hydration read that started BEFORE this window's own in-flight write
-// but resolved AFTER it would read pre-edit data and apply it over the
-// just-saved local state — and the next edit computed from that stale state
-// would overwrite the correct value on disk. (This does not protect against
-// a genuinely different OS window — e.g. Dashboard vs. Build Model — writing
-// at the same moment; each window's webview has its own independent `queue`,
-// a narrower gap noted on `updateWorkspaceData` above.)
+// Goes through the same queue as writes so it starts after this window's earlier writes land; otherwise a re-hydration read (StrictMode double mount, repeated 'Build Model' clicks) could return pre-edit data and overwrite newer local state.
+// Does not cover other windows.
 export async function loadWorkspaceData(id: string): Promise<WorkspaceState | null> {
     return enqueue(() => readWorkspaceFile(id));
 }
 
-/** The workspace's own app-data folder (`{app_data}/workspaces/{id}/`),
- *  relative to `$APPDATA`. Before 2026-10-20 "Mark complete" wrote model files
- *  into its `output/` subfolder; nothing writes there now, but old projects may
- *  still have one. The workspace's own JSON is the SIBLING
- *  `workspaces/{id}.json`, never inside this folder. */
+/** Workspace folder under app data (`workspaces/{id}`); old projects may have an `output/` there. The JSON is the sibling `workspaces/{id}.json`. */
 export const workspaceFolderPath = (id: string): string => `workspaces/${id}`;
 
-/** Best-effort recursive removal of a workspace's model-output folder. Never
- *  throws and never touches anything but `workspaces/{id}` — a missing folder
- *  (the common case: nothing was ever exported) is simply skipped. */
+/** Best-effort recursive removal of `workspaces/{id}`; never throws; a missing folder is skipped. */
 async function removeWorkspaceFolder(id: string): Promise<void> {
     // An id that could escape `workspaces/` must never reach a recursive remove.
     if (!id || id.includes('/') || id.includes('\\') ||id.includes('..')) return;
@@ -615,21 +482,18 @@ export async function deleteWorkspace(id: string) {
         const meta = recent.find(w => w.id === id);
 
         if (meta) {
-            // Delete file if exists
             const fileExists = await exists(meta.filePath, { baseDir: BaseDirectory.AppData });
             if (fileExists) {
                 await removeFile(meta.filePath, { baseDir: BaseDirectory.AppData });
             }
             
-            // Remove from recent list
             const updated = recent.filter(w => w.id !== id);
             await saveRecentWorkspaces(updated);
         }
     } catch (e) {
         console.error("Failed to delete workspace:", e);
     }
-    // Model files the old "Mark complete" wrote (before 2026-10-20) live in
-    // their own folder; remove it too, whether or not the workspace was on the list.
+    // Also remove the workspace's folder, listed or not.
     await removeWorkspaceFolder(id);
 }
 

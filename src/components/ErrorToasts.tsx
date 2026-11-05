@@ -9,13 +9,7 @@ import {
     type AppError,
 } from '../errorReporter';
 
-/**
- * Bottom-right alert stack fed by the global error reporter. Errors stay on
- * screen until dismissed (auto-hiding would defeat the point: in production
- * this is the only way to see WHY something silently failed). Each toast can
- * expand to the full stack trace, and the footer shows where the persistent
- * log file lives.
- */
+/** Bottom-right alert stack fed by the global error reporter. Errors stay until dismissed; each expands to its stack trace, and the footer shows the log location. */
 function Toast({ error }: { error: AppError }) {
     const [open, setOpen] = useState(false);
 

@@ -1,7 +1,4 @@
-/**
- * Dark theme tokens shared by the Import page (DataUploadPage) and its
- * sub-components (HomeStep, RecentProjectCard). Ported from the design handoff.
- */
+/** Dark theme tokens shared by the Import page and its sub-components. */
 
 export interface Tokens {
   bg: string;

@@ -1,17 +1,6 @@
 import type { FakeHealthRust } from './fakeHealthRust';
 
-/**
- * Shared environment of the health-score integration tests:
- * ONE in-memory plugin-fs (workspace JSON + exported model files), ONE plugin-store,
- * ONE Tauri event bus (every window mounted in the test talks over it, with an
- * optional `drop` switch to lose broadcasts), the fake Rust backend
- * (`fakeHealthRust.ts`) behind `invoke`, a recorder for every ECharts option
- * drawn, and the native-close handlers of `getCurrentWindow()`.
- *
- * Each test file wires its `vi.mock(...)` factories to the module objects
- * below (`await import('./helpers/healthEnv')`), so every file uses the SAME
- * semantics without copy-pasting them.
- */
+/** Shared environment of the health-score integration tests: one in-memory plugin-fs, plugin-store and Tauri event bus (with a `drop` switch to lose broadcasts), the fake Rust backend behind `invoke`, a recorder of every ECharts option, and the native-close handlers. Test files wire their `vi.mock(...)` factories to these objects. */
 
 export interface ChartRecord { option: any; props: any }
 
@@ -64,8 +53,7 @@ export const fsModule = () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    // Workspace saves go to a temp sibling and are renamed over the real file
-    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    // Saves go to a temp sibling renamed over the real file (`writeWorkspaceJsonAtomically`): record the write when it LANDS.
     writeTextFile: async (p: string, c: string) => { if (!p.endsWith('.tmp')) env.writes.push({ path: p, content: c }); env.files.set(p, c); },
     rename: async (from: string, to: string) => {
         const c = env.files.get(from);
@@ -108,7 +96,6 @@ export const windowModule = () => ({
     }),
 });
 
-/** Fires the native close of every mounted window; resolves with whether any handler prevented it. */
 /** The X of the window mounted last only: the main window's handler also closes its child windows. */
 export async function nativeCloseLastWindow(): Promise<boolean> {
     let prevented = false;

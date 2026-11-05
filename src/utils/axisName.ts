@@ -1,7 +1,4 @@
-/**
- * Chart axis titles for long sensor names (DESIGN_SYSTEM §4 rule 1, SPEC FINAL addition 3): "description · unit",
- * measured against the room the title really has. A title that fits prints as is.
- */
+/** Axis titles for long names: 'description · unit' fitted to the room the title really has; a title that fits prints as is. */
 import { NAME_HEAD_MIN, displayedName, splitName, type NamedSensor } from './sensorNames';
 import { textWidth, type MeasureText } from './textMeasure';
 
@@ -19,8 +16,7 @@ const unitSuffix = (info: AxisNamed): string => (info.unit ? ` · ${info.unit}` 
 /** Word boundaries of a name: spaces, or for a name with no spaces (a bare tag) after `_ . -`. */
 const boundaryRe = (name: string): RegExp => (/\s/.test(name) ? /\s+/g : /[_.-]+/g);
 
-/** "… end + unit" in as many whole end words as fit (the unit never leaves the last word); only a last word
- *  that alone does not fit is cut from its start. */
+/** '… end + unit' in as many whole end words as fit; only a last word that alone does not fit is cut from its start. */
 function keepEnd(text: string, unit: string, maxPx: number, font: string, measure: MeasureText): string {
     const candidates = [0];
     for (const m of text.matchAll(boundaryRe(text))) {
@@ -48,8 +44,7 @@ function endCut(desc: string, unit: string, maxPx: number, font: string, measure
     return `${desc.slice(0, k).trimEnd()}…${unit}`;
 }
 
-/** Rule 1 on one line: whole when it fits; otherwise head + "… " + tail + unit. The head ends at a whole word;
- *  under 8 characters it is dropped. A name with no tail to keep end-cuts (the unit stays). */
+/** Whole if it fits, else head + '… ' + tail + unit (head ends at a whole word, dropped under 8 chars); no tail to keep = end-cut. */
 export function fitAxisName(info: AxisNamed, maxPx: number, font = DEFAULT_AXIS_FONT, measure: MeasureText = textWidth): string {
     const desc = displayedName(info);
     const unit = unitSuffix(info);
@@ -80,12 +75,7 @@ export interface WrappedAxisName {
     cut: boolean;
 }
 
-/**
- * "description · unit" on at most two lines at word boundaries. A break after a separator wins when both
- * lines fit, otherwise the most even break; line 2 never starts with a separator and the unit stays with the
- * last word. A name with no spaces breaks after `_ . -`. When two lines cannot hold it: line 1 keeps the start,
- * line 2 reads "… end · unit" in whole words.
- */
+/** At most two lines at word boundaries, preferring a break after a separator; too long: line 2 reads '… end · unit'. */
 export function wrapAxisName(info: AxisNamed, maxPx: number, font = DEFAULT_AXIS_FONT, measure: MeasureText = textWidth): WrappedAxisName {
     const desc = displayedName(info);
     const unit = unitSuffix(info);
@@ -146,7 +136,7 @@ export function scatterAxisTitle(info: ScatterAxisInfo, room: number, options: S
     const font = info.description ? `500 11.5px ${options.fontFamily}` : `10px ${options.monoFamily}`;
     const badge = info.special ? 22 : 0;
     const r = room - 6 - badge; // canvas vs DOM rounding
-    // Canvas reads about 1.4 % wider than the DOM: same box as before unless it really overflows.
+    // Canvas measures about 1.5 % wider than the DOM (factor 0.985): only wrap when the title really overflows.
     if (tagLine) {
         if (measure(info.description!, font) * 0.985 <= r + 6) return { wrapped: null, cut: false, tagLine };
     } else if (!info.description) {
@@ -161,7 +151,6 @@ export function scatterAxisTitle(info: ScatterAxisInfo, room: number, options: S
     return { wrapped: w.lines, cut: w.cut, tagLine };
 }
 
-// ---- ECharts: an option says which sensor each axis names; the chart wrapper fits the titles ----
 
 export interface AxisNameSpec {
     x?: AxisNamed;
@@ -198,11 +187,7 @@ export interface AxisNamePatch {
     wrapped: boolean;
 }
 
-/**
- * The titles for a chart of `width` × `height`. The rotated Y title takes a second line instead of a middle cut
- * and only then the plot gives up that line; it may use its free column past the plot. The X title keeps the
- * one-line middle cut.
- */
+/** Titles for a `width` × `height` chart: the rotated Y title takes a second line before a middle cut; X keeps a one-line middle cut. */
 export function axisNamePatch(
     spec: AxisNameSpec,
     option: any,
@@ -249,8 +234,7 @@ function ownNamesPatch(spec: AxisNameSpec, option: any): Record<string, unknown>
     };
 }
 
-/** Fits the titles named by `spec` on an ECharts instance now and whenever it resizes. Touches the chart only when
- *  the titles differ from what it shows (it starts out showing `option`'s own). Returns the cleanup. */
+/** Fits the titles of `spec` on an ECharts instance now and on resize; touches the chart only when titles differ. Returns cleanup. */
 export function attachAxisNames(inst: any, spec: AxisNameSpec, option: any, measure: MeasureText = textWidth): () => void {
     let last = JSON.stringify(ownNamesPatch(spec, option));
     let wrappedBefore = false;

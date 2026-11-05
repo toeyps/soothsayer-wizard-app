@@ -27,85 +27,22 @@ import type { WorkbenchPageProps } from './workbenchTypes';
 import { Kpi, KpiStrip } from './Kpi';
 import { shareText } from './HealthScorePage';
 
-/*
- * Page 1 of the Workbench — "Model fit" body: the numbers
- * and charts of the TRAINED model, per kind. Everything comes from the
- * bounded `HealthPreview` Rust returns (`useHealthPreview`), never from row
- * arrays.
- *
- * Every kind opens with a strip of three KPI tiles (`KpiStrip` / `Kpi`,
- * "Workbench detail pages v2" SPEC §5), then its charts:
- *
- *   Individual   tiles Mean · SD · Outside ±3SD, then Sensor value over time
- *                (±1SD/±3SD) and Distribution, both full width
- *   Relationship tiles R² · RMSE · Residual SD, then Fit (+ X selector, Compare
- *                predictors) · Target vs predicted · Residual over time (±2RMSE)
- *                (no residual distribution, no side histogram — by design)
- *   Clustering   tiles Clusters · In a cluster · Inside 3× SD, then the scatter +
- *                1×/3× SD ellipses, the board's only card (full width; no time
- *                chart — by design)
- *
- * The tiles replaced Individual's "Statistics" table and the Relation model's stat
- * row. Rules (user decisions 2026-10-12 — do not undo them):
- *  - NO "Training rows" tile and NO "Trained" tile; rows / predictors / 2RMSE are
- *    not items of their own (2RMSE and the residual mean are captions).
- *  - Tiles never judge: plain values, no threshold colour, no "fair / weak fit".
- *  - A share that is not zero never reads as zero (`shareText`, `outsideText`).
- *  - NO count of data rows anywhere on this page (user decision 2026-10-14: the
- *    Build Model window never says how many rows are used). A tile gives the
- *    share (%) and its caption says what the share is OF in words — never
- *    "≈ N rows" / "N rows outside every criteria range". Do not add them back.
- * The strip needs a preview, so the chart-less boards (not trained, queued,
- * training, failed, …) — drawn by `BuildModelWindow`, not here — have none.
- *
- * Only what the user needs to read the fit is here (user decision 2026-10-11):
- * there is NO "Train and scoring periods" table on this page for any kind, and
- * Clustering has NO side column (the "Clusters" summary card — rows / centre
- * per cluster — is gone). Do not add them back.
- *
- * A chart whose lines are labelled ON the chart has no legend row under it:
- * reference lines carry their name at the right
- * edge, the ring levels at the ring's edge. A legend row stays where DATA is told
- * apart by colour: Distribution (Rows / Normal curve).
- * Fit and Target vs predicted have none: their hover box names each colour (user
- * decision 2026-11-03), and a name drawn at a line's end does not follow the line
- * through a zoom. Design rule:
- * a name on the chart is the ONLY key only on a chart that cannot zoom or pan —
- * the Clusters chart zooms on both axes, so its rings have a fixed key too.
- *
- * Train and scoring periods: when the
- * preview carries `test_validation`, every time chart takes the train /
- * scoring scopes (`scopesOf` → `TimeSeriesSpec.scopes`): the line shows the rows
- * of both, but only the TRAIN periods are highlighted and named — a scoring
- * period has no band and no "S1" on a chart; an amber note shows
- * below the recommended train time. The per-period numbers ("Scoring results")
- * and the "health score could not be calculated — try again" notice are on the Health score page.
- *
- * The "Model settings" section and the footer are NOT here: they sit around this
- * body in `BuildModelWindow` (they share the draft/Apply state with the rest of
- * the window).
- */
+/* Model fit body per kind from the bounded `HealthPreview`, never row arrays; tiles never judge; a non-zero share never reads as zero. Model settings and footer live in `BuildModelWindow`. */
 
 export interface ModelFitPageProps extends WorkbenchPageProps {
     /** The data to draw. The container only renders this page once it exists. */
     data: HealthPreview;
-    /** Relationship: the user picked another predictor for the Fit chart's X
-     *  axis (written immediately by the container as `scatterXSensor`). */
+    /** Relationship: the user picked another predictor for the Fit chart's X axis. */
     onXPredictorChange: (tag: string) => void;
     /** Relationship: open the Sub-models comparison modal. */
     onCompare: () => void;
-    /** Why "Compare predictors" cannot run now (a training run is active: one
-     *  Relation-model sidecar call at a time); absent = enabled. */
+    /** Why Compare predictors can't run (one Relation-model sidecar call at a time); absent = enabled. */
     compareDisabledReason?: string;
-    /** Train running days known before Rust answers with `test_validation`
-     *  (estimated from the Step-1 row count); `null`/absent = unknown. Drives
-     *  only the amber "below the recommended train time" note — never a block. */
+    /** Train running days known before Rust returns `test_validation` (from the Step-1 row count); only drives the amber note, never blocks. */
     trainDaysEstimate?: number | null;
 }
 
-/** The estimated share of training rows outside ±3SD. Two decimals, as this value
- *  has always been printed (a normal process gives about 0.27%); a share that is
- *  not zero never reads "0.00%". */
+/** Share of training rows outside ±3SD, two decimals; a non-zero share never reads "0.00%". */
 export function outsideText(pct: number): string {
     return pct > 0 && pct < 0.01 ? '< 0.01%' : `${pct.toFixed(2)}%`;
 }
@@ -117,9 +54,7 @@ export function inClusterSub(unassignedRows: number, hasCriteriaSensor: boolean)
     return hasCriteriaSensor ? 'every training row is in a criteria range' : 'every training row is in the cluster';
 }
 
-/** Memo comparison (see `samePageProps`): small data the window rebuilds per
- *  render is compared by value — the model (re-read from disk after every
- *  write), the scoring-period numbers; everything else by identity. */
+/** Memo compare: the model and scoring-period numbers by value, everything else by identity. */
 export function sameModelFitProps(a: ModelFitPageProps, b: ModelFitPageProps): boolean {
     return samePageProps(a, b, ['model', 'testNumbers']);
 }
@@ -130,8 +65,7 @@ function ModelFitPage(props: ModelFitPageProps) {
     const lookup = useSensorLookup();
     // Train / scoring scopes on every time chart (null = the preview carried no scoring periods).
     const scopes = scopesOf(data.test_validation, props.testNumbers);
-    // With scopes a time chart shows exactly the rows of the periods named in its strip
-    // (everything else is a gap); without them, every running row of the training scope.
+    // With scopes a time chart shows only the rows of the strip's periods; without, every running row of the training scope.
     const rowsShown = scopes ? 'rows in the train and scoring periods' : 'running rows';
     const daysNotice = (
         <>
@@ -222,9 +156,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                         {fit && fit.predictors.length > 0 && (
                             <span className="wb2-xsel" data-testid="fit-x-selector">
                                 X:
-                                {/* The compact single picker, scoped to this
-                                    model's predictors. With one predictor it is disabled but
-                                    still shows its value, and the tooltip gives the reason. */}
+                                {/* Compact single picker scoped to this model's predictors; disabled with a reason when there is only one. */}
                                 <span className="wb2-xpk" title={fit.predictors.length === 1 ? 'Only one predictor — nothing else to plot on X' : undefined}>
                                     <SensorPickerSingle
                                         compact
@@ -314,8 +246,7 @@ function ModelFitPage(props: ModelFitPageProps) {
                     // Axis titles: description + unit — the tags are in the subtitle above.
                     option={scatter ? buildClusterOption(scatter, stats.clusters, clusterChartNames(lookup(xTag), lookup(yTag))) : null}
                     empty="No clusters to draw"
-                    // A fixed key for the rings: this chart zooms and pans on both axes, and
-                    // the name drawn at a ring's edge leaves the view with that edge.
+                    // Fixed ring key: this chart zooms on both axes, so a name drawn at a ring's edge leaves the view.
                     legend={scatter ? <span data-testid="ring-key" style={{ display: 'contents' }}>
                         <LegendItem color={CHART.ok} label="1× SD" />
                         <LegendItem color={CHART.warn} label="3× SD" dashed />

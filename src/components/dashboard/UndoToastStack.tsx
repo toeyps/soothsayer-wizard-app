@@ -42,12 +42,7 @@ function UndoToast({ toast, onUndo, onExpire, durationMs }: {
     );
 }
 
-/**
- * Bottom-right stack of "… deleted — Undo" toasts. Rendered through `Portal`
- * (so no overflow-hidden Dashboard panel can clip it) and marked
- * `data-fg-sheet-keep` so clicking Undo while the Failure Group Assignment
- * sheet is open does not count as "clicked outside" and dismiss the sheet.
- */
+/** Bottom-right stack of 'deleted - Undo' toasts via Portal; data-fg-sheet-keep keeps Undo from counting as a click outside the assignment sheet. */
 export default function UndoToastStack({ toasts, onUndo, onExpire, durationMs }: UndoToastStackProps) {
     if (toasts.length === 0) return null;
     return (

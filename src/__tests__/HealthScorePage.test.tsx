@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 
-// ECharts is not drawn in jsdom: every chart is a stand-in that records its props, so the tests can read the
-// option it was given and fire the events a real chart would (hover).
+// ECharts isn't drawn in jsdom: stand-ins record props so tests can read the option and fire events (hover).
 const charts: any[] = [];
 vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => { charts.push(props); return <div data-testid="echarts-mock" data-y-name={props.option?.yAxis?.name ?? ''} />; },
@@ -67,7 +66,7 @@ const mount = (o: Opts = {}) => render(<Harness {...o} />);
 const type = (id: string, value: string) => fireEvent.change(screen.getByTestId(id), { target: { value } });
 const input = (id: string) => screen.getByTestId(id) as HTMLInputElement;
 const field = (id: string) => input(id).closest('.hs-num') as HTMLElement;
-/** The score ruler (the band that replaced the set-point table) and its parts, by tick key. */
+/** The score ruler and its parts, by tick key. */
 const ruler = () => screen.getByTestId('score-ruler');
 const rulerPart = (part: 'tick' | 'name' | 'value', key: string) => ruler().querySelector(`[data-testid="ruler-${part}"][data-tick="${key}"]`) as HTMLElement;
 const tickKeys = () => [...ruler().querySelectorAll('[data-testid="ruler-tick"]')].map(el => (el as HTMLElement).dataset.tick);
@@ -86,7 +85,7 @@ const stackSub = () => stackCard().querySelector('.wb2-card-s')!.textContent;
 const barBands = () => [...screen.getByTestId('share-bar').querySelectorAll('i')].map(i => [(i as HTMLElement).dataset.band, (i as HTMLElement).style.flexGrow]);
 const scoreChart = () => charts.filter(c => c.option?.yAxis?.name === 'Score').pop();
 const setChart = () => charts.filter(c => c.option?.yAxis?.name !== 'Score' || c.option?.series?.[0]?.name === 'Points').pop();
-/** The names PRINTED in the strip above a time chart's plot (the TRAIN periods — a scoring period is not drawn), in band order. */
+/** The names PRINTED in the strip above a time chart's plot (TRAIN periods only; a scoring period is not drawn), in band order. */
 const stripOf = (c: any): string[] => (c.option.series.find((x: any) => x.name === '__scopes')?.markArea?.data ?? [])
     .filter((a: any) => a[0].label.show).map((a: any) => a[0].label.formatter);
 /** Every band drawn under a time chart's data, by name. */
@@ -218,7 +217,7 @@ describe('Individual: the score ruler (0 · 80 · 100 · 100 · 80 · 0)', () =>
             expect(note.querySelector('button')).toBeNull();
             expect(screen.queryByTestId('sp-lower-reset')).toBeNull();
             expect(screen.queryByTestId('sp-upper-reset')).toBeNull();
-            // the old per-field chips are gone
+            // no per-field chips
             expect(screen.queryByTestId('sp-lower-source')).toBeNull();
         });
 
@@ -247,7 +246,7 @@ describe('Individual: the score ruler (0 · 80 · 100 · 100 · 80 · 0)', () =>
             expect(screen.getByTestId('master-note').textContent).toBe('L is set on this model · H is set on this model. Saved on this model only; the master data is not changed. Use master L 1 · Use master H 9');
         });
 
-        // The user reported a padded "-2.000": a master value is one somebody TYPED — shown exactly.
+        // A master value is one somebody TYPED: shown exactly, never padded (not "-2.000").
         it('the master value in the link is printed exactly as typed: never padded, never rounded', () => {
             mount({ sp: { kind: 'individual', lower: -5, upper: 12, masterLower: -2, masterUpper: 4.5 } });
             expect(screen.getByTestId('sp-lower-reset').textContent).toBe('Use master L -2');
@@ -407,8 +406,7 @@ describe('Relationship: four points, all start empty', () => {
         expect(within(card).queryByRole('table')).toBeNull();
     });
 
-    // On a narrow pane the four inputs sit on their own labelled row under the band (CSS, by
-    // container width): each input carries its point's name, each program tick its value.
+    // On a narrow pane each input carries its point's name and each tick its value (CSS by container width).
     it('each input carries its point\'s name and each program tick its value, for the narrow layout\'s own row', () => {
         mount({ kind: 'relationship', sp: { ...REL_VALID } });
         const label = (key: string) => rulerPart('value', key).querySelector('.wb3-ruler-vl')!;
@@ -647,8 +645,7 @@ describe('Health score chart', () => {
         expect(opt.yAxis.max).toBe(100);
     });
 
-    // The health score is computed on 1-hour averages (2026-10-11): the raw `series` belongs to the
-    // Model fit page and is never scored. The fixture's hourly values differ from the raw ones.
+    // The score uses 1-hour averages: the raw `series` belongs to the Model fit page and is never scored.
     describe('the page draws `hourly` (1-hour averages), never the raw `series`', () => {
         const ms = (list: string[]) => list.map(t => new Date(t).getTime());
         const xs = (c: any): number[] => c.option.series[0].data.map((p: any) => p[0]);
@@ -716,8 +713,7 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('hs-readout')).toBeTruthy(); // so does the hover read-out
     });
 
-    // Workbench detail pages v2: the numbers left the card's subtitle for the KPI tiles; the card
-    // only says what a point of its charts is.
+    // KPI tiles hold the numbers; the card subtitle only says what a chart point is.
     it('the chart card\'s subtitle says ONCE that every point is a "1-hour average of the running rows" — with no numbers in it', () => {
         mount({ sp: IND_VALID });
         expect(stackSub()).toBe('bar · 1-hour averages of the running rows · one time axis, one cursor for both');
@@ -737,7 +733,7 @@ describe('Health score chart', () => {
         expect(opt.tooltip.valueFormatter(84.99)).toBe('85');
     });
 
-    // User report 2026-10-12: the tooltip was headed by the date alone ("2026-01-01").
+    // The tooltip is headed by the hovered hour (date and time), not the date alone.
     it('the hover tooltip of both time charts is headed by the hovered HOUR — date and time, the hour start, in the one date format', () => {
         mount({ sp: IND_VALID });
         for (const chart of [scoreChart(), setChart()]) {
@@ -759,8 +755,7 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('share-share_80_100').textContent).toBe('80–100100.0%');
     });
 
-    // The rule was once on the share column only, while "below 80" printed `toFixed(1)`:
-    // "below 80 for 0.0%" next to a "< 0.1%" share.
+    // The "Below 80" tile follows the same rule as the share column: never "0.0%" next to a "< 0.1%" share.
     it('the "Below 80" tile follows the same rule: "< 0.1%", never "0.0%" for a share that is not zero', () => {
         const d = previewFor('individual', IND_VALID);
         const withPct = (pct: number | null) => ({ ...d, score_summary: { ...d.score_summary!, share_80_100: 99.96, share_40_80: 0.04, share_0_40: 0, pct_below_80: pct } });
@@ -822,8 +817,7 @@ describe('Health score chart', () => {
         expect(screen.queryByTestId('chart-overlay-stack')).toBeNull();
     });
 
-    // The enlarged copy is a pair of its own: it used to be ONE chart kept out of everything; now
-    // that it is both charts, they must be linked to each other — and still not to the page's.
+    // The enlarged copy is a pair linked to each other, not to the page's charts.
     it('the enlarged copy: its two charts share THEIR OWN cursor group and zoom window — never the page\'s', () => {
         mount({ sp: IND_VALID });
         const pageJoin = scoreChart().onChartReady;
@@ -855,9 +849,7 @@ describe('Health score chart', () => {
         expect(screen.getByTestId('hs-readout').textContent).toBe('2026/01/01 03:00:00 · 1 h avg 6.1 bar · score 60');
     });
 
-    // Real-app request 2026-10-12: "if the two charts were the same size it would be much easier
-    // to read — no need to line the point up by eye". Workbench detail pages v2: ONE full-width card
-    // holds both charts, on one time axis.
+    // One full-width card holds both charts on one time axis, so points line up without eyeballing.
     it('one column: the KPI tiles, the ruler card, then ONE chart card with the set-point chart above the score chart', () => {
         mount({ sp: IND_VALID });
         const page = screen.getByTestId('health-page');
@@ -865,7 +857,7 @@ describe('Health score chart', () => {
         // every block is a direct child of the ONE-column board, in this order — the tiles first
         expect(page.className).toBe('wb2-board hs-board');
         expect([...page.children]).toEqual([kpis(), rulerCard, stackCard()]);
-        // no side column, no wrappers of the old two-column layout, no "Share of scored hours" card
+        // no side column, no two-column wrappers, no "Share of scored hours" card
         expect(page.querySelector('.hs-spp, .hs-setwrap, .hs-sharecard, .hs-shares')).toBeNull();
         expect(rulerCard.className).toBe('hs-card wb3-rulercard');
         expect(kpis().contains(screen.getByTestId('score-shares'))).toBe(true);
@@ -908,9 +900,7 @@ describe('Health score chart', () => {
         expect(stripOf(scoreChart())).toEqual([]);
     });
 
-    // Code review 2026-10-12: a new `onEvents` object on every render makes echarts-for-react bind
-    // the handlers again without removing the old ones — every hovered hour re-renders this
-    // card, so each mouse move cost more than the one before it.
+    // A new `onEvents` object per render makes echarts-for-react bind handlers again without unbinding the old ones; keep it stable.
     it('the charts keep the SAME event handlers across a hover re-render (nothing is bound again on every mouse move)', () => {
         mount({ sp: IND_VALID });
         const before = { upper: setChart().onEvents, lower: scoreChart().onEvents };
@@ -1089,9 +1079,7 @@ describe('Health score chart', () => {
     });
 });
 
-// Workbench detail pages v2 §6 "KPI strip" (as cut down 2026-10-12): Lowest score · Below 80 ·
-// Share of scored hours. It replaces the score chart's long subtitle and the "Share of scored
-// hours" card. Never a tile per scoring period.
+// KPI strip: Lowest score, Below 80, Share of scored hours; never a tile per scoring period.
 describe('KPI tiles at the top of the page', () => {
     it('three tiles, in one row above the ruler: Lowest score (with the hour), Below 80 (of the scored hours), Share of scored hours (a stacked bar + its key)', () => {
         mount({ sp: IND_VALID });
@@ -1368,8 +1356,7 @@ describe('hover sync (the pointer on either chart reads the same HOUR on both)',
         expect(inst1.group).toBe(inst2.group);
     });
 
-    // Real-app bug: with a chart enlarged, the tooltips of the two charts UNDER the backdrop
-    // showed through over the overlay, because the enlarged copy had joined the same group.
+    // An enlarged copy in the overlay must not join the group, or tooltips of the charts under the backdrop show through.
     it('the enlarged copy of a chart (inside the overlay dialog) does not join the group', () => {
         mount({ sp: IND_VALID });
         const dialog = document.createElement('div');
@@ -1443,9 +1430,7 @@ describe('states of the preview', () => {
         expect(screen.getByTestId('health-loading')).toBeTruthy();
     });
 
-    // No in-pane Re-train button. Nothing about the model changed, so the board's way
-    // back is the text link "Load it again" ("Train sensor ↑" alone would be a dead
-    // end for a Complete model — Train sensor never trains one).
+    // No in-pane Re-train button: the way back is the 'Load it again' link (Train sensor never trains a Complete model).
     /** What the real hook returns after NOT_FITTED: no data, and (when there was one) the last answer. */
     const notFitted = (last: HealthPreview | null = null) => ({
         data: null, lastData: last, loading: false, error: 'no fit', errorCode: 'NOT_FITTED' as const, notFitted: true, needsRetrain: true, idle: null as null,
@@ -1505,14 +1490,10 @@ describe('states of the preview', () => {
         expect(onReload).toHaveBeenCalledTimes(1);
     });
 
-    // The model's own load failed (NOT a lost fit), so no preview is asked for at
-    // all — the page must not read "Loading…" for ever, and never offers a link that cannot work.
+    // The model's own load failed (not a lost fit), so no preview is asked for: no endless 'Loading…' and no dead link.
     const idlePreview = { data: null, lastData: null, loading: false, error: null, errorCode: null, notFitted: false, needsRetrain: false, idle: 'disabled' as const };
 
-    // After a fit-gone model's reload failed and the tab was left and
-    // opened again, no request is asked any more — `preview.notFitted` is no longer set — but
-    // the fit is still gone. The window says so (`fitGone.gone`), and the page must keep the
-    // "Fit no longer in memory" board the footer and the Model fit page show.
+    // After a failed reload and reopening the tab, no request is made but the fit is still gone: keep the board (`fitGone.gone`).
     it.each([
         ['a Complete model', undefined],
         ['a model that is not Complete', onGoTrain],
@@ -1587,9 +1568,7 @@ describe('states of the preview', () => {
         expect(onReload).not.toHaveBeenCalled();
     });
 
-    // The hook never returns `data` together with `notFitted` (a failed request sets `data`
-    // to null): with the last answer still held, NOT_FITTED is the board — there is no
-    // "line above the last charts" state (the unreachable `health-not-fitted-banner` is gone).
+    // The hook never returns `data` together with `notFitted`: NOT_FITTED shows the board, not the old charts.
     it('NOT_FITTED with an earlier answer held (what the hook really returns): the board, not the old charts', () => {
         mount({ kind: 'relationship', sp: REL_VALID, preview: notFitted(previewFor('relationship', REL_VALID)) });
         expect(screen.getByTestId('health-not-fitted')).toBeTruthy();
@@ -1639,7 +1618,7 @@ describe('Mark complete: checking, result and failure (it writes no files)', () 
             act(() => { vi.advanceTimersByTime(1); });
             expect(screen.getByTestId('save-running').textContent).toBe('Still checking… Checking the model is taking longer than usual.');
             cleanup();
-            // a Relation model: the same words (nothing is fitted again for files any more)
+            // a Relation model: the same words
             mount({ kind: 'relationship', sp: REL_VALID, save: { phase: 'running' } });
             expect(screen.queryByTestId('save-running')).toBeNull();
             act(() => { vi.advanceTimersByTime(SLOW_SAVE_NOTICE_MS); });
@@ -1761,9 +1740,7 @@ describe('a failed request keeps the page (QA 2026-10-04)', () => {
         expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ upper: 9.5 }), undefined);
     });
 
-    // A new request clears `error` while `data` is still null (the hook), and the
-    // whole page used to be replaced by the "Loading…" board — the first key typed under the red
-    // card unmounted the input it was typed in.
+    // A new request clears `error` while `data` is null; the page must stay mounted so the focused input isn't unmounted.
     it('the NEXT request after a failure (typing under the red card, Retry): the page stays — same input, still focused; a quiet "Loading again" line takes the red card\'s place', () => {
         const last = previewFor('individual', IND_VALID);
         const { rerender } = render(<Harness sp={IND_VALID} preview={failed(null, last)} onRetryPreview={onRetry} />);
@@ -1848,7 +1825,7 @@ describe('accessible names and full-precision values (QA 2026-10-04)', () => {
             '0 high — the residual where the score reaches 0 on the high side',
         ]);
         for (const [i, id] of ids.entries()) expect(screen.getByLabelText(names[i]!)).toBe(input(id));
-        // the same names under the band — and the old "Lower / Upper" column heads are gone
+        // the same names under the band, and no "Lower / Upper" column heads
         expect(rulerNames().filter((_, i) => [0, 1, 5, 6].includes(i))).toEqual(['0 low', '80 low', '80 high', '0 high']);
         expect(screen.queryAllByRole('columnheader')).toHaveLength(0);
         expect(screen.getByRole('group', { name: 'Health set points on the score ruler' })).toBe(ruler());
@@ -1906,7 +1883,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         test_validation: makeValidation({ tests: [makeTestResult({ pct_below_80: 7, lowest: 62, lowest_at: '2026-01-01T02:00:00' }), makeTestResult({ index: 2, start: '2026-01-01T03:00', end: '2026-01-01T04:00', pct_below_80: 41.5, lowest: 12, lowest_at: '2026-01-01T03:00:00' })] }),
     });
 
-    // User decision 2026-10-12: only the TRAIN period is highlighted — a scoring period has no band, no frame, no name.
+    // Only the train period is highlighted; scoring periods get no band, frame or name.
     it('the set-point chart and the score chart both highlight the TRAIN period only — one band, no "S1" / "S2", no EVENT line, no hatch; it is NAMED once, above the upper chart', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const names = (c: any) => c.option.series.map((x: any) => x.name);
@@ -1936,14 +1913,13 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
             const data = chart.option.series[0].data as [number, number | null][];
             // every hourly point is on the line — 02:00, 03:00 and 04:00 are the scoring periods' own
             expect(data.filter(p => p[1] !== null).map(p => p[0])).toEqual([0, 1, 2, 3, 4].map(hourAt));
-            // cut once, between 01:00 and 02:00 (no period covers 01:30–02:00). Cut from the train period alone it
-            // would be three cuts, and 02:00 / 03:00 / 04:00 would each stand apart, not drawn by a symbol-less line.
+            // Cut once between 01:00 and 02:00 (no period covers 01:30-02:00); the train period alone would give three cuts.
             expect(data.filter(p => p[1] === null).map(p => p[0])).toEqual([(hourAt(1) + hourAt(2)) / 2]);
             const i = data.findIndex(p => p[0] === hourAt(2));
             expect(data.slice(i).map(p => p[0])).toEqual([2, 3, 4].map(hourAt)); // joined to the end
         }
         expect((scoreChart().option.series[0].data as [number, number | null][]).filter(p => p[1] !== null).map(p => p[1])).toEqual([100, 90, 80, 60, 30]);
-        // ... and there are no per-period tiles any more (the "Scoring results" card was removed)
+        // ... and there are no per-period tiles
         expect(screen.queryByTestId('test-results')).toBeNull();
     });
 
@@ -1962,7 +1938,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(scoreChart().option.series.map((x: any) => x.name)).not.toContain('__scopes');
     });
 
-    // Many periods printed "TRAIN P1" … "TRAIN P20" on each other.
+    // Many periods must not print their names on top of each other.
     it('several train periods: "TRAIN" once then numbers, above the upper chart; no scoring name among them; every band is on both charts', () => {
         const hhmm = (m: number) => `2026-01-01T${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
         // 16 short train periods over the 4 hours of data
@@ -1985,15 +1961,14 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(trainNames(set)).toBeGreaterThanOrEqual(3);
     });
 
-    // User decision 2026-10-12 (real app): "the scoring result is not needed — not used".
+    // No 'Scoring results' card.
     it('there is NO "Scoring results" card: no per-period tiles, no quiet line, whatever the state of the set points', () => {
         mount({ sp: IND_VALID, data: withTests('individual', IND_VALID) });
         const page = screen.getByTestId('health-page');
         expect(screen.queryByTestId('test-results')).toBeNull();
         expect(page.querySelector('.vt-tile, .vt-note, .vt-quiet, .vt-none')).toBeNull();
         expect(page.textContent).not.toMatch(/Scoring results|for reading only|of running hours below 80/);
-        // what the page still says about the score: the three KPI tiles, for ALL scored hours — and
-        // never a tile per scoring period (S1, S2 …), nor a "no scoring period" one
+        // The page keeps only three KPI tiles over all scored hours; no per-period tile and no 'no scoring period' one.
         expect([...kpis().children].map(t => t.querySelector('.wb3-kpi-l')!.textContent)).toEqual(['Lowest score', 'Below 80', 'Share of scored hours']);
         expect(kpis().textContent).toMatch(/^Lowest score\d+on .* · 1 h averageBelow 80.*%of \d+ scored hours/);
         expect(page.textContent).not.toMatch(/\bS1\b|\bS2\b|includes \d+ d of train time|no scoring period/i);
@@ -2032,8 +2007,7 @@ describe('Scoring periods on the Health score page ("just score it", 2026-10-10)
         expect(onRetryPreview).toHaveBeenCalledTimes(1);
     });
 
-    // The Relation model's TRAINING hours need the engine too, so the warning can come with no
-    // scored hour at all — the notice then stands in the score card's place.
+    // The warning can appear with no scored hour (training hours need the engine too): the notice replaces the score card.
     describe('"The health score could not be calculated" with NO scoring period: the notice takes the score card\'s place', () => {
         const failedIssue = { code: 'test_scoring_failed', severity: 'warning' as const, field: 'test_periods', message: 'The Relation model engine did not answer.' };
         /** What Rust sends then: set points valid, every hourly score null, nothing scored. */

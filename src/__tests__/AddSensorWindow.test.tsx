@@ -27,11 +27,7 @@ vi.mock('split.js', () => ({
     default: () => ({ destroy: vi.fn() }),
 }));
 
-// The window re-reads the models and the workspace Running condition from the
-// workspace FILE (on a failure-group broadcast, and right before a delete is
-// committed). `disk` is what a real writer (Build Model / Dashboard) would have
-// persisted; a test that makes another window change a model writes it here
-// FIRST, then broadcasts -- exactly what the real writers do.
+// `disk` is what a real writer persisted; a test changing a model from another window writes it first, then broadcasts.
 const disk: { models: any[]; rc: any[]; missing: boolean; failRead: boolean } = { models: [], rc: [], missing: false, failRead: false };
 const mockLoadWorkspace = vi.fn(async (id: string) => {
     if (disk.failRead) throw new Error('disk unavailable');
@@ -42,12 +38,7 @@ vi.mock('../workspaceManager', () => ({
     loadWorkspaceData: (id: string) => mockLoadWorkspace(id),
 }));
 
-// Most tests drive the window through small STAND-INS for the Explorer and the
-// Formula editor. The create flow itself is covered with the REAL components in
-// the "real components" describe (one test per path) -- flip `real.*` to render
-// the genuine component instead of the stand-in. An EDIT always renders the real
-// editor (the stand-in only stands in for Create), so every edit / repair / lock
-// test below exercises the shipped editor end to end.
+// Tests stub the Explorer and Formula editor; set `real.*` for the genuine one. An edit always uses the real editor.
 const real = vi.hoisted(() => ({ editor: false, explorer: false }));
 
 const explorerProps: any[] = [];
@@ -74,10 +65,7 @@ vi.mock('../components/windows/SensorExplorer', async (importOriginal) => {
 const editorProps: any[] = [];
 /** The text the stand-in last reported (its "report an issue" buttons re-report it). */
 const standIn = vi.hoisted(() => ({ formula: '' }));
-// Partial mock: `SensorFieldsCard` (Name / Description / Unit / Component) stays REAL --
-// it is the window's own form. Only the editor's default export is stood in for Create:
-// its buttons report a formula / block (`onReport`) the way the real editor does, and fill
-// the real fields through the DOM.
+// Partial mock: `SensorFieldsCard` stays real; only the editor's default export is stubbed for Create.
 vi.mock('../components/windows/SpecialSensorFormulaEditor', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../components/windows/SpecialSensorFormulaEditor')>();
     const React = await import('react');
@@ -373,9 +361,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
             sensors: ['FORMULA1'],
         }));
-        // The recipe (not just the metadata) is what lets a
-        // reopened workspace recreate this column — see
-        // WorkspaceState.specialSensorRecipes.
+        // The recipe, not just the metadata, lets a reopened workspace recreate the column.
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
             newRecipes: [{ kind: 'formula', tag: 'FORMULA1', formula: '$TAG1 + $TAG2' }],
         }));
@@ -438,12 +424,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
     });
 
-    // ---- Manage tab -----------------------------------------------------
-    //
-    // Deleting a special sensor is a cross-window handshake: this window
-    // decides whether it is safe, then emits 'delete-special-sensors' and
-    // Dashboard does the removing. The undo window sits in between, and
-    // nothing has left this window until it closes.
+    // Manage tab delete: checks it is safe, then emits 'delete-special-sensors' only after the undo window closes.
 
     const specialA = { kind: 'formula', tag: 'special A', formula: '$TAG1 * 2' };
     const specialB = { kind: 'formula', tag: 'special B', formula: '${special A} + 10' };
@@ -571,12 +552,7 @@ describe('AddSensorWindow', () => {
         expect(screen.getByLabelText(/^Delete (.* · )?MyCalc$/)).toBeTruthy();
     });
 
-    // ---- Manage tab: editing --------------------------------------------
-    //
-    // Editing is not a local change: the sensor's column lives in the Rust
-    // session and anything built on top of it was computed from the OLD
-    // values, so a save recomputes the sensor and then replays the whole
-    // downstream chain before telling the dashboard.
+    // Manage tab, editing: a save recomputes the sensor and replays the downstream chain before telling the dashboard.
 
     const chainA = { kind: 'formula', tag: 'A', formula: '$TAG1 * 2' };
     const chainB = { kind: 'formula', tag: 'B', formula: '${A} + 1' };
@@ -599,16 +575,11 @@ describe('AddSensorWindow', () => {
         '${B} * 3': ['B'],
     };
 
-    // The real `SpecialSensorEditor` requires Description/Unit/Component
-    // filled in too (see its own test file); `openManage`'s default
-    // `sensorMetadata: []` leaves every recipe's editor opening blank, so
-    // these tests fill them in before saving unless they're deliberately
-    // exercising a DIFFERENT reason the save gets refused.
+    // Fills Description/Unit/Component, which the real editor requires; `openManage` passes empty `sensorMetadata`.
     const fillEditorRequiredFields = () => {
         fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'A description' } });
         fireEvent.change(screen.getByLabelText('Unit'), { target: { value: 'kPa' } });
-        // Component is a select restricted to existing components --
-        // "Uncategorized" is the one guaranteed to exist with `sensorMetadata: []`.
+        // Component is a select of existing components; 'Uncategorized' always exists with empty `sensorMetadata`.
         fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'Uncategorized' } });
     };
 
@@ -714,8 +685,6 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
     });
 
-    // Rust now refuses an unknown function/name at compute time with
-    // a readable error -- it must reach the user, with no "Updated" toast.
     it('a recompute refused by Rust (unknown function) shows Rust’s message in the editor and no "Updated" toast', async () => {
         mockInvoke.mockImplementation((cmd: string, args?: any) => {
             if (cmd === 'extract_formula_refs') {
@@ -777,12 +746,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).not.toHaveBeenCalledWith('update-special-sensor', expect.anything());
     });
 
-    // Editing an operation-kind recipe (`sum(...)`, `a + 10`, ...) uses the
-    // same button UI as Create (`ButtonBuilder`, seeded from the existing
-    // config) rather than a separate dropdown -- see
-    // `SpecialSensorEditor.test.tsx` for that component's own coverage.
-    // These two exercise the real end-to-end wiring through
-    // `handleSaveEdit`: recompute, persist, and tell the Dashboard.
+    // Editing an operation recipe uses the same editor as Create; these test the `handleSaveEdit` wiring: recompute, persist, tell the Dashboard.
     const opRecipe = {
         kind: 'operation' as const, tag: 'Total flow', sourceSensors: ['TAG1', 'TAG2'],
         operationConfig: { mode: 'multi' as const, multiOp: { type: 'sum' as const }, customName: 'Total flow' },
@@ -832,10 +796,7 @@ describe('AddSensorWindow', () => {
         expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({ recipe: opRecipe, recomputed: [] }));
     });
 
-    // The capability the whole button-UI reuse was for: a formula-backed
-    // shortcut (unreachable through the old plain dropdown) upgrades the
-    // SAVED recipe from operation-kind to formula-kind, exactly like
-    // building one this way from scratch would.
+    // A formula-backed shortcut upgrades the saved recipe from operation to formula kind.
     it('editing an operation recipe into a formula (Quick build |A − B|) recomputes via evaluate_formula and switches to a formula recipe', async () => {
         mockInvoke.mockImplementation((cmd: string) => {
             if (cmd === 'evaluate_formula') return Promise.resolve('Total flow');
@@ -865,15 +826,7 @@ describe('AddSensorWindow', () => {
         }));
     });
 
-    // ---- Manage tab: renaming --------------------------------------------
-    //
-    // The Name field in the editor used to be locked; it's now a real input
-    // (see `SpecialSensorEditor.test.tsx` for that component's own
-    // validation coverage). These exercise the cascade `handleSaveEdit` runs
-    // when a save also renames the sensor: every OTHER recipe that names the
-    // old tag gets rewritten via `rename_formula_refs` BEFORE anything
-    // replays, and the Dashboard is told via `rename-special-sensor` instead
-    // of `update-special-sensor`.
+    // Manage tab, renaming: rewrites downstream recipes via `rename_formula_refs` before replaying; emits `rename-special-sensor`.
 
     it('renaming a sensor with nothing built on top of it emits rename-special-sensor with no updatedRecipes', async () => {
         mockInvoke.mockImplementation(refsByFormula(chainRefs));
@@ -960,12 +913,7 @@ describe('AddSensorWindow', () => {
         expect(mockInvoke).not.toHaveBeenCalledWith('rename_formula_refs', expect.anything());
     });
 
-    // The Create tab's footer close
-    // button is now labelled "Cancel" (matching the approved prototype's
-    // `.mf` footer -- Cancel + Add sensor), not "Close" -- "Close" is still
-    // used, unchanged, on the Manage tab (see the multi-project isolation
-    // describe block below, which exercises that one). Both call the same
-    // `handleClose` handler.
+    // The Create tab's footer button is 'Cancel'; the Manage tab keeps 'Close'. Both call `handleClose`.
     it('Cancel closes the window (Create tab)', async () => {
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1']);
@@ -1016,31 +964,14 @@ describe('AddSensorWindow multi-project isolation', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// Real column removal, name validation,
-// plot delta, rename cleanup. These run against a FAKE BACKEND that enforces
-// the same rules as the Rust side (`store_derived_column`,
-// `remove_sensor_columns`), so "creating X again only works because the old X
-// column was dropped" is actually exercised rather than assumed.
-// ═════════════════════════════════════════════════════════════════════════
+// Runs against a fake backend that enforces Rust's rules, so re-creating X works only if the old column was dropped.
 
 import { sensorRef } from '../utils/specialSensorNaming';
 import { createFakeRust } from './helpers/fakeRustSession';
 
 const tkey = (s: string) => s.trim().toLowerCase();
 
-/**
- * The backend these tests run against: the SHARED fake (`helpers/fakeRustSession`,
- * which mirrors `src-tauri/src/lib.rs`: one tokenizer, one name rule, real
- * column values, Tauri's arg-key casing) behind the small call surface this file
- * has always used. It used to be a separate, simpler fake that scanned bare names
- * with `\p{L}` and left out `.` -- unlike Rust -- so a worker test and the QA
- * integration tests could disagree about what a formula references.
- *
- * `raw` / `derived` name columns that already exist in the session; derived ones
- * are seeded as copies of the first raw column (their values are never what
- * these tests look at -- the integration tests cover values).
- */
+/** Fake backend (`helpers/fakeRustSession`, mirrors `lib.rs`); `derived` columns are copies of the first raw column. */
 function fakeRust(opts: { raw?: string[]; derived?: string[]; failRemove?: boolean; failEval?: string[] } = {}) {
     const raw = opts.raw ?? ['TAG1', 'TAG2'];
     const inner = createFakeRust({ headers: ['timestamp', ...raw], columns: raw.map(() => [1, 2, 3, 4]) });
@@ -1096,8 +1027,7 @@ describe('AddSensorWindow: create -- name validation, double submit, backend err
         const rust = fakeRust();
         mockInvoke.mockImplementation(rust.invoke);
         await openWindow();
-        // One source: the shared fake enforces Rust's rule that a single-sensor
-        // operation takes exactly one (the old lenient fake let two through).
+        // One source: the shared fake enforces that a single-sensor operation takes exactly one.
         fireEvent.click(screen.getByText('toggle-tag1'));
         fireEvent.click(screen.getByText('set-config'));
         fillMeta();
@@ -1133,7 +1063,7 @@ describe('AddSensorWindow: create -- name validation, double submit, backend err
         expect(mockEmit).not.toHaveBeenCalledWith('add-sensor-selection', expect.anything());
     });
 
-    // `canAdd` ignored the typed formula's validate_formula result.
+    // `canAdd` must honour the typed formula's validate_formula result.
     it('a formula with an issue keeps Add disabled and the footer REPEATS the message; fixing it re-enables Add', async () => {
         mockInvoke.mockImplementation(fakeRust().invoke);
         await openWindow();
@@ -1508,10 +1438,7 @@ describe('AddSensorWindow: rename drops the OLD column, last', () => {
         errSpy.mockRestore();
     });
 
-    // While the lookup is down every sensor shows locked (a guess of
-    // "nothing depends on it" is unsafe), so the rename never leaves the editor;
-    // what DOES leave it -- a description-only save -- no longer recomputes at
-    // all, so it needs no lookup and goes through without touching a column.
+    // Lookup down: every sensor is held locked (no rename); a description-only save needs no lookup.
     it('C: while the "what depends on this" lookup has failed the name cannot change (held locked), and a description-only save still goes through without touching any column', async () => {
         const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const rust = fakeRust({ derived: ['A', 'B'] });
@@ -1546,8 +1473,7 @@ describe('AddSensorWindow: rename drops the OLD column, last', () => {
         // ...rename it away...
         await goManage();
         await renameTo('A', 'A2');
-        // ...and "A" can be created again (the fake backend would refuse it if A's column were still there).
-        // (TAG1 is still picked from the first visit to this tab.)
+        // 'A' can be created again (the fake refuses it if A's column remained); TAG1 is still picked from before.
         await act(async () => { fireEvent.click(screen.getByRole('tab', { name: /Create/ })); });
         fireEvent.click(screen.getByText('set-config-name-a'));
         fillMeta();
@@ -1596,8 +1522,7 @@ describe('AddSensorWindow: delete protection follows models that change while th
         clusterModelName: '', numClusters: 3, criteriaSensor: '', clusterRanges: [],
         filterTimePeriods: [], runningConditionMode: 'workspace', customRunningConditionFilters: [], customRunningConditionCombine: 'and',
     };
-    // A real writer persists to the workspace file FIRST and then broadcasts;
-    // the window re-reads the file (it does not trust the payload).
+    // A real writer persists to the file first and then broadcasts; the window re-reads the file, not the payload.
     const broadcast = async (payload: Record<string, unknown>) => {
         await act(async () => {
             for (const cb of listenCallbacks['failure-group-state-changed'] ?? []) cb({ payload });
@@ -1627,23 +1552,8 @@ describe('AddSensorWindow: delete protection follows models that change while th
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// QA's 14 findings.
-//
-//   * every special-sensor mutation (create, edit/rename, delete-commit) goes
-//     through ONE serial queue, with its checks done inside the task against
-//     fresh state;
-//   * a failed edit is rolled back;
-//   * a delete re-checks what uses the sensor at COMMIT time (models, the
-//     workspace Running condition, other special sensors);
-//   * models / Running condition follow the workspace FILE, not broadcast order;
-//   * the Create form is cleared after an Add (REAL tooling -- the stand-in
-//     cannot see state that lives inside it);
-//   * "on chart" follows what the Dashboard says it plotted.
-//
-// The end-to-end (two real windows) versions live in
-// SpecialSensorLifecycle.integration.test.tsx.
-// ═════════════════════════════════════════════════════════════════════════
+// Covers: one serial queue for every mutation (checks inside the task); failed edit rolls back; delete re-checks users at commit;
+// models/Running condition follow the file; Create form clears after Add. Two-window tests: SpecialSensorLifecycle.integration.test.tsx.
 
 describe('AddSensorWindow: real components -- every create path, and the form is cleared after each Add', () => {
     const body = () => document.querySelector('.special-sensor-body') as HTMLElement;
@@ -2205,8 +2115,7 @@ describe('AddSensorWindow: one serial queue for create / edit / delete', () => {
         await flush();
         expect(rust.names('remove_sensor_columns')).toHaveLength(0);
         expect(mockEmit).not.toHaveBeenCalledWith('delete-special-sensors', expect.anything());
-        // A re-point resets the window to the Create tab (a different project:
-        // nothing of the old binding's UI state survives) -- look at Manage again.
+        // A re-point resets the window to the Create tab; look at Manage again.
         await goManage();
         expect(screen.getByLabelText(/^Delete (.* · )?A$/)).toBeTruthy();
     });
@@ -2280,13 +2189,8 @@ describe('AddSensorWindow: a failed edit is rolled back', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// EDIT LOCK. A special sensor that a model (or the workspace
-// Running condition, or a sensor built on it that one of them uses) depends on
-// can no longer be renamed or have its values changed -- only its description /
-// unit / component. Enforced inside the serial queue against models re-read
-// from the workspace file; the editor's read-only state is the friendly half.
-// ═════════════════════════════════════════════════════════════════════════
+// Edit lock: a sensor used by a model/Running condition, or built on one, allows only description/unit/component edits.
+// Enforced in the serial queue against models re-read from the file; the editor's read-only state is the friendly half.
 
 describe('AddSensorWindow: edit lock for sensors a model uses', () => {
     const usingA = {
@@ -2334,8 +2238,7 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
         expect(banner.textContent).toMatch(/Used by 1 model: Uses A \(Relation model\)\. Remove it from those models first, then you can edit it\./);
         expect((screen.getByLabelText('Description') as HTMLInputElement).readOnly).toBe(false);
         expect((screen.getByLabelText('Unit') as HTMLInputElement).readOnly).toBe(false);
-        // One neutral lock pill in the header; Quick build and the palette are hidden; the
-        // left list is dimmed with one sentence saying why; the footer says what Save does.
+        // Locked: a lock pill in the header, no Quick build or palette, left list dimmed with a reason, footer explains Save.
         expect(screen.getByTestId('formula-lock-pill').textContent).toContain('Used by 1 model');
         expect(screen.queryByTestId('quick-build')).toBeNull();
         expect(screen.queryByRole('toolbar', { name: 'Insert' })).toBeNull();
@@ -2491,13 +2394,8 @@ describe('AddSensorWindow: edit lock for sensors a model uses', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// The window is BOUND to the dataset it was handed. The Dashboard
-// sends `generation` (from `load_csv`) with `sensors-data`; every guarded Rust
-// command carries it as `expectedGeneration`; a STALE_SESSION refusal stops the
-// task without rollback; a different project / dataset resets the whole window
-// (epoch); an OLDER payload never re-points it backwards.
-// ═════════════════════════════════════════════════════════════════════════
+// The window is bound to its dataset: `sensors-data` carries `generation`, guarded commands carry `expectedGeneration`,
+// STALE_SESSION stops the task without rollback, a different project resets the window, an older payload never re-points it.
 
 import { STALE_SESSION_ERROR } from './helpers/fakeRustSession';
 
@@ -2819,14 +2717,8 @@ describe('AddSensorWindow: bound to the dataset generation', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// A special sensor whose recipe could not be rebuilt
-// on reopen (Rust now refuses it, e.g. `round($TAG1, 2)`) has no column. Under
-// the edit lock that used to be a dead end: formula frozen, Delete off. Now its
-// formula/sources can be fixed (generation-pinned, rolled back on failure); the
-// NAME stays locked; a healthy locked sensor is unchanged; a description-only
-// save never re-sends the refused recipe.
-// ═════════════════════════════════════════════════════════════════════════
+// Recipe not rebuilt on reopen = no column: formula/sources can be fixed (generation-pinned, rolled back on failure);
+// the name stays locked and a description-only save never re-sends the refused recipe.
 describe('AddSensorWindow: fixing a special sensor that could not be restored', () => {
     const usingA = {
         id: 'm1', groupNos: [1], name: 'Uses A', kind: 'individual', category: null,
@@ -2851,8 +2743,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
     async function open(payload: Record<string, unknown>, rustOpts: Parameters<typeof fakeRust>[0] = {}) {
         const rust = fakeRust(rustOpts);
         mockInvoke.mockImplementation(rust.invoke);
-        // Bound to the live dataset generation, as the real Dashboard sends it:
-        // a repair is only ever unlocked against the window's own dataset.
+        // Bound to the live dataset generation like the real Dashboard; a repair only unlocks against the window's own dataset.
         await openWindow({ workspaceId: 'ws-1', sensors: ['TAG1', 'TAG2', 'A', 'B', 'H'], sensorMetadata: meta, generation: rust.inner.generation(), ...payload });
         await goManage();
         await flush();
@@ -3017,10 +2908,8 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(rust.calls.filter(c => c.cmd === 'evaluate_formula').map(c => c.args.expectedGeneration)).toEqual([g]);
         expect(rust.has('A')).toBe(true);
     });
-    // A = round($TAG1, 2) is refused on reopen,
-    // B = round(${A}, 2) is skipped, a model uses B. Fixing A must keep the fix
-    // even though B's OWN formula is refused too -- B is reported and shows up
-    // as broken on its own; nothing typed is lost and A is not rolled back.
+    // A = round($TAG1, 2) is refused on reopen, B = round(${A}, 2) is skipped, a model uses B.
+    // Fixing A keeps the fix even though B's formula is refused too: B is reported, nothing typed is lost, A is not rolled back.
     it('CHAINED, both broken: fixing A saves A, reports B as still needing a fix (with Rust\'s reason), and B is then flagged on its own', async () => {
         const badB = { kind: 'formula' as const, tag: 'B', formula: 'round(${A}, 2)' };
         const usingB = { ...usingA, id: 'mB', name: 'Uses B', targetSensor: 'B' };
@@ -3057,12 +2946,8 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(screen.queryByTestId('not-restored-B')).toBeNull();
     });
 
-    // When a repair fails AFTER the fix was written (here: a
-    // sensor built on A that HAD a column cannot be recomputed), the rollback
-    // REMOVES A's new column -- recomputing A's original recipe is refused by
-    // Rust before it writes, which used to leave the rejected fix's values in
-    // place, so A looked healthy, the lock came back and Save silently sent
-    // the stored broken recipe.
+    // A failed repair rolls back by REMOVING A's new column: recomputing the original recipe is refused by Rust before it writes,
+    // which would leave the rejected values and make A look healthy.
     it('a failed repair leaves NO column for A (removed, not "recomputed from the original"), keeps A flagged and the typed fix in the form', async () => {
         disk.models = [usingA];
         const onA2 = { kind: 'formula' as const, tag: 'C', formula: '${A} * 2' };
@@ -3093,10 +2978,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(screen.getByTestId('not-restored-A')).toBeTruthy();
     });
 
-    // SHOULD-FIX 1: the in-queue re-check is generation-pinned. Here the
-    // window unlocked A against its own dataset, but by the time Save runs the
-    // session answers a DIFFERENT generation: nothing is unlocked -- the normal
-    // lock refuses the formula change and no column is written.
+    // In-queue re-check is generation-pinned: a different session generation at Save unlocks nothing and writes no column.
     it('in-queue re-check: a session generation that is not the window\'s unlocks nothing (the lock refuses, nothing is written)', async () => {
         disk.models = [usingA];
         const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
@@ -3120,9 +3002,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(screen.getByTestId('edit-lock-banner')).toBeTruthy();
     });
 
-    // SHOULD-FIX 3: a not-restored OPERATION sensor whose stored config the
-    // editor's engine would not rebuild byte-for-byte: a unit-only save must
-    // still be metadata-only (the stored recipe, nothing sent to Rust).
+    // Not-restored operation sensor: a unit-only save stays metadata-only, nothing sent to Rust.
     it('UNIT-only save of a not-restored OPERATION sensor is metadata-only even when the engine would rebuild its config differently', async () => {
         const badOp = {
             kind: 'operation' as const, tag: 'OP', sourceSensors: ['GONE'],

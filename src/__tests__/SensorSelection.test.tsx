@@ -6,9 +6,7 @@ import { captureResizeObservers, setLineHeight } from './helpers/windowedLines';
 
 afterEach(() => {
     cleanup();
-    // AnchoredPopover (via Portal) appends a shared container straight to
-    // document.body that outlives the component tree — see Portal.test.tsx's
-    // own identical cleanup for why this matters across tests.
+    // Portal appends a shared container to `document.body` that outlives the tree; remove it between tests.
     document.getElementById('wizard-portal-root')?.remove();
 });
 
@@ -63,15 +61,10 @@ describe('SensorSelection', () => {
         expect(screen.getByText('1')).toBeTruthy(); // Uncategorized: TAG3
     });
 
-    // The component header's counter reads "selected / total" (e.g.
-    // "2 / 8") once at least one sensor in that component is on the
-    // chart. With nothing selected (the test above) it reads as a bare
-    // total (no "0 / " prefix).
+    // Counter reads 'selected / total' once a sensor is selected; a bare total otherwise.
     it('once a sensor is selected, the component counter reads "selected / total"', () => {
         render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
-        // "1" (selected) bolded, " / 2" (total) — getByText matches the
-        // whole element's normalized text content, so look at the
-        // `.component-group-count` element itself rather than a bare "1".
+        // Check `.component-group-count` itself: getByText can't match the bolded '1' alone.
         const counts = document.querySelectorAll('.component-group-count');
         const pumpCount = Array.from(counts).find(el => el.textContent === '1 / 2');
         expect(pumpCount).toBeTruthy();
@@ -236,10 +229,7 @@ describe('SensorSelection', () => {
         });
     });
 
-    // A sensor's membership is now per (group, kind)
-    // pair, not just per group — a sensor can carry more than one model
-    // kind at once (e.g. both Individual and Relationship). Chips and the
-    // group menu's toggle controls were updated accordingly.
+    // Membership is per (group, kind) pair: a sensor can carry several model kinds.
     describe('failure-group badge chips', () => {
         it('shows a chip for each group the sensor already belongs to', () => {
             render(<SensorSelection {...makeProps()} />);
@@ -280,10 +270,7 @@ describe('SensorSelection', () => {
         });
     });
 
-    // Membership moved from a per-row scan of every model
-    // into one memoized index keyed by sensor tag. These two cases pin the
-    // identification rules the index has to encode, since getting either
-    // wrong would silently show a sensor as belonging to nothing.
+    // The index must identify models by the right sensor, or a sensor silently shows as belonging to nothing.
     describe('membership index', () => {
         it('matches a Clustering model by its xSensor, not targetSensor', () => {
             const clusteringModel: FailureModel = {
@@ -312,9 +299,7 @@ describe('SensorSelection', () => {
             expect(screen.getByTitle('Remove Individual from Group A')).toBeTruthy();
             expect(screen.getByTitle('Remove Individual from Group B')).toBeTruthy();
             expect(screen.getByTitle('Remove Relation model from Group B')).toBeTruthy();
-            // …but NOT a relationship membership in Group A, which no model has.
-            // The chips show only memberships that exist; the sheet's empty
-            // Relationship cell for Group A is the "not a member" side of it.
+            // No model has a Relationship membership in Group A: no chip, and the sheet's cell reads not pressed.
             expect(screen.queryByTitle('Remove Relation model from Group A')).toBeNull();
             fireEvent.click(screen.getAllByTitle('Add to failure group')[0]);
             expect(screen.getByRole('button', { name: 'Relation model · Group A' }).getAttribute('aria-pressed')).toBe('false');
@@ -359,11 +344,7 @@ describe('SensorSelection', () => {
         expect(screen.queryByText('Pump Temp')).toBeNull();
     });
 
-    // The old AnchoredPopover "Add to failure group" menu was
-    // replaced by a full-height sheet docked to the Sensors panel's left edge
-    // (FailureGroupAssignSheet). Its own matrix / rename / delete / create
-    // behaviour is covered in FailureGroupAssignSheet.test.tsx; these cover the
-    // seam with the sensor list: open, switch, step, and what dismisses it.
+    // These cover the sheet's seam with the sensor list (open, switch, step, dismiss); the sheet itself is tested elsewhere.
     describe('the Failure Group Assignment sheet (opened from a row\'s 📁)', () => {
         const sheet = () => screen.queryByTestId('fg-sheet');
         const folder = () => screen.getAllByTitle('Add to failure group');

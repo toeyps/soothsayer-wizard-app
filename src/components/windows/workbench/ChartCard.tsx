@@ -3,23 +3,9 @@ import { Maximize2, X } from 'lucide-react';
 import ResponsiveECharts from '../../charts/ResponsiveECharts';
 import { isPickerSurfaceOpen } from '../../sensor/SensorPicker';
 
-/*
- * A chart card of the Build Model Workbench: title + subtitle,
- * optional controls on the right, an Expand button, the chart, an optional
- * legend row, and the "Out of date" overlay while the model is stale.
- *
- * Both pages use it: Model fit and Health score. Expanding opens
- * a large copy of the SAME chart (same option, same data — nothing is
- * re-fetched) in the app's usual full-screen chart modal; Esc / the backdrop /
- * the X close it.
- *
- * Give it either `option` (an ECharts option, drawn with ResponsiveECharts) or
- * `render` (any node, called with `expanded` so a custom chart can size itself
- * for the overlay).
- */
+/* Build Model Workbench chart card: title, controls, Expand, chart, legend, 'Out of date' overlay when stale. Expand opens a large copy of the same option and data in the chart modal. Give `option` (ResponsiveECharts) or `render` (called with `expanded`). */
 
-/** `stack` / `stackxy` = the Health score page's card of two charts, one above the other
- *  (560 px; 700 px when the upper one is the Clusters scatter). */
+/** `stack`/`stackxy`/`stack3`: Health score card with charts stacked (chart area 560 / 700 / 740 px). */
 export type ChartCardSize = 'normal' | 'tall' | 'xtall' | 'stack' | 'stack3' | 'stackxy';
 
 export interface ChartCardProps {

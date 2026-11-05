@@ -1,43 +1,18 @@
-//! Hourly grouping for the health score.
-//!
-//! The health score is computed on ONE POINT PER CLOCK HOUR: the mean of the
-//! hour's rows (user decision, 2026-10-11). Training is untouched - every model
-//! number (mean / SD, band, ellipses, statistics, histogram, scatters) still
-//! comes from the raw training rows; only what is SCORED is hourly.
-//!
-//! This module is the one implementation of "which hour does a row belong to
-//! and what is the hour's mean". The previews (`health_preview`) hand it the
-//! rows they already selected (their universe) and score the means; the
-//! scoring-period results (`health_validation::build_hourly`) and the exported
-//! `validation` block count and judge the same hourly points.
-//!
-//! Rules:
-//!   * hour = clock hour of the row's parsed timestamp
-//!     (`ts_parsed.div_euclid(HOUR_US)`, the Dashboard's hourly rule); the
-//!     point's timestamp is the START of that hour ([`hour_label`]);
-//!   * only the rows handed in (and kept by `keep`) enter a mean - a row the
-//!     running condition removed is never averaged, and an hour with no such
-//!     row has NO point at all (so no score: missing, never 0);
-//!   * a row without a timestamp (`TS_MISSING`) belongs to no hour;
-//!   * the dataset is NOT assumed to be in time order: rows of one hour that are
-//!     far apart in the file still land in the same point, and the points come
-//!     out in ascending time;
-//!   * no minimum coverage: an hour with a single row is that row's value.
+//! Hourly grouping for the health score: one point per clock hour = mean of the hour's rows; training stays on raw rows.
+//! Hour = `ts_parsed.div_euclid(HOUR_US)`, labelled by hour start; only rows handed in and kept are averaged (no row = no point).
+//! TS_MISSING rows belong to no hour; input needn't be time-ordered; no minimum coverage.
 
 use crate::chart_query::{hour_label, HOUR_US};
 use crate::csv_processor::TS_MISSING;
 
-/// The health score's sampling interval in seconds (`scoring_interval_secs` of
-/// `compute_health_preview`, `scoring_interval_seconds` of the exported block).
+/// Sampling interval in seconds (`scoring_interval_secs` in the preview).
 pub const SCORING_INTERVAL_SECS: u64 = (HOUR_US / 1_000_000) as u64;
 
 
 /// "This position belongs to no hour" in [`HourGroups::of`].
 const NO_HOUR: u32 = u32::MAX;
 
-/// The clock hours of a row universe, ascending in time. Positions index the
-/// `rows` slice given to [`HourGroups::build`]; hour indexes (`0..len()`) index
-/// every per-hour vector this type returns.
+/// Clock hours of a row universe, ascending. Positions index the `rows` slice given to `build`; hour indexes index every per-hour vector.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HourGroups {
     /// Hour number (`ts_parsed.div_euclid(HOUR_US)`) of each point, ascending.
@@ -51,11 +26,7 @@ pub struct HourGroups {
 }
 
 impl HourGroups {
-    /// Group the universe `rows` (dataset row numbers; `ts_parsed` is indexed by
-    /// them) by clock hour. `keep(position)` = does this row take part at all
-    /// (`false` for a row that is in the raw series but out of the scored
-    /// scope). One O(n) pass when the kept rows are in time order (the normal
-    /// case), O(n log n) otherwise.
+    /// Group `rows` by clock hour; `keep(position)` excludes rows outside the scored scope. O(n) when kept rows are time-ordered, else O(n log n).
     pub fn build(ts_parsed: &[i64], rows: &[u32], keep: impl Fn(usize) -> bool) -> HourGroups {
         // A real timestamp never floors to `i64::MIN`, so it marks "no hour".
         const NO_KEY: i64 = i64::MIN;
@@ -131,9 +102,7 @@ impl HourGroups {
             .map(|h| h as usize)
     }
 
-    /// Hour number (`ts_parsed.div_euclid(HOUR_US)`) of every point, ascending
-    /// and unique: the hour's identity across two groupings of the same
-    /// dataset (the Relation model keys its stored predictions by it).
+    /// Hour numbers, ascending and unique: the hour's identity across groupings (the Relation model keys stored predictions by it).
     pub fn hour_keys(&self) -> &[i64] {
         &self.hours
     }
@@ -148,8 +117,7 @@ impl HourGroups {
         &self.first_row
     }
 
-    /// Rows averaged into each hour (no minimum coverage is applied: a
-    /// one-row hour is scored from that single reading - user decision).
+    /// Rows averaged into each hour; no minimum coverage (a one-row hour is scored from that row).
     #[cfg_attr(not(test), allow(dead_code))] // kept for the tests / diagnostics
     pub fn counts(&self) -> &[u32] {
         &self.counts
@@ -160,9 +128,7 @@ impl HourGroups {
         hour_label(self.hours[h])
     }
 
-    /// Mean of `value_at(position)` over the rows of each hour. Non-finite
-    /// values are skipped (an input that is missing on a row does not poison
-    /// the hour); an hour with no finite value gives `NaN`.
+    /// Mean per hour; non-finite values are skipped; an hour with no finite value gives NaN.
     pub fn mean(&self, value_at: impl Fn(usize) -> f64) -> Vec<f64> {
         let mut sum = vec![0.0f64; self.len()];
         let mut n = vec![0u32; self.len()];
@@ -193,11 +159,7 @@ impl HourGroups {
         out
     }
 
-    /// Per hour: the label shared by EVERY row of the hour, or `none` when its
-    /// rows do not all carry the same label. A row labelled `none` agrees with
-    /// no other label, so one such row among labelled ones is enough to make
-    /// the hour `none` (an hour whose rows are all `none` is `none` too). One
-    /// O(rows) pass; a row with no hour is never looked at.
+    /// Per hour: the label shared by EVERY row, else `none`; a `none` row makes the hour `none`. One O(rows) pass; rows with no hour are ignored.
     pub fn unanimous(&self, label_at: impl Fn(usize) -> u32, none: u32) -> Vec<u32> {
         let mut out = vec![none; self.len()];
         let mut seen = vec![false; self.len()];

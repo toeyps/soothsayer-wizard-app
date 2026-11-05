@@ -9,11 +9,7 @@ import {
 } from '../components/dashboard/failureGroupOps';
 import { failureGroupMetaFields, recentProjectFgChip } from '../utils/failureGroupSummary';
 
-/**
- * The one place a Failure Group record is shaped (
- * item 5): Import step 3 and the Dashboard's Failure Groups tab must produce
- * identical groups.
- */
+/** The one place a Failure Group record is shaped: Import step 3 and the Dashboard tab must produce identical groups. */
 describe('failureGroupOps', () => {
     it('numbers a new group one past the highest in use (never reusing a deleted number below it)', () => {
         expect(nextFailureGroupNo([NOT_IN_GROUP])).toBe(1);

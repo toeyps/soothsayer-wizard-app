@@ -51,8 +51,7 @@ describe('isCompleteDateInput / settleDateInput (typing a date in a period row)'
 });
 
 describe('formatPeriod (chip / row label)', () => {
-    // One date format in the whole app (2026-10-12): a period bound always shows its
-    // full date AND its time on both sides — the two shortening rules are gone.
+    // One date format: a bound always shows full date and time on both sides.
     it('whole days in one year: the year on BOTH sides and the time on both (no "year once", no date-alone edge)', () => {
         expect(formatPeriod(p('a', '2025-01-01T00:00', '2025-02-28T23:59'))).toBe('2025/01/01 00:00 – 2025/02/28 23:59');
     });

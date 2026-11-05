@@ -16,28 +16,13 @@ import { resolveRunningStatus, runningStatusToWire, type ResolvedRunningStatus }
 import { howToBuild, rawSourceTags, recipeOf } from './specialSensorHowToBuild';
 import { trainingScopeFilter } from './trainingScope';
 
-/*
- * Export results — what the export needs, checked BEFORE anything is sent to
- * Rust (`exportReadiness`), and the request it sends
- * (`buildWorkspaceExportRequest`). Pure: the caller reads the workspace from
- * disk and passes it in. Rust re-checks everything in `plan_workspace_export`;
- * this is what the Workbench bar and the Export dialog show while nothing has
- * been asked yet.
- */
+/* Export results: what the export needs, checked before anything is sent to Rust (`exportReadiness`), and the request it builds. Pure: the caller passes the workspace read from disk. Rust re-checks in `plan_workspace_export`. */
 
 const KIND_ORDER: readonly ModelKind[] = ['individual', 'relationship', 'clustering'];
 const nonEmpty = (v: string | null | undefined): v is string => typeof v === 'string' && v.trim() !== '';
 
-// ---------------------------------------------------------------------------
-// Order and the sensors a model uses
-// ---------------------------------------------------------------------------
 
-/**
- * The Workbench run order: sensors in first-seen order (workspace-wide,
- * `modelSensorKey`), and per sensor Individual → Relation model → Clustering.
- * Unique by id. With `order` (model ids) that order is used instead; ids not
- * in it follow in run order, unknown ids are ignored.
- */
+/** Workbench run order: sensors in first-seen order (`modelSensorKey`), per sensor Individual, Relation model, Clustering; unique by id. With `order` (model ids) that order wins, the rest follow, unknown ids are ignored. */
 export function exportRunOrder(models: readonly FailureModel[], order?: readonly string[]): FailureModel[] {
     const byKey = new Map<string, FailureModel[]>();
     const keys: string[] = [];
@@ -70,9 +55,7 @@ function criteriaOf(m: FailureModel): string | null {
     return m.kind === 'clustering' && clustersOf(m) > 1 && nonEmpty(m.criteriaSensor) ? m.criteriaSensor : null;
 }
 
-/** The sensors a model reads, as its CSV columns: R inputs then output, I its
- *  sensor, C x, y and the criteria sensor when it is a different one. Empty
- *  tags are left out. */
+/** A model's CSV columns: R inputs then output, I its sensor, C x, y and the criteria sensor if any; duplicates and empty tags dropped. */
 export function modelExportTags(m: FailureModel): string[] {
     let tags: string[];
     if (m.kind === 'relationship') tags = [...(m.predictorSensors ?? []), m.targetSensor];
@@ -96,12 +79,7 @@ const conditionText = (f: WorkspaceSensorFilter): string =>
     (f.operation === 'between' ? `${f.sensor} between ${f.value1} and ${f.value2}` : `${f.sensor} ${OP_TEXT[f.operation] ?? f.operation} ${f.value1}`);
 const stamp = (s: string, open: string): string => (s.trim() === '' ? open : s.replace('T', ' '));
 
-/**
- * The free-text note written next to a model's training data: which rows it
- * was trained on (its EFFECTIVE running condition), its train periods,
- * whether it uses its own condition, and that rows with a missing value were
- * removed.
- */
+/** Free-text note next to a model's training data: the effective running condition, train periods, own-condition use, and that rows with a missing value were removed. */
 export function trainingNote(model: FailureModel, fg: RunningConditionFg, headers: string[] | null = null): string {
     const eff = effectiveRunningCondition(model, fg);
     const conds = eff.allData ? [] : eff.filters.filter(f => isCompleteCondition(f, headers));
@@ -118,9 +96,6 @@ export function trainingNote(model: FailureModel, fg: RunningConditionFg, header
     return parts.filter(Boolean).join('; ');
 }
 
-// ---------------------------------------------------------------------------
-// Sensor metadata
-// ---------------------------------------------------------------------------
 
 /** One lookup over the mapping metadata and the workspace's special-sensor
  *  metadata (the mapping wins), by normalised tag. */
@@ -164,9 +139,6 @@ function exportSensors(models: FailureModel[], running: ResolvedRunningStatus | 
 
 const realGroups = (groups: readonly FailureGroup[] | undefined): FailureGroup[] => (groups ?? []).filter(g => g.no !== 0);
 
-// ---------------------------------------------------------------------------
-// Readiness
-// ---------------------------------------------------------------------------
 
 /** Why a model is (not) ready to export. */
 export type ExportModelReason =
@@ -340,9 +312,6 @@ export function exportReadiness(input: ExportReadinessInput): ExportReadiness {
     };
 }
 
-// ---------------------------------------------------------------------------
-// The request
-// ---------------------------------------------------------------------------
 
 export interface BuildExportRequestInput {
     /** The workspace AS ON DISK (read it fresh right before exporting). */

@@ -50,3 +50,7 @@ Run `npx tsc --noEmit` and `npx vitest run` for the tests you added/touched befo
 - Needs qa-agent: [what integration/cross-cutting scenario, if any — not "write my unit tests"]
 - Blocking issues: [none / describe]
 ```
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

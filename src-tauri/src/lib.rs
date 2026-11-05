@@ -46,17 +46,8 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::RwLock;
 use tauri::{Emitter, State};
 
-// ---------------------------------------------------------------------------
-// Security / path-validation helpers
-// ---------------------------------------------------------------------------
 
-/// Validate a path passed from the frontend that we're about to open
-/// for read (`load_csv`, `load_metadata_command`, `load_mapping_csv`).
-///
-/// We deliberately do NOT canonicalize or check existence here —
-/// `File::open` already surfaces "file not found" with a useful error.
-/// We only reject shapes that indicate the frontend is constructing
-/// the path from attacker-controlled input (NUL bytes, `..` traversal).
+/// Rejects empty paths, NUL bytes and `..` traversal; existence is left to `File::open`.
 fn validate_read_path(p: &str) -> Result<(), String> {
     if p.is_empty() {
         return Err("path is empty".into());
@@ -64,8 +55,7 @@ fn validate_read_path(p: &str) -> Result<(), String> {
     if p.contains('\0') {
         return Err("path contains NUL byte".into());
     }
-    // Split on both Unix and Windows separators so cross-platform paths
-    // are caught regardless of which slash style the frontend serialized.
+    // Split on both `/` and `\` so either slash style is caught.
     for component in p.split(['/', '\\']) {
         if component == ".." {
             return Err("path contains '..' component".into());
@@ -74,15 +64,7 @@ fn validate_read_path(p: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Validate a frontend-supplied directory the backend will write into
-/// (the export destination). The user picks
-/// this via a native dialog, so we don't constrain it to a specific
-/// root — but we do reject obviously-malicious shapes.
-///
-///   - must be non-empty
-///   - must be absolute (rejects `./foo`, `../foo`, plain `foo`)
-///   - must not contain `..` components anywhere
-///   - must already exist on disk and be a directory
+/// Directory must be non-empty, absolute, free of `..`, and already exist.
 fn validate_save_dir(p: &str) -> Result<(), String> {
     if p.is_empty() {
         return Err("save_path is empty".into());
@@ -112,9 +94,7 @@ fn validate_save_dir(p: &str) -> Result<(), String> {
 mod path_validation_tests {
     use super::*;
 
-    // ── sanitize_filename_component ─────────────────────────────────
 
-    // ── validate_read_path ──────────────────────────────────────────
 
     #[test]
     fn validate_read_path_accepts_a_normal_path() {
@@ -146,9 +126,7 @@ mod path_validation_tests {
         assert!(validate_read_path("./data.csv").is_ok());
     }
 
-    // ── excel_safe ───────────────────────────────────────────────────
 
-    // ── validate_save_dir ────────────────────────────────────────────
 
     #[test]
     fn validate_save_dir_rejects_empty_and_nul() {
@@ -196,25 +174,11 @@ mod path_validation_tests {
 
 struct SessionData {
     data: ColumnarData,
-    /// Lower-cased, trimmed names (see [`name_key`]) of the columns that were
-    /// COMPUTED in this session by `calculate_new_sensor` / `evaluate_formula`
-    /// ("special sensors"), as opposed to imported from the CSV. Only these may
-    /// be overwritten (`replace`) or dropped (`remove_sensor_columns`) — a raw
-    /// CSV column is never touched. Rebuilt empty by every `load_csv`, so it can
-    /// never outlive the dataset it describes.
+    /// Names (via `name_key`) of columns computed this session; only these may be replaced or removed. Reset by `load_csv`.
     derived: std::collections::HashSet<String>,
-    /// Bumped by every `load_csv`. A special-sensor computation runs under a
-    /// READ lock and stores its result under a short write lock afterwards; if
-    /// a new dataset was loaded in between, the generation no longer matches
-    /// and the result is discarded instead of being attached to the wrong data.
+    /// Bumped by `load_csv`; a result computed under a read lock is discarded if the generation changed before the write.
     generation: u64,
-    /// Full-resolution Relationship fits (sidecar predictions) keyed by the
-    /// caller's `cache_key`, so editing health set points re-scores without
-    /// re-running the sidecar. Lives INSIDE the session: every `load_csv`
-    /// installs a fresh `SessionData`, which drops the cache with the dataset
-    /// it described (and a fit whose sidecar run straddled a reload is refused
-    /// by the [`SessionStamp`] check in `store_rel_fit`, as is a fit that
-    /// straddled a special-sensor recompute / removal).
+    /// Full Relationship fits by `cache_key`, so set-point edits skip the sidecar; dropped with the session; stale fits refused via `SessionStamp`.
     rel_cache: health_score::RelCache,
 }
 
@@ -222,9 +186,7 @@ static SESSION_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 
 struct AppState(RwLock<Option<SessionData>>);
 
-/// Run `f` with the session on the blocking pool. A plain sync command runs on
-/// the main thread, where a slow query or a wait for the session lock freezes
-/// every window.
+/// Runs on the blocking pool: a sync command would freeze every window on the main thread.
 async fn on_blocking_pool<T, F>(app: tauri::AppHandle, f: F) -> Result<T, String>
 where
     T: Send + 'static,
@@ -239,36 +201,23 @@ where
     .map_err(|e| format!("Background task failed: {e}"))?
 }
 
-/// One special-sensor change at a time, in arrival order. These commands take
-/// the session lock twice (compute, then store), so without this a sensor could
-/// be built from a column another call is replacing or removing.
+/// One special-sensor change at a time: each command locks the session twice (compute, then store).
 static SENSOR_CHANGE_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
 
 /// Name of the global event `load_csv` emits while it runs (payload:
 /// [`csv_processor::CsvLoadProgress`]).
 const CSV_LOAD_PROGRESS_EVENT: &str = "csv-load-progress";
 
-/// Serialises `load_csv` calls. While the command was a sync one the main thread
-/// ran them strictly one after another; making it `async` would otherwise let
-/// an older load finish AFTER a newer one and replace its dataset.
+/// Serialises `load_csv` so an older async load cannot finish after a newer one and replace its dataset.
 static LOAD_CSV_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
 
-/// Parses + merges the CSVs and installs the dataset as the session.
-///
-/// `async` + `spawn_blocking`: a plain sync command runs on the
-/// main thread, which would also hold back the `csv-load-progress` events
-/// until the load was over. Progress events are
-/// a global broadcast (like every Tauri `emit`) and best-effort: a failed emit
-/// is ignored and can never fail the load.
+/// Uses `spawn_blocking` so `csv-load-progress` events are not held back; emits are best-effort and never fail the load.
 #[tauri::command(rename_all = "snake_case")]
 async fn load_csv(
     paths: Vec<String>,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<CsvLoadReport, String> {
-    // Reject any path with a `..` component, NUL byte, or empty string.
-    // File-existence is delegated to `File::open` so the error surface
-    // stays familiar.
     for p in &paths {
         validate_read_path(p).map_err(|e| format!("invalid path '{}': {}", p, e))?;
     }
@@ -293,9 +242,7 @@ async fn load_csv(
     Ok(report)
 }
 
-/// Replace the session with a freshly loaded dataset and return its (new,
-/// strictly greater than any earlier) generation. The generation is allocated
-/// while the write lock is held, so it is exactly the one stored in the session.
+/// Allocates the generation under the write lock, so it is exactly the one stored.
 fn install_session(state: &AppState, data: ColumnarData) -> Result<u64, String> {
     let mut state_lock = state.0.write().map_err(|e| e.to_string())?;
     let generation = SESSION_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
@@ -308,13 +255,7 @@ fn install_session(state: &AppState, data: ColumnarData) -> Result<u64, String> 
     Ok(generation)
 }
 
-/// What a Relationship Train captured when it read the columns: the dataset
-/// (`generation`, bumped by `load_csv`) AND the special-sensor state
-/// (`derived_epoch`, bumped by every special-sensor recompute / removal — see
-/// `RelCache::epoch`). A fit is only cached if BOTH are still current: the
-/// generation alone does not change when a special sensor is recomputed in
-/// place, and the frontend's cache key (model id + training fingerprint) does
-/// not include special-sensor formulas, so a stale fit would be served forever.
+/// Captured when columns are read; a fit is cached only if both are current (an in-place recompute keeps `generation`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SessionStamp {
     generation: u64,
@@ -333,21 +274,13 @@ impl SessionData {
     }
 }
 
-/// Cache a Relationship fit under `key` — but only if the loaded dataset and
-/// its special sensors are still exactly what the fit was computed from
-/// (`stamp`, captured under the same read lock that copied the columns). A
-/// `load_csv`, or a special sensor recomputed / removed, while the sidecar ran
-/// makes this a no-op that returns `false` (the Train response then carries
-/// `cached: false` and the page asks the user to train again). (Tests; the app
-/// uses [`store_rel_fit_ex`].)
+/// Test helper: caches a fit only if `stamp` is still current, else returns false.
 #[cfg(test)]
 fn store_rel_fit(state: &AppState, stamp: SessionStamp, key: String, fit: health_score::RelFit) -> bool {
     store_rel_fit_ex(state, stamp, key, fit).is_some()
 }
 
-/// [`store_rel_fit`] returning the stored fit's identity (`None` = not
-/// stored), which work started for this very fit (the Train pre-warm of its
-/// hourly predictions) must present to land on it.
+/// Like `store_rel_fit` but returns the stored fit's identity, which the hourly pre-warm must present.
 fn store_rel_fit_ex(
     state: &AppState,
     stamp: SessionStamp,
@@ -361,8 +294,7 @@ fn store_rel_fit_ex(
     }
 }
 
-/// `(generation, derived epoch)` of the loaded session, `None` when nothing is
-/// loaded (what a Train captures; used by tests to model a Train in flight).
+/// Test helper: stamp of the loaded session, `None` if nothing is loaded.
 #[cfg(test)]
 fn session_stamp(state: &AppState) -> Result<Option<SessionStamp>, String> {
     let lock = state.0.read().map_err(|e| e.to_string())?;
@@ -375,16 +307,13 @@ fn session_generation(state: &AppState) -> Result<Option<u64>, String> {
     Ok(lock.as_ref().map(|s| s.generation))
 }
 
-/// Read-only diagnostic: the generation of the loaded dataset (the same value
-/// `load_csv` returned as `generation`), or `null` when nothing is loaded.
+/// Diagnostic: generation of the loaded dataset, or null if none.
 #[tauri::command]
 async fn get_session_generation(app: tauri::AppHandle) -> Result<Option<u64>, String> {
     on_blocking_pool(app, session_generation).await
 }
 
-/// Stable prefix of the error returned when a caller bound to an older dataset
-/// (`expectedGeneration` != the session's generation) tries to mutate the
-/// session. The frontend matches on the `STALE_SESSION` prefix.
+/// Error prefix when a caller bound to an older dataset mutates the session; the frontend matches `STALE_SESSION`.
 pub const STALE_SESSION_ERROR: &str =
     "STALE_SESSION: the dataset changed since this window was opened";
 
@@ -430,21 +359,11 @@ struct SensorStats {
     upper3: f64,
 }
 
-/// Compute mean / sample standard deviation (ddof=1, pandas-style) plus 1σ
-/// & 3σ bounds across all non-null values of a given sensor in the currently
-/// loaded dataset.
-///
-/// Sample SD (ddof=1), not population SD (ddof=0),
-/// for parity with `wizard.py` which uses pandas `.std()`. The numerical
-/// difference is `sqrt(N/(N-1))` per σ — invisible at large N, slightly wider
-/// boundaries at small N.
+/// Mean, sample SD (ddof=1, matches pandas `.std()`) and 1σ/3σ bounds over non-null values.
 #[tauri::command]
 async fn compute_sensor_stats(
     sensor: String,
-    // Same dashboard filter the predictive-model preview commands take.
-    // When present, mean/SD/±σ are computed over the filtered slice — so
-    // the boundary markers on the PM target chart match the slice the user
-    // explored in the dashboard.
+    // With a filter, stats cover only the filtered slice.
     filter: Option<PreviewFilter>,
     app: tauri::AppHandle,
 ) -> Result<SensorStats, String> {
@@ -470,9 +389,7 @@ fn sensor_stats_in(
 
     let resolved = ResolvedFilter::resolve(filter, &data.headers)?;
 
-    // Parallel collect of all finite values for the target column (NaN =
-    // missing, so `is_finite` drops missing and ±inf alike) — restricted to
-    // rows passing the dashboard filter when one is set.
+    // `is_finite` drops NaN (missing) and ±inf; restricted to filtered rows when a filter is set.
     let col = &data.columns[idx];
     let values: Vec<f64> = if resolved.is_noop() {
         col.par_iter().copied().filter(|v| v.is_finite()).collect()
@@ -490,7 +407,7 @@ fn sensor_stats_in(
         return Err(format!("No valid numeric values for sensor '{}'", sensor));
     }
 
-    // Min/max in parallel (mean now comes from `metrics::mean`).
+    // Min/max in parallel.
     let (min, max) = values
         .par_iter()
         .copied()
@@ -504,8 +421,7 @@ fn sensor_stats_in(
         );
 
     let mean = metrics::mean(&values);
-    // Sample SD (ddof=1) — matches pandas `.std()`. For N=1 sample_sd is NaN;
-    // fall back to 0.0 so the ±σ band is degenerate but well-defined.
+    // N=1 gives a NaN SD; use 0.0 so the ±σ band stays defined.
     let sd_raw = metrics::sample_sd(&values, mean);
     let sd = if sd_raw.is_nan() { 0.0 } else { sd_raw };
 
@@ -525,15 +441,7 @@ fn sensor_stats_in(
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-/// Spawn the Python ML sidecar (`bin/backend-<target-triple>`), translating
-/// the classic fresh-checkout failures into an actionable error.
-///
-/// The sidecar binary is gitignored and built separately; `cargo check`
-/// only needs a 0-byte stub to satisfy tauri-build's existence check, but
-/// actually LAUNCHING that stub fails with `%1 is not a valid Win32
-/// application. (os error 193)` on Windows (`Exec format error` on unix).
-/// Without this mapping the raw OS error reaches the UI and reads like a
-/// crash instead of a missing build step.
+/// Spawns the sidecar; maps a missing/stub binary (os error 193 / Exec format error) to an actionable error.
 fn spawn_sidecar(
     app: &tauri::AppHandle,
 ) -> Result<
@@ -561,14 +469,7 @@ fn spawn_sidecar(
     })
 }
 
-// ── Signed sidecar requests ───────────────────────────────────────────────
-// The sidecar runs only requests this app signed, so a copy of the engine
-// binary taken off a customer machine cannot be driven by hand. Each stdin
-// line is `<unix seconds> <hex HMAC-SHA256> <request JSON>`; the HMAC covers
-// `<unix seconds>\n<request JSON>` and `backend.py::_verified_body` refuses a
-// bad signature or a stale line (no replay of a captured line). The key must
-// match `_KEY` in `python/backend.py` (a test checks it); change both
-// together and rebuild the sidecar.
+// Requests are HMAC-SHA256 signed over `<secs>\n<json>`; key must match `_KEY` in backend.py. Change both and rebuild.
 const SIDECAR_KEY: [u8; 32] = [
     0x28, 0x4e, 0x88, 0xbf, 0x1b, 0x87, 0xea, 0x16, 0x28, 0xf1, 0xcd, 0x3c, 0x0d, 0x6d, 0xa3, 0xfa,
     0x10, 0xd9, 0xb0, 0x4e, 0x88, 0x3e, 0xa3, 0x89, 0x91, 0x1a, 0xb8, 0x77, 0x04, 0xba, 0xb7, 0xb7,
@@ -610,10 +511,7 @@ fn signed_sidecar_line(request: &serde_json::Value) -> Result<String, String> {
     signed_sidecar_line_at(request, now)
 }
 
-/// Developer-only hint for a missing / stub sidecar binary. Goes to the error
-/// log and the dev console - NEVER into an error the UI shows
-/// (user-readable text says "Relation model engine", never
-/// "sidecar" / "Python" / the binary name).
+/// Developer-only hint for logs; never shown in the UI, which says "Relation model engine".
 const SIDECAR_BUILD_HINT: &str = "The Python ML sidecar (src-tauri/bin/backend-<target>) is missing or is \
      an empty stub. Build it with src-tauri/python/build_sidecar.sh (or \
      scripts/build-installer-windows.ps1 step 3), then retry.";
@@ -645,18 +543,7 @@ fn log_sidecar_start_failure(app: &tauri::AppHandle, line: &str) {
     }
 }
 
-// ── What the USER reads when the Relation model engine fails ──────────────
-// Every error below can reach the UI (Train, Compare predictors, Mark
-// complete). They name the thing "the Relation model engine".
-//
-// The engine's OWN text (its error message, its
-// traceback, its stderr, its raw output) is NEVER shown - a library exception
-// can carry Python / library / algorithm names, and the algorithm name is
-// confidential. The user reads one fixed, Rust-authored sentence; the engine's
-// text goes to the permanent error log (source tag `sidecar`, bounded). There
-// is no pass-through and no allow-list: unknown text never reaches the UI.
-// Only Rust-authored detail (a missing field name, a length mismatch) and the
-// OS error of a failed start stay in the message.
+// Users see only fixed sentences; the engine's own text goes to the error log (it may name the confidential algorithm).
 
 /// The engine could not be started. `unbuilt` = it is missing / not runnable.
 fn engine_start_error(os_error: &str, unbuilt: bool) -> String {
@@ -688,8 +575,7 @@ const ENGINE_UNREADABLE: &str =
 const ENGINE_TIMED_OUT: &str = "The Relation model ran for 10 minutes without an answer \
      and was stopped. Try again, or use fewer rows or predictors.";
 
-// Byte budgets of one engine-failure log entry. Their worst-case sum (plus the
-// labels and the truncation markers) stays under [`ERROR_LOG_DETAIL_MAX`].
+// Per-entry log byte budgets; their worst-case sum stays under `ERROR_LOG_DETAIL_MAX`.
 /// The engine's `error` text (start kept).
 const ENGINE_LOG_ERROR_MAX: usize = 1024;
 /// The engine's `trace` (END kept: a traceback names the exception last).
@@ -778,12 +664,7 @@ fn engine_reported_failure(step: &str, err: &str, trace: Option<&str>) -> Engine
     }
 }
 
-/// Replace the engine's own error in a JSON answer by the fixed user sentence,
-/// IN PLACE, and hand back what to log. The answer keeps its shape (`error` is
-/// still there and still a string - the frontend shows it as the message);
-/// `trace` is always removed. An answer that is not a JSON object at all (it
-/// could be bare text) becomes `{ "error": <unreadable sentence> }`. `None` =
-/// the answer carries no error.
+/// Replaces the engine's error with the fixed sentence, drops `trace`, returns what to log; a non-object answer becomes `{error}`.
 fn take_engine_error(parsed: &mut serde_json::Value, step: &str) -> Option<EngineFailure> {
     let Some(obj) = parsed.as_object_mut() else {
         let failure = engine_unreadable_answer_failure(step, &"the answer is not a JSON object", &parsed.to_string());
@@ -799,8 +680,7 @@ fn take_engine_error(parsed: &mut serde_json::Value, step: &str) -> Option<Engin
     Some(failure)
 }
 
-/// Best effort (never fails, never more than one bounded entry): one engine
-/// failure appended to the error log at `path`, source tag `sidecar`.
+/// Best effort: appends one bounded engine failure to the error log (source `sidecar`).
 fn write_engine_failure(path: &std::path::Path, failure: &EngineFailure) {
     append_error_line(path, "sidecar", &failure.log_message, failure.log_detail.as_deref());
 }
@@ -894,10 +774,8 @@ mod engine_wording_tests {
         );
     }
 
-    // ---------- the engine's own text never reaches the user ----------
 
-    /// What a library exception can look like: every word here is forbidden in
-    /// the UI (the last one is the confidential algorithm name).
+    /// Library-exception text; every word is forbidden in the UI.
     const NASTY: &str = "pygam LinearGAM did not converge (numpy.linalg.LinAlgError) - Python sidecar backend.py";
     const NASTY_TRACE: &str = "Traceback (most recent call last):\n  File \"backend.py\", line 180, in \
          preview_relationship\n    model = pygam.LinearGAM(lam=lamb).fit(Xi, y)\nnumpy.linalg.LinAlgError: SVD did not converge";
@@ -1069,10 +947,7 @@ mod engine_wording_tests {
 
 }
 
-/// Optional value-filter passed alongside `preview_relationship_model`.
-/// Mirrors the JSON shape produced by the dashboard's FilterPanel, so the
-/// preview scatter can be built off the same filtered slice the user is
-/// looking at on the previous page.
+/// Value filter for `preview_relationship_model`, same JSON shape as the dashboard FilterPanel.
 #[derive(Debug, Deserialize, Clone)]
 struct PreviewValueFilter {
     sensor: String,
@@ -1089,17 +964,10 @@ struct PreviewFilter {
     timestamp_end: Option<String>,
     #[serde(default)]
     value_filters: Vec<PreviewValueFilter>,
-    /// "and" | "or" — how `value_filters` combine. Missing/anything else
-    /// defaults to "and" (the only mode this ever had before the Running
-    /// Condition Filter's AND/OR toggle). `DataFilter::to_preview` (below)
-    /// never sets this, so Dashboard's own chart/scatter queries always stay
-    /// AND-only — only the Build Model page's Running Condition Filter can
-    /// opt into "or".
+    /// "and" | "or"; missing means "and". `DataFilter::to_preview` forwards `DataFilter::combine` into it.
     #[serde(default)]
     combine: Option<String>,
-    /// Multiple training time periods. Kept if the row falls in ANY
-    /// period. Mutually exclusive with the legacy `timestamp_start/_end` pair —
-    /// sending both is a wiring bug and `ResolvedFilter::resolve` rejects it.
+    /// Kept if the row is in ANY period; sending it with the legacy `timestamp_start/_end` pair is rejected by `ResolvedFilter::resolve`.
     #[serde(default)]
     timestamp_ranges: Vec<TimeRangeArg>,
 }
@@ -1113,9 +981,7 @@ struct TimeRangeArg {
     end: Option<String>,
 }
 
-/// Parse one optional bound to epoch micros. Blank/whitespace/None = open
-/// (`Ok(None)`); anything else that fails to parse is an error rather than a
-/// silently unbounded side.
+/// Blank/None is an open bound; an unparseable value is an error, not a silent open bound.
 fn parse_time_bound(raw: Option<&str>, label: &str) -> Result<Option<i64>, String> {
     match raw.map(str::trim) {
         None | Some("") => Ok(None),
@@ -1134,21 +1000,13 @@ struct ResolvedValueFilter {
     value2: Option<f64>,
 }
 
-/// Parsed/resolved form of a `PreviewFilter`. Built once per command call
-/// from a `&[String]` of headers; thereafter `.keeps(data, row)` is a cheap
-/// predicate suitable for use inside the row-iteration loop of every
-/// data-reading command. Timestamp bounds are held as epoch microseconds and
-/// compared against `ColumnarData::ts_parsed` — rows are never re-parsed.
-/// A noop filter (`is_noop() == true`) is what every command saw before this
-/// refactor — included for symmetry but most call sites short-circuit when
-/// noop to preserve the parallel-rayon fast paths.
+/// Resolved `PreviewFilter`, built once per call; `keeps()` is a cheap per-row predicate on epoch micros vs `ts_parsed`.
 struct ResolvedFilter {
     /// Sorted, merged time periods (epoch micros, inclusive). Empty = no time
     /// gate. `None` on a side = open bound.
     ts_ranges: Vec<(Option<i64>, Option<i64>)>,
     value_filters: Vec<ResolvedValueFilter>,
-    /// true = OR (any value filter passing keeps the row), false = AND (all
-    /// must pass) — the pre-existing, still-default behavior.
+    /// true = OR (any value filter passing keeps the row), false = AND (all must pass, the default).
     or_combine: bool,
 }
 
@@ -1243,10 +1101,7 @@ impl ResolvedFilter {
         self.ts_ranges.is_empty() && self.value_filters.is_empty()
     }
 
-    /// True if row `row` falls inside the dashboard filter window (timestamp
-    /// AND all value-filter predicates). Rows whose timestamp was missing or
-    /// unparseable at load (`TS_MISSING`) are excluded under a timestamp gate
-    /// — matches the legacy per-query parse behavior.
+    /// Rows with `TS_MISSING` timestamps are excluded under a timestamp gate.
     #[inline]
     fn keeps(&self, data: &ColumnarData, row: usize) -> bool {
         if !self.ts_ranges.is_empty() {
@@ -1265,10 +1120,7 @@ impl ResolvedFilter {
         if self.value_filters.is_empty() {
             return true;
         }
-        // AND: every condition must pass (the original, still-default
-        // behavior). OR: at least one must pass — an empty list is handled
-        // above and never reaches here, so this is never a vacuous "OR of
-        // nothing" false.
+        // AND: all must pass; OR: at least one. An empty list is handled above, so no vacuous OR.
         let mut matched_any = false;
         for rf in &self.value_filters {
             let val = data.value(rf.sensor_idx, row);
@@ -1553,10 +1405,9 @@ mod resolved_filter_tests {
         assert!(!resolved.or_combine);
     }
 
-    // ---- multiple time periods ----
 
     fn ts_dataset() -> ColumnarData {
-        // Rows at minute 0..=9 on 2020-01-01, plus a TS_MISSING row. A = row index.
+        // Minutes 0..=9 plus a TS_MISSING row; A = row index.
         let mut ts: Vec<Option<String>> = (0..10)
             .map(|i| Some(format!("2020-01-01T00:{:02}", i)))
             .collect();
@@ -1755,47 +1606,8 @@ mod resolved_filter_tests {
     }
 }
 
-/// Preview the Relationship (LinearGAM) model on the currently loaded
-/// dataset by delegating to the Python sidecar.
-///
-/// The Rust side projects only the predictor + target columns, drops rows
-/// with any null/non-finite value, and ships the resulting matrix to the
-/// sidecar (much smaller than the full dataset).  The sidecar runs the
-/// `Wizard.PreviewModel.relationship` routine and streams back JSON, which
-/// we forward to the frontend untouched as `serde_json::Value`.
-///
-/// When `filter` is provided, rows are first restricted to those matching
-/// the dashboard's timestamp range + value filters before NaN-dropping.
-/// `None` means "use all rows".
-///
-/// **Health score:** when `cache_key` is given (the
-/// frontend sends `modelId + fingerprint`), the FULL-resolution fit (rows,
-/// actual, predicted, predictor columns, per-step scores) is cached in the
-/// session under that key — cleared by `load_csv`, bounded to a few entries —
-/// so `compute_health_preview` can re-score set-point edits without re-running
-/// the sidecar (`NOT_FITTED` if the key is unknown). The response then also
-/// carries `cached` and a bounded `health_preview` (see
-/// `health_preview::HealthPreview`, no set points applied). `max_points` caps
-/// that bounded series (default 4000).
-///
-/// **Response size:** with `max_points` (every frontend call passes
-/// it) `predicted` / `predictor_raw` / `target_raw` are ONE aligned strided
-/// sample of at most `max_points` rows (extremes kept), `residual` is dropped and
-/// `n_rows` is the real row count - see [`finish_relationship_response`]. The
-/// session cache still gets the FULL arrays.
-///
-/// **Hourly pre-warm (the health score is computed on 1-hour averages):** with
-/// a `cache_key` the SAME sidecar run also predicts every HOURLY point of the
-/// model's universe with the model it just fitted (`X_extra` = the mean
-/// predictors of each clock hour, no refit on them): the training hours and,
-/// with `test_periods` (same wire as `compute_health_preview`: `[{start,end}]`
-/// - a legacy `label` / `event_time` is accepted and ignored), the hours of the
-/// scoring periods. The answers are stored with the fit, so the
-/// `compute_health_preview` that follows needs no second ~15 s sidecar run. The
-/// points are chosen by the same function as that preview's
-/// (`health_validation::RelHours::points`). The response never carries the
-/// predictions. Best effort: an old sidecar that ignores `X_extra` just means
-/// the preview computes them lazily (`predict_relationship`).
+/// Fits the Relationship model via the sidecar on filtered, NaN-dropped rows; with `cache_key` caches the full fit (`NOT_FITTED` if unknown).
+/// With `max_points` the response arrays are one aligned strided sample; the cache keeps full arrays. The same run pre-warms hourly predictions.
 #[tauri::command(rename_all = "snake_case")]
 async fn preview_relationship_model(
     predictors: Vec<String>,
@@ -1815,10 +1627,7 @@ async fn preview_relationship_model(
         return Err("Target sensor is required.".into());
     }
 
-    // ── Build the projected, NaN-dropped (X, y) off the locked AppState. ──
-    // Contract: the sidecar receives pre-cleaned arrays. Rust owns
-    // column projection and NaN/non-finite filtering.  `X` is n_rows × n_predictors,
-    // `y` is n_rows.  We collect into owned data and drop the lock before any await.
+    // The sidecar gets pre-cleaned arrays (Rust projects columns and drops NaN/non-finite rows); drop the lock before any await.
     let (x_matrix, y_vector, row_idx, stamp, extra_points) = {
         let state_lock = state.0.read().map_err(|e| e.to_string())?;
         let session = state_lock.as_ref().ok_or("No data loaded")?;
@@ -1842,23 +1651,15 @@ async fn preview_relationship_model(
             .position(|h| h == &target)
             .ok_or_else(|| format!("Target not found: {}", target))?;
 
-        // Dashboard filter (timestamp + value gates) — same resolution used
-        // by every other data-reading command; row timestamps were parsed
-        // once at load, so the gate below is pure integer compares.
         let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
-        // Drop rows with any null/non-finite across the (predictors + target) set,
-        // and rows that fall outside the dashboard filter (when present).
         let pred_cols: Vec<&[f64]> = predictor_indices
             .iter()
             .map(|&i| data.columns[i].as_slice())
             .collect();
         let target_col: &[f64] = &data.columns[target_idx];
 
-        // The training rows: THE shared row rule (also what "Export results"
-        // writes as the model's training CSV) — in scope, predictors + target
-        // all finite. Dataset row of each surviving row kept for timestamps in
-        // the health view.
+        // Shared training-row rule (also the export's training CSV); keeps each row's dataset index for timestamps.
         let mut model_cols = predictor_indices.clone();
         model_cols.push(target_idx);
         let row_idx: Vec<u32> = workspace_export::training_rows(data, &resolved, &model_cols, None);
@@ -1872,9 +1673,7 @@ async fn preview_relationship_model(
             return Err("No rows remain after dropping nulls.".into());
         }
 
-        // Hourly pre-warm: every hourly point the health score needs (the
-        // training hours + the hours of the current scoring periods), predicted
-        // in this same run - only when there is a cache key to store them under.
+        // Hourly pre-warm: predict the training and scoring-period hours in this same run, only with a cache key.
         let extra_points = if cache_key.as_deref().is_some_and(|k| !k.is_empty()) {
             let plan = test_periods
                 .as_deref()
@@ -1920,8 +1719,7 @@ async fn preview_relationship_model(
         return Err(report_engine_failure(&app, engine_timed_out_failure(PREVIEW_ENGINE_STEP, &run.stderr)));
     }
 
-    // The engine's own text (stderr, raw output, its `error` / `trace`) goes to
-    // the error log; the user only ever reads a fixed sentence.
+    // Engine text goes to the error log; the user reads a fixed sentence.
     let parsed: serde_json::Value = read_engine_answer(PREVIEW_ENGINE_STEP, &run.stdout, &run.stderr)
         .map_err(|failure| report_engine_failure(&app, failure))?;
 
@@ -1934,27 +1732,8 @@ async fn preview_relationship_model(
 /// Log label of the `preview_relationship` engine run.
 const PREVIEW_ENGINE_STEP: &str = "preview_relationship";
 
-/// Everything `preview_relationship_model` does once the sidecar has answered:
-/// cache the FULL-resolution fit + attach the bounded `health_preview` (when
-/// `cache_key` is given), and only THEN shape the response for the frontend
-/// (attach the cleaned raw X / y, bound the arrays). Split out of the command so
-/// it can be tested without a sidecar.
-///
-/// Response contract: with `max_points` the frontend never gets
-/// every row — `predicted` / `predictor_raw` / `target_raw` are one aligned,
-/// evenly strided sample of at most `max_points` rows (min and max of the target
-/// and of the prediction always kept), `residual` is dropped (nobody reads it)
-/// and `n_rows` carries the real row count. Without `max_points` the arrays stay
-/// full (and `residual` stays). `r2_per_step` /
-/// `rmse2_per_step`, `cache_key`, `cached`, `health_preview` are never
-/// touched. The cache always holds the FULL arrays (built from the unshaped
-/// response), so the model's statistics and the Model fit view keep using every
-/// training row.
-///
-/// Engine errors: an answer with the engine's own `error` keeps
-/// the `error` key (a string - the frontend shows it as the message) but its
-/// VALUE is the fixed sentence of [`take_engine_error`] and `trace` is removed;
-/// the engine's text is handed to `log_engine` instead (the error log).
+/// Post-sidecar work: caches the full fit, attaches `health_preview`, then bounds the arrays. Split out to test without a sidecar.
+/// With `max_points`: aligned strided sample (min/max kept), `residual` dropped, `n_rows` real. Engine `error` keeps its key with the fixed sentence; `trace` removed.
 #[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 fn finish_relationship_response(
@@ -1976,13 +1755,7 @@ fn finish_relationship_response(
     )
 }
 
-/// [`finish_relationship_response`] plus the hourly pre-warm: `extra_points`
-/// are the hourly points this Train asked the sidecar to predict (`X_extra`);
-/// its `predicted_extra` answer is removed from the response (never shipped -
-/// it is unbounded) and, when the fit was cached, stored as that fit's hourly
-/// predictions (the bounded `health_preview` of the answer already uses them).
-/// A missing / wrong-length answer (old sidecar) stores nothing:
-/// `compute_health_preview` then predicts lazily.
+/// Adds the hourly pre-warm: stores `predicted_extra` with the cached fit and strips it from the response; a bad answer stores nothing (lazy fallback).
 #[allow(clippy::too_many_arguments)]
 fn finish_relationship_response_ex(
     state: &AppState,
@@ -2014,7 +1787,6 @@ fn finish_relationship_response_ex(
                     .collect()
             })
         });
-    // ── Health score: cache the full-resolution fit + attach bounded data. ──
     let cache_key = cache_key.filter(|k| !k.is_empty());
     if let Some(key) = cache_key {
         if parsed.get("error").is_none() {
@@ -2043,9 +1815,7 @@ fn finish_relationship_response_ex(
                 };
                 let stored = store_rel_fit_ex(state, stamp, key.clone(), fit);
                 let cached = stored.is_some();
-                // Pre-warm: the hourly predictions of this very fit (never of a
-                // later same-key fit). Over the cache budget / session or fit
-                // changed = not stored (lazy fallback).
+                // Pre-warm this fit only; not stored if over budget or the session/fit changed (lazy fallback).
                 if let (Some(handle), Some(preds)) = (stored.as_ref(), predicted_extra.as_deref()) {
                     merge_rel_extra(state, stamp, &key, handle, extra_points, preds);
                 }
@@ -2060,7 +1830,6 @@ fn finish_relationship_response_ex(
         }
     }
 
-    // ── Shape the frontend response (after the cache took the full arrays). ──
     shape_relationship_arrays(&mut parsed, x_matrix, y_vector, max_points);
     Ok(parsed)
 }
@@ -2069,10 +1838,7 @@ fn finish_relationship_response_ex(
 /// the prediction.
 const REL_SAMPLE_EXTREMES: usize = 4;
 
-/// Row indices (ascending, unique, at most `max_points`) of the bounded
-/// Relationship sample: an even stride over `0..n` plus the rows holding the min
-/// and max of `y` and of `predicted` (finite values only), so the extremes the
-/// scatter would otherwise lose are always drawn. All rows when `n <= max_points`.
+/// Even stride over 0..n plus the min/max rows of `y` and `predicted`, so extremes are drawn; all rows when n <= max_points.
 fn relationship_sample_indices(
     n: usize,
     max_points: usize,
@@ -2115,9 +1881,7 @@ fn relationship_sample_indices(
     idx
 }
 
-/// Attach `predictor_raw` / `target_raw` / `n_rows` to the sidecar response and,
-/// when `max_points` is given, bound `predicted` + those two to one aligned
-/// sample and drop `residual` (see [`finish_relationship_response`]).
+/// Attaches `predictor_raw`/`target_raw`/`n_rows`; with `max_points`, bounds arrays to one aligned sample and drops `residual`.
 fn shape_relationship_arrays(
     parsed: &mut serde_json::Value,
     x_matrix: &[Vec<f64>],
@@ -2130,7 +1894,7 @@ fn shape_relationship_arrays(
     };
     obj.insert("n_rows".to_string(), serde_json::json!(n));
     let Some(cap) = max_points else {
-        // Legacy shape: every row, as before.
+        // No `max_points`: every row.
         obj.insert("predictor_raw".to_string(), serde_json::json!(x_matrix));
         obj.insert("target_raw".to_string(), serde_json::json!(y));
         return;
@@ -2159,10 +1923,7 @@ fn shape_relationship_arrays(
     obj.remove("residual");
 }
 
-/// Build the cacheable full-resolution fit from the sidecar's
-/// `preview_relationship` response. `None` when the response has no usable
-/// `predicted` array of the right length. `x_matrix` is row-major
-/// (`n_rows x n_predictors`); the fit stores it column-major.
+/// Cacheable full fit from the response; `None` if `predicted` is missing or the wrong length. Input row-major, stored column-major.
 fn rel_fit_from_response(
     parsed: &serde_json::Value,
     predictors: &[String],
@@ -2204,22 +1965,9 @@ fn rel_fit_from_response(
     })
 }
 
-// ── Predictive-model save commands (Individual + Clustering) ──
 
-/// Round an Individual model's mean/SD and derive the 1SD / 3SD boundaries
-/// the way `wizard.py::_execute_individual` does (boundaries come from the
-/// ALREADY-rounded mean and SD), returning `(mean, sd, [lo1, hi1], [lo3, hi3])`.
-///
-/// Rounding is `metrics::round_metric` — identical to wizard.py's
-/// `round(x, 3)` whenever 3 decimals keep >= 4 significant digits, else 4
-/// significant digits — so a sensor with SD ~0.0004 does not collapse its
-/// bands onto the mean (a zero health-score denominator downstream). The
-/// mean and the boundaries are rounded to at least as many decimals as the
-/// SD needs (`round_metric_scaled`) so a large mean with a tiny SD stays
-/// resolvable too; for any SD >= 1 this is exactly 3 decimals.
-///
-/// Constant sensor (SD = 0): every boundary equals the mean. Behaviour kept
-/// as-is on purpose — the health score validates/guards it.
+/// Rounds mean/SD and derives 1SD/3SD bounds from the rounded values; `round_metric` keeps 4 significant digits for tiny SD.
+/// Constant sensor (SD = 0): every bound equals the mean; the health score guards it.
 fn individual_rounded_metrics(mean: f64, sd: f64) -> (f64, f64, [f64; 2], [f64; 2]) {
     use metrics::{round_metric, round_metric_scaled};
     let sd_r = round_metric(sd);
@@ -2235,14 +1983,7 @@ fn individual_rounded_metrics(mean: f64, sd: f64) -> (f64, f64, [f64; 2], [f64; 
     (mean_r, sd_r, b1, b3)
 }
 
-/// Half-open interval `(min, max]` over the criteria sensor's value, i.e.
-/// `min < v <= max` (Wizard Output Spec §4.4, `from < value <= to` — user
-/// decision 2026-10-20; it was `[min, max)` before). `None` on either bound
-/// means "unbounded in that direction" — the cluster catches everything
-/// strictly above min (if max is None) or at/below max (if min is None).
-/// Rows are assigned to a cluster by `health_score::assign_cluster` — Train
-/// (here), the health score and the export alike — which also opens the
-/// OUTER edges when there are two or more ranges (2026-10-20).
+/// Half-open `min < v <= max`; `None` = unbounded that side. Assign rows via `health_score::assign_cluster`, which also opens outer edges with 2+ ranges.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClusterRange {
     pub min: Option<f64>,
@@ -2250,10 +1991,7 @@ pub struct ClusterRange {
 }
 
 impl ClusterRange {
-    /// `(min, max)` tuples in list order — the shape
-    /// `health_score::assign_cluster` takes. Row selection over SEVERAL ranges
-    /// must go through `assign_cluster` (it opens the outer edges); `contains`
-    /// alone is the plain single-range test.
+    /// `(min, max)` tuples for `assign_cluster`; selecting over several ranges must use it, not `contains`.
     pub(crate) fn bounds(ranges: &[ClusterRange]) -> Vec<(Option<f64>, Option<f64>)> {
         ranges.iter().map(|r| (r.min, r.max)).collect()
     }
@@ -2272,7 +2010,7 @@ impl ClusterRange {
 
 #[derive(Debug, Serialize)]
 pub struct ClusterDetail {
-    /// 1-based cluster id, matching wizard.py's keys ("1", "2", …).
+    /// 1-based cluster id.
     pub cluster_id: u32,
     /// `None` for the single-cluster path (no criteria split).
     pub range: Option<ClusterRange>,
@@ -2293,17 +2031,7 @@ pub struct ClusteringPreview {
     pub clusters: Vec<ClusterDetail>,
 }
 
-/// Compute one ellipse fit per cluster.
-///
-///   • `n_clusters == 1`: single-cluster path — ignore `criteria_sensor` /
-///     `cluster_ranges`. Fits one ellipse over all (first, second) rows
-///     after NaN-drop.
-///   • `n_clusters > 1`: multi-cluster path — requires `criteria_sensor`
-///     and a `cluster_ranges` vec of length `n_clusters`. For each
-///     range, filters rows whose criteria_sensor value falls in
-///     `(range.min, range.max]`, drops NaNs on (first, second), and fits
-///     a single Gaussian to produce an ellipse. Mirrors
-///     `wizard.py::PreviewModel.clustering` semantics.
+/// One ellipse per cluster. n_clusters == 1: all rows, ignores criteria/ranges. > 1: needs `criteria_sensor` and `cluster_ranges`; rows with criteria in `(min, max]`.
 #[tauri::command(rename_all = "snake_case")]
 async fn compute_clustering_preview(
     first_sensor: String,
@@ -2311,9 +2039,7 @@ async fn compute_clustering_preview(
     n_clusters: u32,
     criteria_sensor: Option<String>,
     cluster_ranges: Option<Vec<ClusterRange>>,
-    // Same dashboard filter the predictive-model preview commands take.
-    // When present the ellipse fit is restricted to the filtered slice,
-    // matching what the user saw in the dashboard.
+    // With a filter, the fit uses the filtered slice.
     filter: Option<PreviewFilter>,
     app: tauri::AppHandle,
 ) -> Result<ClusteringPreview, String> {
@@ -2333,9 +2059,7 @@ async fn compute_clustering_preview(
     .await
 }
 
-/// Pure core of [`compute_clustering_preview`] (no Tauri state): one ellipse
-/// fit per cluster over `data`. Shared with the health-score preview and the
-/// model-file export so the numbers shown, scored and written always agree.
+/// Pure core of `compute_clustering_preview`, shared with health score and export so numbers agree.
 fn clustering_preview_in(
     data: &ColumnarData,
     first_sensor: String,
@@ -2365,7 +2089,6 @@ fn clustering_preview_in(
 
     let resolved = ResolvedFilter::resolve(filter.as_ref(), &data.headers)?;
 
-    // ── Single-cluster path ──────────────────────────────────────
     if n_clusters == 1 {
         let c1 = &data.columns[i1];
         let c2 = &data.columns[i2];
@@ -2406,7 +2129,6 @@ fn clustering_preview_in(
         });
     }
 
-    // ── Multi-cluster path ──────────────────────────────────────
     let criteria = criteria_sensor
         .filter(|s| !s.is_empty())
         .ok_or_else(|| "criteria_sensor is required when n_clusters > 1".to_string())?;
@@ -2490,13 +2212,7 @@ struct SingleOperation {
 struct MultiOperation {
     #[serde(rename = "type")]
     op_type: String,
-    /// Round every result row to this many decimal places (a rounded Average /
-    /// Median block keeps its own
-    /// decimals instead of a `round()` wrap). `(x * 10^d).round() / 10^d`,
-    /// half away from zero like the single-op `round`. Absent / `null` = no
-    /// rounding, so a recipe saved without this field loads and
-    /// computes unrounded. A whole number 0..=MAX_OPERATION_DECIMALS
-    /// (read as a number so a `2.0` does not fail the whole command).
+    /// Decimal places to round each result to, half away from zero; absent/null = unrounded. Read as a number so `2.0` is accepted.
     #[serde(default)]
     decimals: Option<f64>,
 }
@@ -2516,11 +2232,7 @@ struct SensorOperationConfig {
     custom_name: Option<String>,
 }
 
-/// Canonical form of a sensor name for COLLISION / LOOKUP purposes: trimmed and
-/// lower-cased. The frontend's `sameTag` is case-insensitive and merges
-/// sensors by lowercase key, so Rust has to agree on what "the same name"
-/// means or "Sum All" and "sum all" would be two columns here but one sensor
-/// there.
+/// Trimmed lower-case key for lookup/collision, matching the frontend's case-insensitive `sameTag`.
 fn name_key(name: &str) -> String {
     name.trim().to_lowercase()
 }
@@ -2531,11 +2243,7 @@ fn find_column_ci(headers: &[String], name: &str) -> Option<usize> {
     headers.iter().position(|h| name_key(h) == key)
 }
 
-/// Resolve a SOURCE sensor name (a `sensors[]` entry or a formula reference)
-/// to a column: exact match first, then the trimmed/case-insensitive match.
-/// Every reader (`validate_formula`, `evaluate_formula`,
-/// `calculate_new_sensor`) goes through this so they can never disagree about
-/// whether a sensor exists.
+/// Exact match first, then trimmed case-insensitive; all readers use it so they agree.
 fn resolve_sensor(headers: &[String], name: &str) -> Option<usize> {
     headers
         .iter()
@@ -2543,23 +2251,8 @@ fn resolve_sensor(headers: &[String], name: &str) -> Option<usize> {
         .or_else(|| find_column_ci(headers, name))
 }
 
-/// Put a freshly computed column into the session under `name`; returns the
-/// TRIMMED name that was actually stored (the caller must hand THAT to the
-/// frontend, never the raw input).
-///
-/// Collision rules (all comparisons trimmed + case-insensitive):
-/// * `replace == false` (create): the name must not exist at all — an
-///   existing column of that name, raw OR derived, is an `Err`. (A second
-///   column of the same name would be stored and never read: every lookup in
-///   this file takes the FIRST header match.)
-/// * `replace == true` (recompute after an edit/rename, and workspace-reopen
-///   replay): a DERIVED column of that name is overwritten IN PLACE (position
-///   kept, header takes the new casing); a RAW (imported) column of that name,
-///   or the timestamp column, is an `Err` so a recompute can never overwrite
-///   imported data; no match at all appends (a replay onto a freshly loaded
-///   CSV where the special sensors don't exist yet).
-///
-/// Nothing is mutated unless this returns `Ok`.
+/// Stores a computed column; returns the trimmed name actually stored (give THAT to the frontend). Compares trimmed, case-insensitive.
+/// Create: name must not exist (raw or derived). Replace: overwrites a derived column in place, appends if absent, Err on raw/timestamp. Nothing mutates on Err.
 fn store_derived_column(
     data: &mut ColumnarData,
     derived: &mut std::collections::HashSet<String>,
@@ -2602,10 +2295,7 @@ fn store_derived_column(
     Ok(name.to_string())
 }
 
-/// Drop derived (special-sensor) columns by name — trimmed + case-insensitive.
-/// Raw CSV columns and the timestamp column (`headers[0]`) are never removed:
-/// a name that isn't a derived column is skipped silently. Returns how many
-/// columns were actually removed.
+/// Drops derived columns by name (trimmed, case-insensitive); raw and timestamp columns are skipped. Returns the count removed.
 fn remove_derived_columns(
     data: &mut ColumnarData,
     derived: &mut std::collections::HashSet<String>,
@@ -2628,13 +2318,7 @@ fn remove_derived_columns(
     removed
 }
 
-/// Store a computed column under a SHORT write lock. The computation itself
-/// ran under a read lock (it can take seconds on a big file — holding the
-/// write lock for that long froze every chart query), so first confirm the
-/// dataset is still the one the result was computed from (`generation`), and
-/// — when the caller pinned one — that the CALLER is still bound to this
-/// dataset (`expected`). Both checks run under this same write lock, so
-/// neither can be invalidated between the check and the mutation.
+/// Stores under a short write lock (compute ran under a read lock); re-checks `generation` and the caller's `expected` under that same lock.
 fn commit_derived(
     state: &AppState,
     generation: u64,
@@ -2651,9 +2335,7 @@ fn commit_derived(
     }
     let stored = store_derived_column(&mut session.data, &mut session.derived, name, col, replace)?;
     if replace {
-        // A special sensor was recomputed in place: a cached Relationship fit
-        // may have used its old values (as target or predictor), so it can no
-        // longer be trusted. (Adding a brand-new column cannot affect one.)
+        // An in-place recompute may change a cached fit's inputs, so clear the cache.
         session.rel_cache.clear();
     }
     Ok(stored)
@@ -2676,9 +2358,7 @@ fn remove_derived_in_state(
 ) -> Result<usize, String> {
     let mut lock = state.0.write().map_err(|e| e.to_string())?;
     match lock.as_mut() {
-        // Nothing loaded -> nothing to remove (a delete firing after the
-        // session was reset must not surface as an error) — unless the caller
-        // pinned a generation, in which case it is stale.
+        // Nothing loaded: Ok(0), unless the caller pinned a generation, then stale.
         None if expected.is_some() => Err(STALE_SESSION_ERROR.to_string()),
         None => Ok(0),
         Some(session) => {
@@ -2694,22 +2374,8 @@ fn remove_derived_in_state(
     }
 }
 
-/// Remove special-sensor columns from the in-memory session. Call it when the
-/// user DELETES a special sensor and for the OLD name after a RENAME —
-/// otherwise the stale column stays behind and shadows (or collides with) the
-/// next sensor created under that name.
-///
-/// Only columns created by `calculate_new_sensor` / `evaluate_formula` in this
-/// session are removed; matching is trimmed + case-insensitive. A name that is
-/// unknown, a raw CSV column, or the timestamp column is skipped (not an
-/// error). Returns the number of columns actually removed (0 if no dataset is
-/// loaded).
-///
-/// `expected_generation` (JS key `expectedGeneration` — this command keeps
-/// Tauri's default camelCase keys like the other special-sensor commands, whose
-/// existing callers send `customName`): when `Some(g)` and `g` is not the
-/// current session generation, nothing is removed and `STALE_SESSION_ERROR` is
-/// returned.
+/// Call on delete and for the old name after rename, or the stale column shadows the next sensor of that name. Only derived columns are removed.
+/// Keeps default camelCase keys (`expectedGeneration`); a mismatch returns `STALE_SESSION_ERROR` and removes nothing.
 #[tauri::command]
 async fn remove_sensor_columns(
     names: Vec<String>,
@@ -2730,14 +2396,7 @@ fn multi_op_label(op_type: &str) -> &'static str {
     }
 }
 
-/// The ONE check of a multi-sensor operation (Sum / Average / Median block),
-/// shared by `calculate_new_sensor` (create, edit, replay) and
-/// `preview_formula`'s aggregate mode. Returns the resolved source columns.
-///
-/// Order (kept from before): no sources → unknown source → unknown op → too
-/// few sources → bad decimals. `require_two` refuses a block of fewer than 2
-/// sources (`agg_too_few`) — on for a CREATE and for the preview; off for a
-/// recompute/replay (`replace`) so a legacy one-source recipe still restores.
+/// Shared check for Sum/Average/Median blocks (create, edit, replay, `preview_formula`). `require_two` is off for replay so one-source recipes saved earlier restore.
 fn check_multi_operation(
     headers: &[String],
     sensors: &[String],
@@ -2779,15 +2438,7 @@ fn check_multi_operation(
     Ok(indices)
 }
 
-/// `(x * 10^d).round() / 10^d` — rounds to `d` decimal places, half away from
-/// zero (the same rounding as the single-op `round` and fasteval's
-/// `round(x)`, i.e. what `round(X * 100) / 100` gives in a formula).
-///
-/// * `|x * 10^d| >= 2^52` (or not finite): returned unchanged — at that scale
-///   every f64 already has no digit beyond `d` decimals, and scaling would
-///   overflow a huge value to infinity, which would then become "missing".
-/// * A result of `-0.0` (`-0.001` to 2 decimals) is returned as `0.0`, so a
-///   rounded column never shows "-0".
+/// Rounds to `d` decimals, half away from zero. Returned unchanged if `|x*10^d| >= 2^52` or non-finite; `-0.0` becomes `0.0`.
 fn round_to_decimals(v: f64, decimals: f64) -> f64 {
     const EXACT_INT: f64 = 4_503_599_627_370_496.0; // 2^52
     let factor = 10f64.powi(decimals as i32);
@@ -2807,8 +2458,7 @@ fn round_to_decimals(v: f64, decimals: f64) -> f64 {
 /// builders), and the granularity of a preview's cancellation check.
 const COLUMN_CHUNK: usize = 16_384;
 
-/// "Has this computation been superseded?" — checked once per chunk. Create /
-/// Save / replay pass [`never_cancelled`]; only `preview_formula` cancels.
+/// Checked once per chunk; only `preview_formula` ever cancels.
 type CancelCheck<'a> = &'a (dyn Fn() -> bool + Sync);
 
 fn never_cancelled() -> bool {
@@ -2818,15 +2468,7 @@ fn never_cancelled() -> bool {
 /// `Err` of a preview superseded by a newer `preview_formula` request.
 const FORMULA_PREVIEW_CANCELLED: &str = "CANCELLED: a newer formula preview replaced this one";
 
-/// Build a multi-operation column (already checked by
-/// [`check_multi_operation`]). `sum` needs every source (a missing one makes
-/// the row missing); `mean` / `median` skip missing sources; an all-missing
-/// row is missing. Non-finite results are missing; `decimals` rounds last.
-///
-/// Parallel over [`COLUMN_CHUNK`]-row chunks written straight into the
-/// preallocated output (no per-chunk vectors to concatenate, so peak memory is
-/// one column); every row is computed exactly as before, so the result is
-/// bit-identical to the old serial loop.
+/// `sum` needs every source; `mean`/`median` skip missing; non-finite is missing; `decimals` rounds last. Chunks write straight into the preallocated output.
 fn compute_multi_column(
     data: &ColumnarData,
     indices: &[usize],
@@ -2854,9 +2496,7 @@ fn compute_multi_column(
                     valid.push(v);
                 }
             }
-            // `sum` (needs_all): any missing source -> missing row, like
-            // `evaluate_formula`. Other ops skip missing sources and use
-            // what is left; an all-missing row stays missing.
+            // `sum` (needs_all): any missing source makes the row missing; others use what is left; all-missing stays missing.
             let skip = valid.is_empty() || (needs_all && valid.len() != src_cols.len());
             let mut v = if skip { f64::NAN } else { f(&valid).unwrap_or(f64::NAN) };
             if let Some(d) = op.decimals {
@@ -2869,8 +2509,7 @@ fn compute_multi_column(
     Ok(new_col)
 }
 
-/// Pure core of `calculate_new_sensor`: validates and computes the column
-/// without touching the session. Returns `(final trimmed name, column)`.
+/// Pure core of `calculate_new_sensor`: validates and computes without touching the session.
 fn compute_operation_sensor(
     data: &ColumnarData,
     sensors: &[String],
@@ -2904,14 +2543,10 @@ fn compute_operation_sensor(
         }
         "multi" => {
             let op = config.multi_op.as_ref().ok_or("Missing multiOp config")?;
-            // The shared block check (also what `preview_formula` answers).
-            // A recompute / replay (`replace`) still accepts a legacy
-            // one-source block.
+            // Replay (`replace`) accepts a one-source block.
             check_multi_operation(&data.headers, sensors, op, !replace)?;
             let op_name = operation_registry::multi_op_name(&op.op_type)?;
-            // Decimals are part of the default name, so two blocks that
-            // differ only in rounding don't clash; a block without decimals
-            // keeps the name it has always had (saved recipes replay under it).
+            // Decimals are in the default name so rounding variants don't clash; no decimals keeps the plain name so saved recipes replay.
             let default_name = match op.decimals {
                 Some(d) => format!("{}({:?}, {}dp)", op_name, sensors, d),
                 None => format!("{}({:?})", op_name, sensors),
@@ -2926,9 +2561,7 @@ fn compute_operation_sensor(
         _ => default_name.trim().to_string(),
     };
 
-    // A recomputation must not read the column it is about to overwrite: it
-    // would compute from the OLD values and then replace them, so the sensor
-    // would drift a little further every time it was saved.
+    // Must not read the column it overwrites, or the sensor would drift on every save.
     if replace {
         if let Some(target) = find_column_ci(&data.headers, &name) {
             if indices.contains(&target) {
@@ -2944,9 +2577,7 @@ fn compute_operation_sensor(
     // error part-way can't leave the dataset half-mutated.
     let new_col = match op {
         Op::Single(op) => {
-            // Non-finite results (power/exp overflow, 0^-1, ...) become
-            // "missing": `inf` stored in a column poisons every downstream
-            // stat and chart axis.
+            // Non-finite results become missing: `inf` poisons downstream stats and axes.
             let finite = |v: f64| if v.is_finite() { v } else { f64::NAN };
             let f = operation_registry::single_op_fn(&op.op_type)?;
             data.columns[indices[0]]
@@ -2960,9 +2591,7 @@ fn compute_operation_sensor(
     Ok((name, new_col))
 }
 
-/// Session-level `calculate_new_sensor`. `between` runs after the (lock-free)
-/// compute and before the commit — a no-op in production, a seam for tests to
-/// simulate a dataset swap in that window.
+/// Session-level version; `between` runs between compute and commit, a test seam to simulate a dataset swap.
 fn calculate_sensor_in_state(
     state: &AppState,
     sensors: &[String],
@@ -2984,9 +2613,7 @@ fn calculate_sensor_in_state(
     commit_derived(state, generation, expected, &name, col, replace)
 }
 
-/// `expected_generation` (JS key `expectedGeneration`): the generation returned
-/// by the `load_csv` that produced the dataset the caller is bound to. A
-/// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
+/// `expected_generation` (JS `expectedGeneration`) must match the dataset's generation, else `STALE_SESSION_ERROR` and nothing changes.
 #[tauri::command]
 async fn calculate_new_sensor(
     sensors: Vec<String>,
@@ -3009,14 +2636,8 @@ async fn calculate_new_sensor(
     .await
 }
 
-// ---------------------------------------------------------------------------
-// Formula engine helpers
-// ---------------------------------------------------------------------------
 
-/// One `$Name` / `${Name}` occurrence in a formula, located by CHAR index
-/// (`start..end`, end exclusive) so callers can rebuild the text around it
-/// instead of doing a blind string replace (which corrupts a token that is a
-/// prefix of a longer one: `$A` inside `$A.PV`).
+/// Char-index span (end exclusive) of a ref, so edits avoid blind replace corrupting prefixes (`$A` inside `$A.PV`).
 struct SensorRefSpan {
     start: usize,
     end: usize,
@@ -3024,15 +2645,7 @@ struct SensorRefSpan {
     name: String,
 }
 
-/// The ONE tokenizer for sensor references — `extract_sensor_refs`,
-/// `rewrite_sensor_ref` and `prepare_formula_for_eval` all build on it so they
-/// can never disagree about where a name ends.
-/// Supports two patterns:
-///   - `$SensorName` — the name runs while chars are alphanumeric, `_` or `.`
-///     (so `$Total-Power` is the sensor `Total` followed by `- Power`)
-///   - `${Sensor Name With Spaces}` (anything up to the first `}`)
-///
-/// An unclosed `${` and an empty `${}` yield no reference.
+/// The one sensor-ref tokenizer. `$Name` runs over alphanumerics, `_`, `.`; `${...}` takes anything up to the first `}`. Unclosed `${` or `${}` yields none.
 fn scan_sensor_refs(formula: &str) -> Vec<SensorRefSpan> {
     let mut refs = Vec::new();
     let chars: Vec<char> = formula.chars().collect();
@@ -3084,9 +2697,7 @@ fn scan_sensor_refs(formula: &str) -> Vec<SensorRefSpan> {
     refs
 }
 
-/// Extract sensor references from a formula string.
-/// Returns a Vec of (full_match_token, sensor_name) pairs, in order of
-/// appearance. See [`scan_sensor_refs`] for the grammar.
+/// Returns (token, name) pairs in order of appearance.
 fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
     scan_sensor_refs(formula)
         .into_iter()
@@ -3094,19 +2705,7 @@ fn extract_sensor_refs(formula: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Which sensors does each formula reference?
-///
-/// Exposed to the frontend so the "Special Sensors" management view can work
-/// out what depends on what before allowing a delete. It deliberately reuses
-/// `extract_sensor_refs` rather than reimplementing the scan in TypeScript:
-/// the reference syntax has two forms (`$Name` and `${Name With Spaces}`) and
-/// a second parser would drift from this one the moment either changes.
-///
-/// Substring matching is NOT a valid substitute on the frontend side — with
-/// sensors named `test` and `test extend`, asking whether a formula "contains"
-/// `test` answers yes for both.
-///
-/// Returns one de-duplicated list per input formula, in the same order.
+/// Lets the Special Sensors view find dependencies with this parser; substring matching is wrong (`test` vs `test extend`). One de-duplicated list per formula, same order.
 #[tauri::command]
 fn extract_formula_refs(formulas: Vec<String>) -> Vec<Vec<String>> {
     formulas
@@ -3122,15 +2721,8 @@ fn extract_formula_refs(formulas: Vec<String>) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// Build the reference token for `name`: bare `$Name` ONLY when the name is
-/// non-empty and made purely of alphanumerics and `_` — otherwise braced
-/// `${name}`. The bare grammar stops at the first char that is not
-/// alphanumeric / `_` / `.`, so a bare `Total-Power` re-parses as `$Total`
-/// minus `Power` (wrong, or silently the wrong sensor if `Total` exists).
-/// A `.` is braced too (it IS legal in the bare grammar, but braces are always
-/// safe). The TypeScript twin `sensorRef()` in `useCalculationEngine.ts` must
-/// follow the same rule by hand. A name containing `}` cannot be expressed
-/// either way (the braced form ends at the first `}`).
+/// Bare `$Name` only for non-empty alphanumeric/`_` names, else braced `${name}`: a bare `Total-Power` would re-parse as `$Total` minus `Power`.
+/// TS twin `sensorRef()` in `useCalculationEngine.ts` must follow the same rule; a name containing `}` cannot be expressed.
 fn sensor_ref_token(name: &str) -> String {
     if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         format!("${}", name)
@@ -3139,18 +2731,7 @@ fn sensor_ref_token(name: &str) -> String {
     }
 }
 
-/// Rewrite every reference to `old_name` inside `formula` to point at
-/// `new_name` instead, leaving everything else byte-for-byte unchanged.
-///
-/// This is what makes renaming a special sensor safe for every OTHER
-/// formula that names it: walks the formula with the exact same tokenizer as
-/// `extract_sensor_refs` rather than doing a blind string replace, because a
-/// name can be a PREFIX of a longer one (`test` inside `test extend` via
-/// `${test extend}`, or `test` inside `testA` via `$testA`) -- naively
-/// replacing every literal occurrence of `$test` would also corrupt
-/// `$testA`. Matching is trimmed + case-insensitive, same as every other tag
-/// comparison in the app. A formula that doesn't reference `old_name` at all
-/// comes back unchanged.
+/// Rewrites refs to `old_name` with the shared tokenizer, not string replace, so a prefix name (`$test` in `$testA`) isn't corrupted. Trimmed, case-insensitive; other text unchanged.
 fn rewrite_sensor_ref(formula: &str, old_name: &str, new_name: &str) -> String {
     let old_key = name_key(old_name);
     let chars: Vec<char> = formula.chars().collect();
@@ -3169,52 +2750,20 @@ fn rewrite_sensor_ref(formula: &str, old_name: &str, new_name: &str) -> String {
     out
 }
 
-/// Rewrite every reference to `old_name` in a formula to `new_name` --
-/// exposed to the frontend so the "Manage Special Sensors" rename flow can
-/// carry a rename into every OTHER formula-kind recipe that names the
-/// sensor. Reuses the same parser `extract_formula_refs` does rather than a
-/// second, string-replace-based rewrite on the TypeScript side, for the same
-/// reason that command exists: a name that's a prefix of a longer one would
-/// silently corrupt the longer one.
+/// Exposed so renaming a special sensor carries into other formulas using the same parser; a TS string replace would corrupt prefix names.
 #[tauri::command]
 fn rename_formula_refs(formula: String, old_name: String, new_name: String) -> String {
     rewrite_sensor_ref(&formula, &old_name, &new_name)
 }
 
-/// Convert sensor references to fasteval-safe variable names.
-/// Returns (transformed_expression, [(safe_name, original_sensor_name)]) with
-/// ONE entry per distinct sensor name (the same name used twice shares a
-/// variable).
-///
-/// The expression is rebuilt from the tokenizer's spans, NOT by
-/// `expr.replace(token, ...)`: a string replace of `$11PT1214A` would also
-/// chew the front of `$11PT1214A.PV` (a real pair of sensor names), turning
-/// it into `_0.PV`.
-///
-/// Variable names are SHORT (`_0`, `_1`, ...) so the rewritten
-/// text stays about as long as what the user typed -- long generated names
-/// would push formulas under the app's own 4096-char limit past fasteval's
-/// limit on the rewritten text. Two guards keep a short name from ever
-/// meaning something the user did not write:
-///   * the prefix is one `_` longer than the longest run of `_` in the text
-///     OUTSIDE the references, so a bare identifier the user typed (say `_0`)
-///     can never equal a generated name -- it stays an unknown name (an error);
-///   * a space is inserted when a reference touches a letter/digit/`_`/`.`,
-///     so `${A}0` can never fuse into another sensor's name (`_10`) -- it is
-///     a parse error instead, like any other garbage after a value.
-///
-/// `^` needs no rewriting -- fasteval parses it natively as its exponent
-/// operator (`BinaryOp::EExp`).
+/// Rewrites refs to short variables (`_0`, `_1`), one per distinct sensor. Built from tokenizer spans, not `replace` (`$11PT1214A` would eat the front of `$11PT1214A.PV`).
+/// Prefix is one `_` longer than any `_` run outside refs, so a typed `_0` never matches; a space is inserted when a ref touches a letter/digit/`_`/`.`, so `${A}0` can't fuse into `_10`.
 fn prepare_formula_for_eval(formula: &str) -> (String, Vec<(String, String)>) {
     let (expr, safe_names, _) = prepare_formula_for_eval_mapped(formula);
     (expr, safe_names)
 }
 
-/// [`prepare_formula_for_eval`] plus, for every BYTE of the rewritten text
-/// (and one past the end), the CHAR index in `formula` it came from — so a
-/// position fasteval reports in the rewritten text (`_0 _1`) can be shown in
-/// the user's own (`$A $B`). A generated name maps to its reference's start;
-/// an inserted space to the neighbouring reference edge.
+/// Also maps each byte of the rewritten text to its source char index, so fasteval error positions can be shown in the user's own text.
 fn prepare_formula_for_eval_mapped(formula: &str) -> (String, Vec<(String, String)>, Vec<usize>) {
     let chars: Vec<char> = formula.chars().collect();
     let spans = scan_sensor_refs(formula);
@@ -3286,17 +2835,8 @@ fn is_formula_word_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '.'
 }
 
-/// fasteval's own function set (`abs`/`log`/`round`/`min`/`max`/`ceil`/
-/// `floor`/trig) doesn't include `sqrt`, `exp`, `log10`, `ln` or `pow` --
-/// those are handled here via fasteval's custom-function namespace callback
-/// instead of pre-rewriting the formula text, since `pow`'s two arguments can
-/// be arbitrary sub-expressions that a naive string rewrite can't safely
-/// re-bracket. `log(x)` stays fasteval's BASE-10 log (pinned behaviour);
-/// `ln(x)` is the natural log.
-///
-/// A name/arity not listed here returns `None`, which fasteval reports as
-/// `Error::Undefined` -- `compile_formula` turns that into a refusal (never
-/// an all-empty sensor).
+/// Extra math fns (`sqrt`, `exp`, `log10`, `ln`, `pow`) via fasteval's custom-function callback, since `pow` args can be sub-expressions. `log` stays base 10; `ln` is natural.
+/// Unknown name/arity returns `None` (`Error::Undefined`), which `compile_formula` turns into a refusal.
 fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
     match (name, args) {
         ("sqrt", [x]) => Some(x.sqrt()),
@@ -3328,9 +2868,7 @@ const BUILTIN_FORMULA_FNS: &[&str] = &[
 const FORMULA_FUNCTION_LIST: &str =
     "abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()";
 
-/// Every function name the engine accepts -- fasteval's built-ins plus
-/// [`eval_extra_math_fn`]. Sent to the editor by `preview_formula` so the
-/// front end never retypes it (a test checks it matches both lists).
+/// All accepted function names; sent to the editor by `preview_formula` (a test checks it matches both lists).
 const FORMULA_FUNCTIONS: &[&str] = &[
     "abs", "sqrt", "pow", "exp", "ln", "log", "log10", "round", "min", "max", "ceil", "floor",
     "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
@@ -3396,7 +2934,6 @@ mod special_sensor_tests {
             && a.iter().zip(b).all(|(x, y)| (x.is_nan() && y.is_nan()) || x == y)
     }
 
-    // ── store_derived_column: create ─────────────────────────────────
 
     #[test]
     fn create_appends_and_tracks_the_column_as_derived() {
@@ -3443,7 +2980,6 @@ mod special_sensor_tests {
         assert!(derived.is_empty());
     }
 
-    // ── store_derived_column: replace ────────────────────────────────
 
     #[test]
     fn replace_overwrites_a_derived_column_in_place_keeping_its_position() {
@@ -3484,12 +3020,8 @@ mod special_sensor_tests {
         assert_eq!(data.columns[3], vec![0.0; 3]);
     }
 
-    // ── the user's bug: delete then recreate ─────────────────────────
 
-    /// "Special sensor values don't match": create X, delete X in
-    /// the UI, create a NEW X with a different formula. The new X must hold the
-    /// new formula's values (a second column named X appended next to the old
-    /// one would never be read: every lookup takes the FIRST match).
+    /// Create X, delete X, create a new X: it must hold the new values, since lookups take the FIRST header match.
     #[test]
     fn recreate_after_remove_serves_the_new_values_on_first_lookup() {
         let mut data = dataset();
@@ -3524,7 +3056,6 @@ mod special_sensor_tests {
         assert_eq!(data.columns[i], vec![4.0; 3]);
     }
 
-    // ── remove_derived_columns ───────────────────────────────────────
 
     #[test]
     fn remove_never_touches_raw_or_timestamp_columns() {
@@ -3555,7 +3086,6 @@ mod special_sensor_tests {
         assert_eq!(derived, HashSet::from(["w".to_string()]));
     }
 
-    // ── session-level wrappers ───────────────────────────────────────
 
     fn app_state(generation: u64) -> AppState {
         AppState(RwLock::new(Some(SessionData {
@@ -3591,7 +3121,6 @@ mod special_sensor_tests {
         assert!(commit_derived(&state, 1, None, "X", vec![], false).is_err());
     }
 
-    // ── expected_generation (stale-caller guard) ─────────────────────
 
     fn headers_of(state: &AppState) -> Vec<String> {
         state.0.read().unwrap().as_ref().unwrap().data.headers.clone()
@@ -3735,7 +3264,7 @@ mod special_sensor_tests {
 
     #[test]
     fn generation_change_between_compute_and_commit_is_rejected_without_a_pin_too() {
-        // `None` keeps the pre-existing behaviour: refused with the old message.
+        // No pin: still refused, with the "changed while ..." message.
         let state = app_state(10);
         let err = calculate_sensor_in_state(
             &state,
@@ -3849,7 +3378,6 @@ mod special_sensor_tests {
         assert_eq!(back.generation, 0);
     }
 
-    // ── resolve_sensor ───────────────────────────────────────────────
 
     #[test]
     fn resolve_prefers_an_exact_match_then_falls_back_to_trimmed_case_insensitive() {
@@ -3860,7 +3388,6 @@ mod special_sensor_tests {
         assert_eq!(resolve_sensor(&headers, "zzz"), None);
     }
 
-    // ── compute_operation_sensor ─────────────────────────────────────
 
     #[test]
     fn single_op_computes_and_names_the_column() {
@@ -3917,7 +3444,6 @@ mod special_sensor_tests {
         assert!(col.iter().all(|v| !v.is_infinite()));
     }
 
-    // ── multi-op NaN semantics ───────────────────────────────────────
 
     fn nan_dataset() -> ColumnarData {
         // row0: all valid, row1: B missing, row2: all missing
@@ -3956,7 +3482,6 @@ mod special_sensor_tests {
         assert_eq!(col, vec![20.0, 40.0, 60.0]);
     }
 
-    // ── compute_formula_sensor ───────────────────────────────────────
 
     #[test]
     fn formula_computes_and_a_missing_input_gives_a_missing_row() {
@@ -4016,7 +3541,6 @@ mod special_sensor_tests {
         assert_eq!(name, "f($A + 1)");
     }
 
-    // ── sensor_ref_token / tokenizer round trips ─────────────────────
 
     #[test]
     fn token_is_bare_only_for_alphanumeric_underscore_names() {
@@ -4057,7 +3581,6 @@ mod special_sensor_tests {
         assert_eq!(extract_sensor_refs(&out)[0].1, "A/B");
     }
 
-    // ── prepare_formula_for_eval ─────────────────────────────────────
 
     #[test]
     fn prepare_rebuilds_the_expression_from_spans_not_string_replace() {
@@ -4099,7 +3622,6 @@ mod special_sensor_tests {
         assert!(compute_formula_sensor(&data, "${A}0", Some("Z"), false).unwrap_err().contains("parse error"));
     }
 
-    // ── compile_formula: refusals, messages, limits ─────────────────
 
     fn err_of(formula: &str) -> String {
         compute_formula_sensor(&dataset(), formula, Some("Z"), false).unwrap_err()
@@ -4151,10 +3673,7 @@ mod special_sensor_tests {
 
     #[test]
     fn an_error_hidden_behind_a_condition_still_refuses_the_formula() {
-        // fasteval does NOT short-circuit `&&` / `||`: it evaluates every
-        // operand first and only then combines the values, so `nope($A)` is
-        // reached on every row whatever `$A > 2` gives -- and the trial
-        // evaluation in `compile_formula` refuses it before any row is read.
+        // fasteval doesn't short-circuit `&&`/`||`, so `nope($A)` is always evaluated and the trial in `compile_formula` refuses it.
         let data = dataset_with(&["A"], vec![vec![0.0, 5.0]]);
         let err = compute_formula_sensor(&data, "($A > 2) && nope($A)", Some("Z"), false).unwrap_err();
         assert!(err.contains("unknown function 'nope'"), "{err}");
@@ -4252,8 +3771,7 @@ mod special_sensor_tests {
 
     #[test]
     fn square_brackets_past_the_apps_limit_are_refused_before_fasteval() {
-        // Before brackets were counted, 65..=127 `[` reached fasteval's
-        // recursive parse/eval (its limit is 2 * MAX_FORMULA_DEPTH).
+        // 65..=127 `[` would reach fasteval's recursive parse/eval (its limit is 2 * MAX_FORMULA_DEPTH) unless brackets are counted.
         let d = MAX_FORMULA_DEPTH as usize + 1;
         let deep = format!("{}$A{}", "[".repeat(d), "]".repeat(d));
         let err = compute_formula_sensor(&dataset(), &deep, Some("Z"), false).unwrap_err();
@@ -4320,11 +3838,7 @@ mod extract_formula_refs_tests {
         assert_eq!(out[0], vec!["a"]);
     }
 
-    /// The whole reason this command exists rather than a substring check on
-    /// the frontend: one sensor name can be a prefix of another. Asking
-    /// whether the formula "contains" `test` would answer yes for both of
-    /// these, which would wrongly mark `test` as depended-upon and block its
-    /// deletion forever.
+    /// A name that prefixes another (`test`/`test extend`) must not count as depended-on, or deletion is blocked forever.
     #[test]
     fn does_not_confuse_a_name_with_a_longer_name_starting_the_same_way() {
         let out = extract_formula_refs(vec!["${test extend} + 1".to_string()]);
@@ -4380,10 +3894,7 @@ mod rewrite_sensor_ref_tests {
         assert_eq!(rewrite_sensor_ref("$test + 1", "TEST", "renamed"), "$renamed + 1");
     }
 
-    /// The whole reason this walks the formula with the same tokenizer as
-    /// `extract_sensor_refs` instead of a naive string replace -- "$test" is
-    /// a literal substring of "$testA", so `.replace("$test", ...)` would
-    /// corrupt it too.
+    /// `$test` is a substring of `$testA`, so a plain `.replace` would corrupt it.
     #[test]
     fn does_not_touch_a_longer_name_that_starts_the_same_way() {
         assert_eq!(rewrite_sensor_ref("$testA + $test", "test", "renamed"), "$testA + $renamed");
@@ -4422,9 +3933,7 @@ mod eval_extra_math_fn_tests {
 
     #[test]
     fn rejects_wrong_arg_count_instead_of_panicking() {
-        // Formerly the eval namespace only resolved sensor variables, so
-        // these names fell through to `None` and silently produced NaN for
-        // every row -- same must-not-panic contract applies to bad arities.
+        // A bad arity must return `None`, not panic.
         assert_eq!(eval_extra_math_fn("sqrt", &[1.0, 2.0]), None);
         assert_eq!(eval_extra_math_fn("pow", &[1.0]), None);
     }
@@ -4441,7 +3950,7 @@ struct FormulaValidationResult {
     error: Option<String>,
     referenced_sensors: Vec<String>,
     /// Stable issue code when invalid (same codes as `preview_formula`;
-    /// absent when valid). Optional for old callers.
+    /// absent when valid).
     #[serde(skip_serializing_if = "Option::is_none")]
     code: Option<&'static str>,
     /// `[start, end)` of the problem in UTF-16 units of the formula, when it
@@ -4450,17 +3959,8 @@ struct FormulaValidationResult {
     range: Option<[usize; 2]>,
 }
 
-/// Bound on formula source length + bracket nesting depth — a cheap
-/// DoS guard so a pathological string can't make `fasteval::Parser`
-/// allocate unbounded stack/Slab. Real formulas top out around a few
-/// hundred chars; 4 KB / 64 levels is an enormous headroom.
-///
-/// `(`, `[` and `{` all share ONE depth budget: fasteval treats `[ ]` exactly
-/// like `( )` (a nested group, parsed and evaluated recursively), and `{` is
-/// the `${Sensor Name}` reference form. Counting only `(` would let a
-/// 127-deep `[[[…]]]` through to fasteval's recursive parse/eval (its depth
-/// limit here is `2 * MAX_FORMULA_DEPTH`), deep enough to overflow the
-/// Windows main-thread stack in a debug build.
+/// Caps formula length and nesting depth so pathological input can't overflow fasteval's parser or stack.
+/// `(`, `[`, `{` share one depth budget: fasteval nests `[ ]` like `( )`, and deep `[[[…]]]` could overflow the Windows main-thread stack.
 const MAX_FORMULA_LEN: usize = 4096;
 const MAX_FORMULA_DEPTH: i32 = 64;
 
@@ -4471,13 +3971,7 @@ fn check_formula_limits(formula: &str) -> Result<(), String> {
     }
 }
 
-/// The size gate as a coded issue (`too_long` / `too_deep`).
-///
-/// The length is counted in UTF-16 code units — the same count as the
-/// editor's own `text.length` — not UTF-8 bytes: a Thai sensor
-/// name is 3 bytes per character, so a byte count would refuse Thai formulas
-/// far below the 4,096 characters the editor promises. Still a hard bound: at
-/// most 3 bytes per unit reach the parser.
+/// Size gate as a coded issue (`too_long`/`too_deep`). Length counts UTF-16 units like the editor's `text.length`, not UTF-8 bytes (Thai is 3 bytes per char).
 fn formula_limit_issue(formula: &str) -> Option<FormulaIssue> {
     use formula_diagnostics::{issue_at, TOO_DEEP, TOO_LONG};
     let len = formula.encode_utf16().count();
@@ -4653,7 +4147,7 @@ mod formula_gate_tests {
         assert_eq!(v.range, Some([0, 12]));
         let v = validate_formula_against(&data(), "$A + 1");
         assert!(v.valid && v.code.is_none() && v.range.is_none());
-        // A valid verdict serializes exactly as before (no code / range keys).
+        // A valid verdict has no code / range keys.
         let json = serde_json::to_value(&v).unwrap();
         assert_eq!(json, serde_json::json!({ "valid": true, "error": null, "referenced_sensors": ["A"] }));
     }
@@ -4714,33 +4208,8 @@ struct CompiledFormula {
 /// Value every sensor gets for the trial evaluation in [`compile_formula`].
 const FORMULA_TRIAL_VALUE: f64 = 1.0;
 
-/// Parse a formula and prove it evaluates, so a bad formula is REFUSED with a
-/// readable message instead of becoming a sensor whose every row is empty.
-///
-/// The single gate shared by `validate_formula` (the editor's live check) and
-/// `compute_formula_sensor` (create, edit/replace and the reopen replay all
-/// go through it), so "valid" in the editor means "will compute".
-///
-/// 1. Parse with a parser/slab sized for THIS formula: fasteval's defaults
-///    (4096-byte text, 32 levels, 64 sub-expressions) are tighter than the
-///    app's own `check_formula_limits` budget, so formulas the app accepts
-///    (a Spread over 33+ sensors, a long `+` chain, 40 nested brackets) would
-///    otherwise fail with `SlabOverflow` / `TooLong` / `TooDeep`. The callers
-///    run `check_formula_limits` first, which still bounds every size here.
-/// 2. Trial-evaluate with every sensor = 1.0: an unknown name/function or a
-///    wrong argument count is an evaluation ERROR (value-independent), which
-///    a plain row loop would turn into "missing" on every row.
-/// 3. Refuse `round(<sensor expr>, <constant>)` -- see
-///    [`check_round_argument_order`].
-///
-/// NOT here: the literal-division-by-0 refusal (`div_zero`) is a CREATE-only
-/// check (like `agg_too_few`) — see [`create_only_formula_issue`]. A recipe
-/// saved before that refusal existed must still restore on replay / Save.
-///
-/// A refusal is a [`FormulaIssue`]: the message every caller
-/// shows, plus a stable code and (where it can be located) a range in the
-/// user's text — see `formula_diagnostics`. Callers that only want the
-/// message use `?` into `String`.
+/// Parse + trial-evaluate (every sensor = 1.0) so a bad formula is refused; shared by `validate_formula` and `compute_formula_sensor`.
+/// Slab sized for this formula (fasteval defaults are tighter than `check_formula_limits`); refuses spreadsheet-order `round`; `div_zero` is create-only, not checked here.
 fn compile_formula(formula: &str) -> Result<CompiledFormula, FormulaIssue> {
     let (expr, safe_names, byte_map) = prepare_formula_for_eval_mapped(formula);
 
@@ -4772,9 +4241,7 @@ fn compile_formula(formula: &str) -> Result<CompiledFormula, FormulaIssue> {
     Ok(compiled)
 }
 
-/// Evaluate a compiled formula with `values[j]` for the j-th sensor. The
-/// first name the namespace could not resolve is recorded in `failed` as
-/// `(name, argument count)` for [`formula_eval_error_message`].
+/// Evaluates with `values[j]` for the j-th sensor; the first unresolved name goes to `failed` as `(name, arg count)`.
 fn eval_compiled(
     c: &CompiledFormula,
     values: &[f64],
@@ -4795,8 +4262,7 @@ fn eval_compiled(
     c.slab.ps.get_expr(c.expr_i).eval(&c.slab, &mut ns)
 }
 
-/// Put the user's own `$A` / `${Name}` back in place of the generated
-/// variable names in a piece of rewritten formula text (for error messages).
+/// Puts the user's `$A`/`${Name}` back in place of generated variable names, for error messages.
 fn restore_sensor_refs(text: &str, safe_names: &[(String, String)]) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
@@ -4892,24 +4358,8 @@ fn formula_eval_error_message(
     }
 }
 
-/// Refuse `round(<expression with a sensor>, <constant>)`.
-///
-/// fasteval's two-value round is `round(step, x)` -- it rounds `x` to the
-/// nearest multiple of `step` (`round(0.01, $A)` = $A to 2 decimals). Written
-/// the spreadsheet way,
-/// `round($A, 2)` therefore rounds the CONSTANT 2 to a multiple of $A and
-/// stores 0, A or 2A on every row -- silently. That shape is REFUSED
-/// with a message giving the formula to type, rather than
-/// reinterpreted: a rewrite would make `round(a, b)` mean two different
-/// things depending on which side holds a sensor, while a refusal is never
-/// silent. `round(x)`, `round(step, $A)` and `round($A, $B)` (step taken from
-/// a sensor) are accepted; a round with no sensor on either side is just a
-/// constant and is left alone.
-///
-/// OLD workspaces are auto-converted
-/// on reopen (`convert_legacy_formula`, the explicit rewrite to
-/// `round(x * 10^n) / 10^n`, never a silent reinterpretation by the engine).
-/// The refusal is code `round_excel`, ranged on the whole call.
+/// Refuses `round(<sensor expr>, <constant>)`: fasteval's `round(step, x)` rounds x to a multiple of step, so `round($A, 2)` would silently store 0, A or 2A.
+/// Refused (code `round_excel`) with the formula to type. `round(x)`, `round(step, $A)`, `round($A, $B)` and sensor-free rounds pass; `convert_legacy_formula` converts old text.
 fn check_round_argument_order(formula: &str) -> Result<(), FormulaIssue> {
     let chars: Vec<char> = formula.chars().collect();
     let spans = scan_sensor_refs(formula);
@@ -4942,9 +4392,7 @@ fn ref_mask(len: usize, spans: &[SensorRefSpan]) -> Vec<bool> {
     in_ref
 }
 
-/// One spreadsheet-order `round(x, n)` call (char indices): the call from
-/// the `round` keyword through its closing bracket (`start..end`), and its two
-/// arguments `x` (holds a sensor) and `n` (holds none).
+/// A spreadsheet-order `round(x, n)` call (char indices): the whole call span plus argument `x` (has a sensor) and `n` (has none).
 struct ExcelRoundCall {
     start: usize,
     end: usize,
@@ -4952,12 +4400,7 @@ struct ExcelRoundCall {
     n: (usize, usize),
 }
 
-/// Every `round(<expr with a sensor>, <expr without one>)` call, in order of
-/// its `round` keyword (an enclosing call before the calls inside it). The
-/// ONE scan behind both the refusal ([`check_round_argument_order`]) and the
-/// legacy conversion (`formula_diagnostics::convert_legacy_round`), so they
-/// can never disagree. Accepts fasteval's `round[ … ]` and `;` spellings;
-/// text inside a reference (`${x round(1, 2)}`) is a name, never a call.
+/// Every `round(<sensor expr>, <no sensor>)` call, outer before inner; serves both the refusal and the conversion. Text inside a ref is a name, never a call.
 fn excel_round_calls(chars: &[char], in_ref: &[bool], spans: &[SensorRefSpan]) -> Vec<ExcelRoundCall> {
     let len = chars.len();
     let is_word = |i: usize| !in_ref[i] && (chars[i].is_ascii_alphanumeric() || chars[i] == '_');
@@ -5018,9 +4461,7 @@ fn excel_round_calls(chars: &[char], in_ref: &[bool], spans: &[SensorRefSpan]) -
     out
 }
 
-/// Whether `chars[a..b]` (trimmed) is ONE operand that can be multiplied
-/// without brackets in a suggested formula: a single sensor reference, a
-/// plain number/name, or `name(...)` / `(...)` whose bracket closes at the end.
+/// True if `chars[a..b]` (trimmed) is one operand safe to multiply bare: a sensor ref, number/name, or a bracket group closing at `b`.
 fn is_formula_atom(
     chars: &[char],
     in_ref: &[bool],
@@ -5071,9 +4512,7 @@ fn is_formula_atom(
     false
 }
 
-/// How many decimal places a refused `round(x, n)` meant: `n` (as typed,
-/// evaluated as a constant) when it is a whole number 0..=15, else `None`.
-/// Shared by the refusal message and the legacy conversion.
+/// Decimal places `n` meant by a refused `round(x, n)`: a whole number 0..=15, else `None`.
 fn round_places(n: &str) -> Option<u32> {
     fasteval::ez_eval(n, &mut fasteval::EmptyNamespace)
         .ok()
@@ -5081,9 +4520,7 @@ fn round_places(n: &str) -> Option<u32> {
         .map(|v| v as u32)
 }
 
-/// The message for a refused `round(x, n)` -- `x` is the user's expression
-/// and `n` their second value, both as typed; `x_is_simple` says whether `x`
-/// can be multiplied without brackets.
+/// Message for a refused `round(x, n)`, with `x` and `n` as typed; `x_is_simple` = can multiply without brackets.
 fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
     let places = round_places(n);
     match places {
@@ -5112,16 +4549,11 @@ fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
     }
 }
 
-/// Refusal for a formula with no `$A` / `${Name}` at all (a constant is not a
-/// sensor) — shared by `validate_formula` and `compute_formula_sensor`.
+/// Refusal for a formula with no sensor reference; shared by `validate_formula` and `compute_formula_sensor`.
 const FORMULA_NO_REFS_ERROR: &str =
     "Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.";
 
-/// `expected_generation` (JS key `expectedGeneration`, Tauri's default
-/// camelCase like the other special-sensor commands — see
-/// `remove_sensor_columns`): optional; when `Some(g)` and `g` is not the
-/// current session generation, `STALE_SESSION_ERROR` is returned instead of a
-/// verdict about another workspace's dataset. Read-only either way.
+/// `expected_generation` (JS `expectedGeneration`, default camelCase): a mismatch returns `STALE_SESSION_ERROR`, not a verdict on another dataset. Read-only.
 #[tauri::command]
 async fn validate_formula(
     formula: String,
@@ -5145,9 +4577,7 @@ fn validate_formula_in_state(
     Ok(validate_formula_against(&session.data, formula))
 }
 
-/// Pure core of `validate_formula`: the same checks that
-/// `compute_formula_sensor` applies, so the editor's verdict and message are
-/// exactly what Create / Save would answer.
+/// Pure core of `validate_formula`: same checks as `compute_formula_sensor`, so verdicts match Create/Save.
 fn validate_formula_against(data: &ColumnarData, formula: &str) -> FormulaValidationResult {
     // Sensor references (distinct, in order of appearance) — reported even
     // when the formula is refused.
@@ -5169,11 +4599,7 @@ fn validate_formula_against(data: &ColumnarData, formula: &str) -> FormulaValida
     }
 }
 
-/// Every distinct sensor a formula references, resolved to its column (in
-/// the order `prepare_formula_for_eval` assigns variables). Refuses a formula
-/// with no reference at all (`constant_only`) and the first name that is not
-/// in the dataset (`unknown_sensor`, ranged on its first occurrence) — through
-/// the same resolver every reader uses, so "valid" means "will run".
+/// Distinct referenced sensors resolved to columns, in variable order. Errors `constant_only` (no refs) or `unknown_sensor` (ranged on first occurrence), via the shared resolver.
 fn resolve_formula_sources(headers: &[String], formula: &str) -> Result<Vec<usize>, FormulaIssue> {
     use formula_diagnostics::{issue_at, CONSTANT_ONLY, UNKNOWN_SENSOR};
     let spans = scan_sensor_refs(formula);
@@ -5194,16 +4620,8 @@ fn resolve_formula_sources(headers: &[String], formula: &str) -> Result<Vec<usiz
     Ok(src_idx)
 }
 
-/// THE formula gate, in the order every caller has always applied it: size
-/// limits → references → parse + trial evaluation + the app's own refusals.
-/// `validate_formula`, `preview_formula` and (with its name checks slotted in
-/// before the compile) `compute_formula_sensor` all answer from it, so the
-/// editor's verdict, code and message are exactly what Create / Save answer.
-///
-/// `replace` mirrors the `replace` flag of `evaluate_formula`: `false` (a
-/// CREATE, and `validate_formula`) also applies the create-only refusals
-/// ([`create_only_formula_issue`]); `true` (a recompute / replay / Save of an
-/// existing sensor) skips them, exactly as `compute_formula_sensor` does.
+/// THE formula gate: size limits, references, then parse + trial evaluation + app refusals. Validate, preview and compute all use it, so verdicts match Create/Save.
+/// `replace` false (create, `validate_formula`) also applies the create-only refusals; true (recompute/replay/Save) skips them.
 fn formula_gate(
     headers: &[String],
     formula: &str,
@@ -5222,20 +4640,12 @@ fn formula_gate(
     Ok((compiled, src_idx))
 }
 
-/// Refusals applied only when a formula sensor is CREATED (and by the
-/// editor's create-mode check), never on a recompute / replay: today only a
-/// division by a literal 0 (`div_zero`). Such a formula still evaluates — the
-/// divided part has no value on any row — so a recipe saved before the
-/// refusal existed keeps restoring instead of dropping into
-/// Repair and demoting the models trained on it.
+/// Refusals only for CREATE, never recompute/replay: a literal division by 0 (`div_zero`). Such a formula still evaluates, so old recipes keep restoring.
 fn create_only_formula_issue(formula: &str) -> Option<FormulaIssue> {
     formula_diagnostics::division_by_zero(formula)
 }
 
-/// Evaluate a compiled formula for every row (in parallel). A row with ANY
-/// missing (NaN) input, or a NaN / infinite result, is NaN. Shared by
-/// Create / Save / replay and the preview, so the preview's numbers are the
-/// numbers the sensor will hold.
+/// Evaluates every row in parallel; any NaN input or NaN/infinite result gives NaN. Shared with the preview so its numbers match the sensor.
 fn eval_formula_column(
     data: &ColumnarData,
     compiled: &CompiledFormula,
@@ -5245,8 +4655,7 @@ fn eval_formula_column(
     use rayon::prelude::*;
     let n = data.n_rows();
     let src_cols: Vec<&[f64]> = src_idx.iter().map(|idx| data.columns[*idx].as_slice()).collect();
-    // Chunks write straight into the preallocated column (peak memory is one
-    // column, not chunks + their concatenation); row r always lands at r.
+    // Chunks write into the preallocated column (peak memory is one column); row r lands at r.
     let mut col: Vec<f64> = vec![0.0; n];
     col.par_chunks_mut(COLUMN_CHUNK).enumerate().try_for_each(|(c, out)| {
         if cancelled() {
@@ -5269,15 +4678,7 @@ fn eval_formula_column(
                 Ok(result) if result.is_finite() => result,
                 // NaN / Infinity (0/0, 1/0, sqrt of a negative, ...) → missing
                 Ok(_) => f64::NAN,
-                // Defence only -- not expected to happen. Whether evaluation
-                // errors depends on the formula's names and argument counts,
-                // never on row values: the namespace answers by name + arity
-                // alone, and fasteval evaluates every operand eagerly (`&&` /
-                // `||` combine values already computed; nothing
-                // short-circuits). So the trial evaluation in
-                // `compile_formula` already met any error a row could. If
-                // that ever changes, refuse the whole formula rather than
-                // empty some rows.
+                // Defence only: errors depend on names/arity, never row values (fasteval evaluates every operand), so `compile_formula`'s trial caught them; refuse the whole formula rather than empty some rows.
                 Err(e) => return Err(formula_eval_error_message(&e, failed.as_ref(), &compiled.safe_names)),
             };
         }
@@ -5286,11 +4687,7 @@ fn eval_formula_column(
     Ok(col)
 }
 
-/// Pure core of `evaluate_formula`: validates and evaluates without touching
-/// the session. Returns `(final trimmed name, column)`; a row with ANY missing
-/// (NaN) input, or a NaN / infinite result, is NaN. A formula that cannot be
-/// evaluated at all (unknown name/function, wrong argument count, the
-/// `round($A, 2)` shape) is an `Err` -- never an all-empty column.
+/// Pure core of `evaluate_formula`: any NaN input or NaN/infinite result gives NaN; an unevaluable formula is an `Err`, never an all-empty column.
 fn compute_formula_sensor(
     data: &ColumnarData,
     formula: &str,
@@ -5307,9 +4704,7 @@ fn compute_formula_sensor(
         Some(n) if !n.is_empty() => n.to_string(),
         _ => format!("f({})", formula.trim()),
     };
-    // A recomputation must not read the column it is about to overwrite —
-    // `$self + 1` would otherwise creep upward by one every time the formula
-    // was saved.
+    // Must not read the column it overwrites, or `$self + 1` creeps up on every save.
     if replace {
         if let Some(target) = find_column_ci(&data.headers, &name) {
             if src_idx.contains(&target) {
@@ -5323,8 +4718,7 @@ fn compute_formula_sensor(
 
     // 4. Parse once and prove it evaluates (refuses a bad formula up front).
     let compiled = compile_formula(formula)?;
-    // A CREATE also gets the create-only refusals; a recompute / replay
-    // (`replace`) must keep restoring a recipe saved before they existed.
+    // Only a create gets the create-only refusals; replay must keep restoring old recipes.
     if !replace {
         if let Some(issue) = create_only_formula_issue(formula) {
             return Err(issue.into());
@@ -5361,9 +4755,7 @@ fn evaluate_formula_in_state(
     commit_derived(state, generation, expected, &name, col, replace)
 }
 
-/// `expected_generation` (JS key `expectedGeneration`): the generation returned
-/// by the `load_csv` that produced the dataset the caller is bound to. A
-/// mismatch returns `STALE_SESSION_ERROR` and mutates nothing.
+/// `expected_generation` (JS `expectedGeneration`) must match the dataset's generation, else `STALE_SESSION_ERROR` and nothing changes.
 #[tauri::command]
 async fn evaluate_formula(
     formula: String,
@@ -5386,9 +4778,6 @@ async fn evaluate_formula(
     .await
 }
 
-// ---------------------------------------------------------------------------
-// Formula editor preview
-// ---------------------------------------------------------------------------
 
 /// Default / ceiling of `preview_formula`'s downsampled series.
 const FORMULA_PREVIEW_DEFAULT_POINTS: usize = 600;
@@ -5432,22 +4821,15 @@ struct FormulaPreview {
     issues: Vec<FormulaIssue>,
     /// `null` when not `ok`.
     stats: Option<FormulaPreviewStats>,
-    /// Min/max-preserving downsample of the computed column, at most
-    /// `max_points` entries (both arrays the same length; empty when not ok).
+    /// Min/max-preserving downsample, at most `max_points`; arrays equal length, empty when not ok.
     timestamps: Vec<String>,
     values: Vec<Option<f64>>,
-    /// `[first, last]` timestamp of the dataset: the earliest / latest row by
-    /// parsed time, written as that row's own timestamp TEXT — the same
-    /// format as `timestamps` above and as the line chart's `timestamps` /
-    /// `ts_min` / `ts_max` (the CSV text, Buddhist-Era years already
-    /// converted). `null` when not ok or no row has a parseable time.
+    /// `[first, last]` timestamp text of the dataset, same format as `timestamps`; null if not ok or no parseable time.
     period: Option<[String; 2]>,
     /// Every engine function name (the editor's suggestion / error list).
     functions: &'static [&'static str],
     limits: FormulaPreviewLimits,
-    /// Set only when the refusal is `round_excel` and converting every
-    /// spreadsheet-order round (`convert_legacy_formula`) gives a formula that
-    /// passes the whole gate; the editor can offer it as the fix.
+    /// Set only for a `round_excel` refusal when converting every spreadsheet-order round passes the gate; offered as the fix.
     converted_formula: Option<String>,
 }
 
@@ -5467,13 +4849,7 @@ impl FormulaPreview {
     }
 }
 
-/// Pure core of `preview_formula`. Validation goes through the very gate
-/// Create / Save use (`formula_gate` / `check_multi_operation`), and the
-/// values through the very column builders (`eval_formula_column` /
-/// `compute_multi_column`); only the OUTPUT is bounded — stats over every
-/// row plus a min/max downsample of at most `max_points` points.
-///
-/// Create-mode, never cancelled — see [`build_formula_preview_with`].
+/// Pure core of `preview_formula`: validation and values come from the same gate and column builders as Create/Save; only the output is bounded. Create mode, never cancelled.
 #[cfg(test)]
 fn build_formula_preview(
     data: &ColumnarData,
@@ -5484,16 +4860,7 @@ fn build_formula_preview(
     build_formula_preview_with(data, formula, aggregate, max_points, false, &never_cancelled)
 }
 
-/// [`build_formula_preview`] with the two request options:
-///
-/// * `replace` — answer exactly as a Save of an EXISTING sensor / a replay
-///   answers (`replace: true` on `evaluate_formula` / `calculate_new_sensor`):
-///   the create-only refusals (`agg_too_few` for a one-source block,
-///   `div_zero`) are skipped, so a legacy recipe previews as it restores.
-///   `false` = a CREATE (the default).
-/// * `cancelled` — checked once per chunk of the evaluation and before the
-///   bounded output is built; when it answers `true` the result is
-///   `Err(FORMULA_PREVIEW_CANCELLED)`.
+/// `build_formula_preview` with options: `replace` answers as Save/replay would (skips create-only refusals); `cancelled` is checked per chunk and before output, giving `Err(FORMULA_PREVIEW_CANCELLED)`.
 fn build_formula_preview_with(
     data: &ColumnarData,
     formula: Option<&str>,
@@ -5566,10 +4933,7 @@ fn build_formula_preview_with(
     })
 }
 
-/// `[earliest, latest]` row by parsed time (`ts_parsed`, so string order and
-/// unparseable rows can't skew it), each written as that row's own timestamp
-/// text — the format `timestamps` uses. `None` when no row has a parseable
-/// time, or the chosen row has no text.
+/// Earliest/latest row by `ts_parsed` (not string order), as that row's timestamp text; `None` if no parseable time or text.
 fn dataset_period_text(data: &ColumnarData) -> Option<[String; 2]> {
     let mut first: Option<(i64, usize)> = None;
     let mut last: Option<(i64, usize)> = None;
@@ -5588,8 +4952,7 @@ fn dataset_period_text(data: &ColumnarData) -> Option<[String; 2]> {
     Some([text(first?.1)?, text(last?.1)?])
 }
 
-/// Latest `requestId` seen by `preview_formula` (0 = none yet). A running
-/// preview whose own id is no longer the latest stops at its next chunk.
+/// Latest `preview_formula` `requestId` (0 = none); an older running preview stops at its next chunk.
 static FORMULA_PREVIEW_LATEST: AtomicU64 = AtomicU64::new(0);
 
 /// Record `id` as the latest preview request (called as the request arrives,
@@ -5600,10 +4963,7 @@ fn register_preview_request(token: &AtomicU64, id: Option<u64>) {
     }
 }
 
-/// Session-level `preview_formula` (testable without Tauri). Read-only; runs
-/// under a READ lock so chart queries keep going. `request` = the token and
-/// this request's id: the preview is `Err(FORMULA_PREVIEW_CANCELLED)` as soon
-/// as the token holds a different id (checked on entry and once per chunk).
+/// Testable `preview_formula`; the read lock keeps chart queries running. `Err(FORMULA_PREVIEW_CANCELLED)` once the token holds a different id (checked on entry and per chunk).
 fn preview_formula_in_state(
     state: &AppState,
     formula: Option<&str>,
@@ -5623,39 +4983,8 @@ fn preview_formula_in_state(
     build_formula_preview_with(&session.data, formula, aggregate, max_points, replace, &cancelled)
 }
 
-/// Live check + preview for the Formula editor (debounced while typing).
-///
-/// Send EITHER `formula` (the text as stored, `$Tag` / `${…}`) OR
-/// `aggregate` (`{ type, sources, decimals? }`, an Average/Median/Sum block).
-/// The verdict, issue code and message are exactly what Create / Save
-/// answer; the response is bounded (stats + ≤ `maxPoints` points, default
-/// 600, max 2000). A refusal is `ok: false` with `issues`, never an `Err`;
-/// `Err` is reserved for `BAD_REQUEST:` (neither / both inputs), "No data
-/// loaded", `STALE_SESSION` (`expectedGeneration` is not the loaded
-/// dataset's — nothing about another project's data is answered) and
-/// `CANCELLED:` (below).
-///
-/// * `replace` (optional, default `false`): send the SAME value the editor
-///   will send as `replace` on Save — `true` when editing / restoring an
-///   existing sensor. Then the create-only refusals are skipped exactly as
-///   Save skips them (`agg_too_few` for a legacy one-source block, `div_zero`),
-///   so preview and Save never disagree.
-/// * `requestId` (optional): a fresh id per call (a counter is fine; it may
-///   restart when the window reloads — "latest" means "last to arrive", not
-///   "largest"). A preview still running when a call with a different id
-///   arrives stops at its next 16,384-row chunk and answers
-///   `Err("CANCELLED: a newer formula preview replaced this one")` — ignore
-///   it (the newer call's answer is coming). Calls without `requestId` are
-///   never cancelled and don't cancel anything. One token for the app: only
-///   one editor previews at a time.
-///
-/// Keys keep Tauri's default camelCase like the other special-sensor
-/// commands (`expectedGeneration` is what `bindToGeneration` stamps; a
-/// snake_case rename would silently drop it and lose the stale guard):
-/// `{ formula?, aggregate?, maxPoints?, expectedGeneration?, replace?, requestId? }`.
-///
-/// `async` + `spawn_blocking`: the evaluation walks every row (in parallel),
-/// so it must not run on the main thread.
+/// Live check + preview for the Formula editor: send `formula` OR `aggregate`; verdict matches Create/Save; response bounded (`maxPoints` default 600, max 2000). A refusal is `ok: false` with `issues`; `Err` only for `BAD_REQUEST:`, no data, `STALE_SESSION`, `CANCELLED:`.
+/// `replace`: send what Save will send. `requestId`: a newer id cancels an older running preview (it answers `CANCELLED:`; ignore it). Keys stay camelCase: snake_case would drop `expectedGeneration`.
 #[tauri::command]
 async fn preview_formula(
     formula: Option<String>,
@@ -5690,24 +5019,8 @@ struct LegacyFormulaConversion {
     changed: bool,
 }
 
-/// Rewrite every spreadsheet-order `round(x, n)` in a stored formula to the
-/// engine form `round(x * 10^n) / 10^n` (`round(x)` for n = 0) — run when an
-/// old workspace is reopened so its special
-/// sensors restore instead of hitting the `round_excel` refusal. Pure text
-/// (no dataset, no generation); a formula without such a call comes back
-/// unchanged with `changed: false`. A call whose `n` is not a whole number
-/// 0..=15 is left alone (still refused). Uses the same call scan as the
-/// refusal, so conversion and refusal never disagree.
-///
-/// A formula over the size / bracket-depth limits comes back unchanged
-/// (`changed: false`): it is refused anyway, and this sync command must not
-/// scan an unbounded text on the main thread. The conversion itself can push
-/// a formula that was just inside the limits over them (`round($A, 2)` ->
-/// `round($A * 100) / 100` is longer, and can add up to 2 bracket levels);
-/// the result is not re-checked here — every caller re-gates it (a replay
-/// through `evaluate_formula` answers its `Formula too long …` / nesting
-/// error; `validate_formula` / `preview_formula` answer `too_long` /
-/// `too_deep`).
+/// Rewrites spreadsheet-order `round(x, n)` to `round(x * 10^n) / 10^n` (`round(x)` for n = 0). Pure text; unchanged if no such call, `n` is not a whole number 0..=15, or the formula is over the size/depth limits.
+/// The result is not re-checked, so callers re-gate it.
 #[tauri::command]
 fn convert_legacy_formula(formula: String) -> LegacyFormulaConversion {
     if formula_limit_issue(&formula).is_some() {
@@ -5750,13 +5063,7 @@ struct DataFilter {
     timestamp_start: Option<String>,
     timestamp_end: Option<String>,
     value_filters: Vec<ValueFilter>,
-    /// Passed straight through to `PreviewFilter.combine` below. `get_chart_data`
-    /// is shared by Dashboard's own multi-sensor chart (whose JS-side filter
-    /// object never sets this, so it stays "and") AND the Build Model page's
-    /// own target-sensor preview chart (whose `dashboardFilterPayload` does
-    /// set it, matching whatever the Running Condition Filter in effect for
-    /// that model uses) — Rust can't tell those two callers apart, so this
-    /// type has to accept the field faithfully rather than hardcoding it.
+    /// Passed to `PreviewFilter.combine`. Dashboard's chart never sets it (stays "and"); the Build Model target chart does. Rust can't tell the callers apart, so accept it.
     #[serde(default)]
     combine: Option<String>,
     /// Multiple training periods — passed straight through to
@@ -5766,9 +5073,7 @@ struct DataFilter {
 }
 
 impl DataFilter {
-    /// Bridge to the `PreviewFilter` shape so `get_filtered_data` and
-    /// `get_scatter_sample` share `ResolvedFilter` with every other
-    /// data-reading command (identical gate semantics, one implementation).
+    /// Bridge to `PreviewFilter` so all data-reading commands share `ResolvedFilter` semantics.
     fn to_preview(&self) -> PreviewFilter {
         PreviewFilter {
             timestamp_start: self.timestamp_start.clone(),
@@ -5789,14 +5094,7 @@ impl DataFilter {
     }
 }
 
-/// Bounded chart payload for the dashboard line chart.
-///
-/// The full pipeline (dashboard filter → operation transform → optional
-/// hourly aggregation → min/max decimation to `max_points`) runs Rust-side
-/// over the columnar store; the WebView receives O(max_points) columnar
-/// arrays instead of the entire dataset. Replaces the dashboard's use of
-/// the old full-stream `get_filtered_data` command, which duplicated the
-/// whole dataset into the JS heap and froze the UI on large CSVs.
+/// Bounded chart payload: filter, operation transform, optional hourly aggregation, min/max decimation to `max_points`, all Rust-side; the WebView gets O(max_points) arrays.
 // `rename_all = "snake_case"`: the frontend sends `max_points` verbatim
 // (same convention as `get_scatter_sample`).
 #[tauri::command(rename_all = "snake_case")]
@@ -5821,11 +5119,7 @@ async fn get_chart_data(
     .await
 }
 
-/// True first/last timestamp across the WHOLE loaded dataset, ignoring any
-/// dashboard time filter — see `chart_query::full_dataset_time_bounds`'s
-/// docstring for why `ChartView::ts_min`/`ts_max` can't serve this. Powers
-/// the Dashboard's "data available" label and the anchor point for the
-/// relative-range (Y/M/W/D/H) buttons.
+/// True first/last timestamp of the WHOLE dataset, ignoring the dashboard time filter; anchors the "data available" label and the relative-range buttons.
 #[derive(Debug, Serialize)]
 struct DatasetTimeBounds {
     min: Option<String>,
@@ -5843,10 +5137,7 @@ async fn get_dataset_time_bounds(app: tauri::AppHandle) -> Result<DatasetTimeBou
     .await
 }
 
-/// Tiny dependency-free PRNG (xorshift64*) used to drive reservoir sampling.
-/// Seeded with a fixed constant so the same dataset + filter yields the SAME
-/// sample on every call — important so the scatter doesn't visibly reshuffle
-/// when the chart refetches (e.g. after a workspace reopen).
+/// Tiny xorshift64* PRNG for reservoir sampling; fixed seed so the same dataset + filter gives the same sample (the scatter doesn't reshuffle on refetch).
 struct Xorshift64 {
     state: u64,
 }
@@ -5873,16 +5164,10 @@ impl Xorshift64 {
     }
 }
 
-/// Bounded sample of the (filtered) dataset for scatter / pair-plot rendering.
-/// `rows.len()` never exceeds the requested `max_points`, so the IPC payload,
-/// the JS heap, and the WebGL vertex buffers all stay bounded no matter how
-/// large the underlying dataset is (the whole point: a 2 GB CSV must not blow
-/// up the renderer or the GPU).
+/// Bounded sample for scatter/pair-plot; `rows.len()` never exceeds `max_points`, keeping IPC, JS heap and GPU buffers bounded.
 #[derive(serde::Serialize)]
 struct ScatterSample {
-    /// Resolved sensor names, in the SAME column order as each row's `values`.
-    /// Only sensors that actually exist in the dataset are included, so
-    /// `headers.len() == rows[i].values.len()` always holds.
+    /// Sensor names in each row's `values` order; only existing sensors, so `headers.len() == rows[i].values.len()`.
     headers: Vec<String>,
     rows: Vec<CsvRecord>,
     /// Total rows that passed the filter (the population we sampled from).
@@ -5891,19 +5176,8 @@ struct ScatterSample {
     sampled: usize,
 }
 
-/// Return a uniform random sample of at most `max_points` rows from the
-/// in-memory dataset, projected to the requested sensors and respecting the
-/// dashboard's timestamp / value filters.
-///
-/// Uses single-pass reservoir sampling (Algorithm R): O(n) time over the
-/// rows, O(max_points) memory, one timestamp parse per row at most (skipped
-/// entirely when no filter is active — the common "just loaded, hit Scatter"
-/// path). A row is only cloned/projected when it's actually kept, so huge
-/// datasets don't pay an allocation per row.
-// `rename_all = "snake_case"` is REQUIRED here: the frontend sends
-// `max_points` verbatim, but without the attribute the macro expects the
-// camelCased key `maxPoints` and every invoke fails with "missing required
-// key" before the command body ever runs.
+/// Uniform sample of at most `max_points` filtered rows by reservoir sampling (Algorithm R): O(n) time, O(max_points) memory; rows are projected only when kept.
+// Needs `rename_all = "snake_case"`, or the macro expects `maxPoints` and invoke fails with "missing required key".
 #[tauri::command(rename_all = "snake_case")]
 async fn get_scatter_sample(
     filter: DataFilter,
@@ -5918,21 +5192,16 @@ async fn get_scatter_sample(
     .await
 }
 
-/// Pure core of [`get_scatter_sample`] (no Tauri state) so it's unit-testable.
-/// Reservoir-samples up to `max_points` rows from `data`, projected to
-/// `filter.sensors` and respecting the timestamp / value filters.
+/// Pure core of `get_scatter_sample`: reservoir-samples filtered rows projected to `filter.sensors`.
 fn sample_dataset(
     data: &ColumnarData,
     filter: &DataFilter,
     max_points: usize,
 ) -> Result<ScatterSample, String> {
-    // Clamp to a sane band: at least 1, and a hard ceiling so a bad caller
-    // can't ask for a 100M-row "sample" and reintroduce the OOM we're fixing.
+    // Clamp to 1..=2,000,000 so a bad caller can't request an OOM-sized sample.
     let cap = max_points.clamp(1, 2_000_000);
 
-    // Resolve requested sensors → column indices. Drop any that don't exist
-    // and keep `resolved_headers` aligned with `sensor_indices` so the
-    // returned headers always match the projected value columns 1:1.
+    // Drop unknown sensors; `resolved_headers` stays aligned 1:1 with `sensor_indices`.
     let mut sensor_indices: Vec<usize> = Vec::new();
     let mut resolved_headers: Vec<String> = Vec::new();
     for s in &filter.sensors {
@@ -5942,14 +5211,12 @@ fn sample_dataset(
         }
     }
 
-    // Same gate semantics as get_filtered_data — one shared implementation,
+    // Same gate as every data-reading command: one shared `ResolvedFilter`,
     // comparing load-time-parsed timestamps (no per-row parsing).
     let preview = filter.to_preview();
     let resolved = ResolvedFilter::resolve(Some(&preview), &data.headers)?;
 
-    // The reservoir holds ROW INDICES; rows are materialized to the wire
-    // shape only once at the end, so evicted candidates never pay a
-    // projection/clone.
+    // The reservoir holds row indices; rows are materialised once at the end.
     let mut reservoir: Vec<usize> = Vec::with_capacity(cap.min(data.n_rows()));
     let mut seen: usize = 0;
     let mut rng = Xorshift64::new(0x9E3779B97F4A7C15);
@@ -5983,63 +5250,9 @@ fn sample_dataset(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Health score: bounded preview + "Mark complete" file export
-// ---------------------------------------------------------------------------
 
-/// Bounded, per-kind data for the Build Model "Model fit" and "Health score"
-/// pages: statistics, validation of the set points, the downsampled series and
-/// (Individual / Relationship / Clustering) the histogram or scatter. See
-/// `health_preview::HealthPreviewRequest` for the request and
-/// `health_preview::HealthPreview` for the response (snake_case JSON).
-///
-/// Two series come back: `series` = the RAW rows (Model fit; never scored) and
-/// `hourly` = one point per clock hour, the mean of the hour's running rows -
-/// the points the HEALTH SCORE is computed on (`health_hourly`,
-/// `scoring_interval_secs: 3600`). `score_summary` and `test_validation` count
-/// those hours. Training is not affected: every model number still comes from
-/// the raw training rows.
-///
-/// Individual and Clustering compute straight from the dataset. Relationship
-/// reads the fit cached by `preview_relationship_model` under `cache_key` and
-/// never runs the sidecar: unknown key (never fitted, dataset reloaded, a
-/// special sensor recomputed, evicted) = error `NOT_FITTED: ...` and the UI
-/// asks the user to re-train. Other stable error prefixes: `BAD_REQUEST`,
-/// `NO_DATA`, `STALE_SESSION`.
-///
-/// `async` so the O(rows) pass never runs on the main thread.
-///
-/// **Scoring periods:** with `test_periods` the response also carries
-/// `test_validation` (see `health_validation`). Individual / Clustering need
-/// nothing more.
-///
-/// **Relation model - the hourly predictions:** the score of an hour is its
-/// mean actual minus the engine's prediction for the hour's MEAN predictors, so
-/// every hourly point (training hours included - also with NO scoring period)
-/// needs an answer from the engine. `preview_relationship_model` (the Train
-/// call) asks for all of them in its own run and stores them with the fit;
-/// here, the FIRST preview that brings hourly points nobody predicted yet (a
-/// scoring period added later, a period edge moved inside an hour) runs the
-/// sidecar's `predict_relationship` once (a refit on the TRAIN rows only, the
-/// hourly points are only predicted - same model, same lambda) and stores the
-/// answers under the fit's key. Set-point edits, repeated calls and REMOVING a
-/// scoring period never run it. A stored prediction is only used for its own
-/// hour and exactly its own mean predictors.
-///
-/// If that prediction step fails (sidecar crash, timeout, outdated sidecar, cache
-/// budget), the preview does NOT fail: it returns the normal preview - the
-/// model fit, statistics and raw `series` untouched - with every hour that has
-/// no prediction unscored (`null`), `test_validation` (when asked for) present
-/// but every period unscored, and one `warning` issue in `validation`:
-/// `test_scoring_outdated`, `test_scoring_too_large` or `test_scoring_failed`
-/// (see [`health_validation::test_scoring_issue`]). The warning can therefore
-/// appear without any scoring period. (Export still refuses - files never claim
-/// a validation they could not compute.) The raw reason goes to the permanent
-/// error log (truncated), never to the user. A failure is remembered per set of
-/// missing hourly points (see [`predict_rel_hours`]): later previews with the
-/// SAME missing points answer with the same warning at once instead of
-/// re-running the sidecar, until a re-train, a change of those points, or a
-/// request with `retry_test_scoring: true`.
+/// Bounded per-kind data for Model fit and Health score: stats, set-point validation, downsampled series, histogram/scatter. `series` = raw rows (never scored); `hourly` = per-clock-hour means, which the score is computed on.
+/// Relationship reads the fit cached under `cache_key` (unknown = `NOT_FITTED:`) and runs the sidecar only for hourly points nobody predicted. If that fails, those hours go unscored with a `test_scoring_*` warning, remembered until re-train, a point change or `retry_test_scoring`.
 #[tauri::command]
 async fn compute_health_preview(
     request: health_preview::HealthPreviewRequest,
@@ -6073,23 +5286,15 @@ async fn compute_health_preview(
     health_preview_with_outcome(&state, &request, scoring_error.map(|e| e.kind))
 }
 
-/// Set for the rest of the process once a sidecar run answered
-/// `SIDECAR_OUTDATED` (the bundled binary cannot change while the app runs):
-/// later previews skip the ~15 s run and answer with the outdated warning at
-/// once. Not cleared by `retry_test_scoring` - only a new app start (i.e. an
-/// updated install) can fix it.
+/// Set once a sidecar run answers `SIDECAR_OUTDATED` (the binary can't change while running); later previews skip the ~15 s run. Not cleared by `retry_test_scoring`.
 static SIDECAR_KNOWN_OUTDATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Stand-in reason for "the last attempt for this fit and these hourly points
-/// failed and nobody asked to retry": never shown (the user gets the wording of
-/// the remembered failure's kind).
+/// Never shown; stands in for a remembered failure whose retry wasn't requested (the user sees the failure kind's warning).
 const TEST_SCORING_PREVIOUSLY_FAILED: &str =
     "the last prediction attempt for this fit and these hourly points failed (not retried until \
      the points change, a re-train or an explicit retry)";
 
-/// Why the health score of a Relationship preview cannot be calculated: the
-/// kind picks the user-facing warning, `reason` is the raw detail (logged,
-/// never shown).
+/// Why the Relationship health score can't be calculated: `kind` picks the user warning; `reason` is raw detail, logged only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct TestScoringError {
     kind: health_validation::TestScoringFailure,
@@ -6102,9 +5307,7 @@ impl TestScoringError {
     }
 }
 
-/// Longest detail [`predict_rel_hours`] writes to the permanent error log: a
-/// sidecar parse error carries the engine's WHOLE stdout (every predicted
-/// value - megabytes) and a crash a full traceback.
+/// Cap on error-log detail: a sidecar parse error can carry the engine's whole stdout (megabytes).
 const ERROR_LOG_DETAIL_MAX: usize = 4 * 1024;
 
 /// `s` cut to at most `max` bytes (on a char boundary) plus
@@ -6120,30 +5323,8 @@ fn truncate_log_detail(s: &str, max: usize) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{}… ({} bytes truncated)", &s[..end], s.len() - end))
 }
 
-/// The hourly-prediction step of [`compute_health_preview`] (Relation model
-/// only), generic over the sidecar run (`run`) and the error log (`log`) so it
-/// is testable without an `AppHandle`. `Ok(None)` = nothing to do or the
-/// predictions are now stored; `Ok(Some(error))` = hourly points are left
-/// without a prediction (the caller degrades the answer with the warning of
-/// `error.kind`); `Err` = the request itself is refused (`STALE_SESSION`, the
-/// data changed meanwhile = `NOT_FITTED`).
-///
-/// It runs with AND without scoring periods: the training hours need the
-/// engine's prediction too.
-///
-/// * Planning runs WITHOUT `serial`: a preview whose points are all stored
-///   (every set-point edit, a removed scoring period) or whose fit + points are
-///   known to fail never waits for another model's ~15 s prediction. Only when
-///   points are missing it takes `serial` and plans AGAIN under it (another
-///   caller may have filled them).
-/// * A failure is logged (raw reason, at most [`ERROR_LOG_DETAIL_MAX`] bytes,
-///   written after `serial` is released) and remembered: `SIDECAR_OUTDATED` in
-///   `outdated` (process lifetime), anything else as the fit's failed marker
-///   for exactly the points of that attempt (cleared by re-train, eviction, a
-///   dataset change or `retry_test_scoring`; a different set of missing points
-///   gets one fresh attempt).
-/// * Predictions and failures only ever land on the fit they were computed
-///   for: a re-train under the same key meanwhile discards them.
+/// Hourly-prediction step of `compute_health_preview`, generic over the sidecar run and log for testing. `Ok(None)` = nothing to do or stored; `Ok(Some(e))` = points left unpredicted (caller degrades with `e.kind`); `Err` = request refused (`STALE_SESSION`/`NOT_FITTED`).
+/// Plans without `serial`, so stored or known-failed points never wait for another ~15 s run, then re-plans under it. Failures are logged and remembered per attempted points; results land only on the fit they were computed for.
 async fn predict_rel_hours<R, Fut>(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -6199,10 +5380,7 @@ where
                     format!("the predictions of {} hourly points do not fit the model cache", job.points.len()),
                 )),
                 ExtraStored::Superseded => {
-                    // Trained again under the same key while this ran: the
-                    // predictions belong to the old model and were dropped.
-                    // Nothing failed - answer for the NEW fit (its Train may
-                    // have pre-warmed the rows); never mark it.
+                    // Re-trained under the same key meanwhile: predictions dropped. Not a failure; answer for the new fit and never mark it.
                     let again = plan_rel_extra_ex(state, request, outdated.load(Ordering::SeqCst), false)?;
                     break 'locked (
                         match again {
@@ -6227,8 +5405,7 @@ where
         let mut line = None;
         if let Some(f) = &failure {
             line = Some(format!("model {}: {}", job.key, f.reason));
-            // Remembered while `serial` is still held, so the next caller in
-            // line re-plans against it instead of running the same job again.
+            // Remember while `serial` is held, so the next caller re-plans against it.
             if f.kind == Kind::Outdated {
                 outdated.store(true, Ordering::SeqCst);
             } else {
@@ -6244,9 +5421,7 @@ where
     Ok(outcome)
 }
 
-/// Remember a failed prediction attempt of `job` (its fit, its points) - only on
-/// the same data (`stamp`) and the very same fit, so an attempt that straddled
-/// a reload or a same-key re-train marks nothing.
+/// Marks a failed attempt only on the same data (`stamp`) and the very same fit.
 fn mark_rel_extra_failed(state: &AppState, job: &RelExtraJob, kind: health_validation::TestScoringFailure) {
     if let Ok(mut lock) = state.0.write() {
         if let Some(s) = lock.as_mut().filter(|s| s.stamp() == job.stamp) {
@@ -6267,15 +5442,8 @@ fn clear_rel_extra_failed(state: &AppState, request: &health_preview::HealthPrev
     }
 }
 
-/// [`health_preview_in`] plus the degraded answer for a failed hourly
-/// prediction step: `scoring_error` = what kind of failure it was (the raw
-/// reason is never shown - the user gets the warning of that kind:
-/// `test_scoring_outdated` for an outdated engine, `test_scoring_too_large` when the
-/// predictions do not fit the cache's memory budget, `test_scoring_failed`
-/// otherwise, see [`health_validation::test_scoring_issue`]). The model fit,
-/// its statistics and the raw series are untouched; the hours without a
-/// prediction are unscored in `hourly` / `score_summary` (the preview itself
-/// leaves them `null`) and every scoring period is reported unscored.
+/// `health_preview_in` plus the degraded answer when hourly prediction failed: `scoring_error` kind picks the warning (`test_scoring_outdated`/`_too_large`/`_failed`).
+/// Fit, stats and raw series are untouched; unpredicted hours and all scoring periods are unscored.
 fn health_preview_with_outcome(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -6302,10 +5470,7 @@ struct RelExtraJob {
     /// The dataset / special-sensor state the rows were read from; the result is
     /// only stored if it is still current.
     stamp: SessionStamp,
-    /// The very fit this job predicts for: a re-train under the same `key`
-    /// while the sidecar runs replaces it, and then neither the predictions nor
-    /// a failure of this job may land on the new fit. (A `Weak`: identity
-    /// without keeping the old fit's columns alive.)
+    /// The fit this job predicts for; a same-key re-train replaces it, and nothing from this job may then land. `Weak` gives identity without keeping old columns alive.
     fit: std::sync::Weak<health_score::RelFit>,
     predictors: Vec<String>,
     target: String,
@@ -6323,28 +5488,15 @@ struct RelExtraJob {
 /// What [`plan_rel_extra_ex`] found.
 #[derive(Debug)]
 enum ExtraPlan {
-    /// Nothing to predict: all cached, or the request is one `health_preview_in`
-    /// itself refuses with the right code (no cache key, unknown fit, other
-    /// target / predictors, bad columns).
+    /// Nothing to predict: all cached, or a request `health_preview_in` itself refuses.
     Nothing,
-    /// Hourly points are missing but must not be predicted now: the sidecar is
-    /// known to be outdated (kind `Outdated`, `SIDECAR_OUTDATED` reason) or
-    /// this fit's last attempt failed for exactly these points (the remembered
-    /// kind, [`TEST_SCORING_PREVIOUSLY_FAILED`]).
+    /// Points missing but not to be predicted now: sidecar known outdated, or the last attempt failed for exactly these points.
     Failed(TestScoringError),
     /// Points are missing; the job when it was asked for (`build_job`).
     Needed(Option<RelExtraJob>),
 }
 
-/// The hourly points of `request` that have no stored prediction yet and, with
-/// `build_job`, everything needed to predict them (copying the training matrix
-/// is skipped otherwise - the lock-free first look of [`predict_rel_hours`]).
-/// `sidecar_outdated` = [`SIDECAR_KNOWN_OUTDATED`].
-///
-/// Without scoring periods the points are the training hours (the dataset
-/// columns are not even looked up); with them, the hours of the whole universe
-/// plus the shared-hour versions that make REMOVING a period free (see
-/// [`health_validation::RelHours`]).
+/// Hourly points with no stored prediction; with `build_job`, also what is needed to predict them (otherwise skips copying the training matrix). No scoring periods: training hours only; with them: the whole universe plus shared-hour versions, so removing a period is free.
 fn plan_rel_extra_ex(
     state: &AppState,
     request: &health_preview::HealthPreviewRequest,
@@ -6458,8 +5610,7 @@ enum ExtraStored {
     Stored,
     /// The dataset / special sensors changed, or the fit left the cache.
     FitGone,
-    /// The key now holds ANOTHER fit (trained again under the same key while
-    /// the predictions were computed): they belong to the old model, dropped.
+    /// The key now holds another fit (re-trained meanwhile); predictions dropped.
     Superseded,
     /// The fit is still cached but fit + predictions exceed the cache budget.
     OverBudget,
@@ -6498,12 +5649,7 @@ fn merge_rel_extra(
 const REL_EXTRA_FIT_GONE: &str =
     "the data or the model changed while the health score was being calculated - train the model again";
 
-/// Store the predictions of `job` - only into the job's fit on the same data.
-/// `Ok(Stored)`; `Ok(OverBudget)` = the fit is still there but its predictions
-/// do not fit the cache budget (the caller degrades to "the health score could
-/// not be calculated"); `Ok(Superseded)` = the model was trained again under the same
-/// key meanwhile (nothing stored); `Err(NOT_FITTED)` = the data changed or the
-/// fit left the cache. Never `Ok(FitGone)`.
+/// Stores a job's predictions only into its own fit on the same data. `OverBudget` = fit stays but predictions exceed the cache budget; `Superseded` = re-trained under the key; `Err(NOT_FITTED)` = data changed or fit evicted.
 fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Result<ExtraStored, String> {
     match merge_rel_extra(state, job.stamp, &job.key, &job.fit, &job.points, predicted) {
         ExtraStored::FitGone => Err(health_preview::not_fitted(REL_EXTRA_FIT_GONE)),
@@ -6511,8 +5657,7 @@ fn apply_rel_extra(state: &AppState, job: &RelExtraJob, predicted: &[f64]) -> Re
     }
 }
 
-/// Longest wait for one sidecar run (Train, Compare predictors, the hourly
-/// predictions; normally ~15 s). Only a hung engine should ever reach it.
+/// Longest wait for one sidecar run (normally ~15 s); only a hung engine reaches it.
 const ENGINE_RUN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// After a kill, how long to wait for the end event before giving up on it.
@@ -6528,9 +5673,7 @@ struct EngineStopFlags {
     superseded: std::sync::atomic::AtomicBool,
 }
 
-/// Run `on_stop` on a helper thread once `limit` has passed or `still_wanted`
-/// turns false, unless the returned `Sender` is dropped first, which also ends
-/// the thread at once.
+/// Runs `on_stop` on a helper thread after `limit` or once `still_wanted` is false; dropping the returned `Sender` ends the thread at once.
 fn arm_engine_stop<W, F>(
     limit: std::time::Duration,
     still_wanted: W,
@@ -6566,8 +5709,7 @@ where
     (done_tx, flags)
 }
 
-/// What one engine run printed. `timed_out` = it was killed at the cap,
-/// `superseded` = killed because its dataset was replaced. Neither is an answer.
+/// One engine run's output. `timed_out` = killed at the cap; `superseded` = killed because its dataset was replaced. Neither is an answer.
 #[derive(Debug, Default)]
 struct EngineOutput {
     stdout: String,
@@ -6576,9 +5718,7 @@ struct EngineOutput {
     superseded: bool,
 }
 
-/// Kill the engine and everything it started. The one-file launcher runs the
-/// real engine as its child, and killing only the launcher leaves that child
-/// running with the output pipes open (no end event either). Best effort.
+/// Kills the engine and its children: the one-file launcher runs the real engine as a child, and killing only the launcher leaves it holding the pipes with no end event. Best effort.
 fn kill_engine_tree(pid: u32) {
     use std::process::{Command, Stdio};
     let mut commands: Vec<Command> = Vec::new();
@@ -6605,11 +5745,7 @@ fn kill_engine_tree(pid: u32) {
     }
 }
 
-/// Send the request and collect the output until the run ends. After `limit`,
-/// or once `still_wanted` turns false, `kill` runs, and after `grace` more the
-/// wait stops whether or not the end event came. The cap covers the write too:
-/// an engine stuck before reading stdin would block it. A failed write also
-/// kills, so nothing waits on stdin.
+/// Sends the request and collects output until the run ends. After `limit` or when `still_wanted` is false `kill` runs; after `grace` more the wait stops regardless. The cap covers the write (an engine stuck before reading stdin blocks it); a failed write also kills.
 async fn collect_engine_output<W, K, S>(
     mut rx: tauri::async_runtime::Receiver<CommandEvent>,
     write: W,
@@ -6633,8 +5769,7 @@ where
     });
     let write_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let writer_error = write_error.clone();
-    // Off the runtime: a big request blocks until the engine has read it. The
-    // output must also be drained meanwhile, or both sides can wait on a full pipe.
+    // Write off the runtime (a big request blocks until read) while output is drained, or both sides can wait on a full pipe.
     tauri::async_runtime::spawn_blocking(move || {
         if let Err(e) = write() {
             if let Ok(mut slot) = writer_error.lock() {
@@ -6668,12 +5803,10 @@ where
     out
 }
 
-/// One engine run at a time, in arrival order: Train, Compare predictors and the
-/// health score's hourly predictions. Fair, and a dropped waiter just leaves the line.
+/// One engine run at a time, in arrival order (Train, Compare predictors, hourly predictions); a dropped waiter just leaves the line.
 static ENGINE_LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
 
-/// Wait for the turn, then `run` while holding it. The wait can be minutes, so a
-/// caller whose dataset was replaced meanwhile is refused instead of running.
+/// Waits for the turn, then runs holding it; a caller whose dataset was replaced during the (possibly minutes-long) wait is refused.
 async fn run_in_engine_turn<T, Fut>(
     lock: &tauri::async_runtime::Mutex<()>,
     still_wanted: &(dyn Fn() -> bool + Sync),
@@ -6718,10 +5851,7 @@ fn engine_stop_requested(registry: &std::sync::Mutex<EngineRegistry>, stops_at_s
     lock_engine_registry(registry).stops != stops_at_start
 }
 
-/// Stop the engine run holding the turn, if there is one. Its timer kills the
-/// tree within [`ENGINE_WANTED_POLL`], its caller gets [`ENGINE_STOPPED_ERROR`]
-/// and the next caller in line starts. Without this a run nobody is waiting for
-/// holds the turn up to [`ENGINE_RUN_TIMEOUT`].
+/// Stops the engine run holding the turn: its timer kills the tree within `ENGINE_WANTED_POLL` and its caller gets `ENGINE_STOPPED_ERROR`. Otherwise an unwanted run holds the turn up to `ENGINE_RUN_TIMEOUT`.
 #[tauri::command]
 fn stop_running_engine() -> Result<(), String> {
     request_engine_stop(&LIVE_ENGINES);
@@ -6730,8 +5860,7 @@ fn stop_running_engine() -> Result<(), String> {
 
 static LIVE_ENGINES: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
 
-/// How long the app's exit waits for the kills. Each kill is a separate process
-/// that finishes on its own, so this only has to get them started.
+/// Exit wait for kills; each kill is its own process, so this only has to get them started.
 const ENGINE_EXIT_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
 
 fn lock_engine_registry(
@@ -6740,9 +5869,7 @@ fn lock_engine_registry(
     registry.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A registered engine. Dropped before [`Self::finished`] (its caller's future
-/// was dropped), it kills the engine: nothing would read its answer, and the
-/// next run must not overlap it.
+/// A registered engine. Dropped before `finished` (its caller's future was dropped), it kills the engine: nobody reads its answer and the next run must not overlap.
 struct TrackedEngine<'a> {
     registry: &'a std::sync::Mutex<EngineRegistry>,
     pid: u32,
@@ -6781,8 +5908,7 @@ impl Drop for TrackedEngine<'_> {
     }
 }
 
-/// Start an engine and record it as one step, so an exit cannot miss it. Refused
-/// once the app is exiting: a caller still in line must not start a new one.
+/// Starts and records an engine as one step so exit can't miss it; refused once exiting.
 fn start_tracked_engine<'a, T>(
     registry: &'a std::sync::Mutex<EngineRegistry>,
     kill: fn(u32),
@@ -6826,11 +5952,8 @@ fn stop_all_engines(
     }
 }
 
-/// One run of the engine with `line` on stdin, for the dataset `generation`. In
-/// line behind any other run; [`ENGINE_RUN_TIMEOUT`] counts the run only, not the
-/// wait. `STALE_SESSION` when that dataset is replaced during the wait or the run
-/// (a running engine is killed, so it does not keep the next caller waiting). The
-/// child is dropped after the write, which closes stdin (the engine reads one line only).
+/// One engine run with `line` on stdin for dataset `generation`. Queued behind other runs; `ENGINE_RUN_TIMEOUT` counts the run only.
+/// `STALE_SESSION` if the dataset is replaced during wait or run (a running engine is killed). The child is dropped after the write, closing stdin.
 async fn run_engine(app: &tauri::AppHandle, line: String, generation: u64) -> Result<EngineOutput, String> {
     let still_wanted = {
         let app = app.clone();
@@ -6864,14 +5987,7 @@ async fn run_engine(app: &tauri::AppHandle, line: String, generation: u64) -> Re
     .await
 }
 
-/// Run one request through the sidecar and return its JSON answer.
-///
-/// Its errors (and [`parse_predicted_extra`]'s) are LOG-ONLY: the one caller,
-/// [`predict_rel_hours`], writes them to the error log and shows the user the
-/// fixed warning of the failure's kind instead. That is why they keep the
-/// developer word "sidecar" and the engine's own text; a caller that shows an
-/// error to the user must go through the fixed sentences of `EngineFailure`
-/// instead (engine text is never shown).
+/// Runs one request through the sidecar. Errors are LOG-ONLY (`predict_rel_hours` logs them and shows a fixed warning); a caller that shows errors to the user must use `EngineFailure`'s fixed sentences.
 async fn run_sidecar_json(
     app: &tauri::AppHandle,
     payload: &serde_json::Value,
@@ -6892,10 +6008,7 @@ async fn run_sidecar_json(
         .map_err(|e| format!("Failed to parse sidecar output: {e} (raw: {})", run.stdout))
 }
 
-/// Message when the bundled sidecar predates `predict_relationship` /
-/// `X_extra` (the app keeps running the OLD binary until it is rebuilt).
-/// The text is shown to the user as-is (the frontend maps the stable
-/// `SIDECAR_OUTDATED:` prefix): no developer paths or build instructions.
+/// Bundled sidecar predates `predict_relationship`/`X_extra`. Shown to the user as-is (the frontend maps the `SIDECAR_OUTDATED:` prefix): no developer paths or build steps.
 const SIDECAR_OUTDATED: &str = "SIDECAR_OUTDATED: The Relation model engine in this build is out \
     of date - please reinstall or update the app.";
 
@@ -6977,10 +6090,7 @@ fn health_preview_in(
     }
 }
 
-/// Session-level core of [`count_period_rows`] (no Tauri state type). The
-/// generation guard is the one of [`health_preview_in`]: a caller that pinned a
-/// generation gets `STALE_SESSION` when the loaded dataset is another one - or
-/// when nothing is loaded at all.
+/// Session-level core of `count_period_rows`; same generation guard as `health_preview_in`: a pinned generation gets `STALE_SESSION` on mismatch or when nothing is loaded.
 fn count_period_rows_in(
     state: &AppState,
     periods: &[TimeRangeArg],
@@ -6996,22 +6106,8 @@ fn count_period_rows_in(
     period_counts::count(&session.data, periods, filter)
 }
 
-/// Running-condition modal: for each period (`[{start, end}]`, same datetime
-/// text as the training / scoring periods, `null` / blank = open bound) the
-/// dataset rows inside it and how many of them pass the running condition
-/// (`filter.value_filters` + `filter.combine`; the filter's own time fields are
-/// ignored), with the running-time days - see [`period_counts`] for the result
-/// and the exact definitions (they are the scoring results' own).
-///
-/// Bounded: at most [`period_counts::MAX_PERIODS`] periods, an O(periods)
-/// answer, ONE pass over the timestamps for all periods together. Read-only.
-///
-/// A period that cannot be counted (ends before it starts, unparseable bound)
-/// is answered `valid: false` with zeroes - it never fails the call. Errors:
-/// `BAD_REQUEST: ...` (too many periods), `NO_DATA: ...` (nothing loaded),
-/// `STALE_SESSION: ...` (`expected_generation` is not the loaded dataset's).
-///
-/// `async` so the O(rows) pass never runs on the main thread.
+/// Running-condition modal: per period (`[{start, end}]`, null/blank = open) counts dataset rows inside it and those passing the running condition (`filter.value_filters` + `combine`; filter time fields ignored), plus running-time days; see `period_counts`.
+/// Bounded: at most `period_counts::MAX_PERIODS`, one pass. An uncountable period returns `valid: false` with zeroes. Errors: `BAD_REQUEST:`, `NO_DATA:`, `STALE_SESSION:`.
 #[tauri::command(rename_all = "snake_case")]
 async fn count_period_rows(
     periods: Vec<TimeRangeArg>,
@@ -7091,7 +6187,6 @@ mod count_period_rows_tests {
         assert!(count_period_rows_in(&state, &many[..period_counts::MAX_PERIODS], None, Some(1)).is_ok());
     }
 
-    // ── the dataset's sample interval is computed once, not per call ──────
 
     use crate::csv_processor::{median_interval_runs, median_interval_seconds};
 
@@ -7139,8 +6234,7 @@ mod count_period_rows_tests {
         let old = count_period_rows_in(&state, &[TimeRangeArg::default()], None, None).unwrap();
         assert_eq!((old.interval_secs, old.periods[0].running_days), (Some(600.0), 1.0));
 
-        // What `load_csv` does: build the load report (which asks for the
-        // interval - on the load's own thread, before any lock), then install.
+        // Mirrors `load_csv`: build the load report (asks for the interval on the load's own thread, before any lock), then install.
         let merged = csv_processor::MergeResult {
             data: minute_rows(720),
             warnings: vec![],
@@ -7175,9 +6269,7 @@ mod count_period_rows_tests {
 
     #[test]
     fn special_sensor_changes_keep_the_timestamps_and_the_cached_interval() {
-        // Add / recompute / remove of a special sensor are the only mutations of
-        // a loaded dataset, and they touch value columns only - so the cached
-        // interval stays the fresh one and never needs recomputing.
+        // Special-sensor add/recompute/remove only touch value columns, so the cached interval stays fresh.
         let state = state_with(4);
         let first = count_period_rows_in(&state, &day(), Some(&running()), Some(4)).unwrap();
         let (_, ts_before, _) = interval_facts(&state);
@@ -7471,8 +6563,7 @@ mod engine_run_tests {
         assert!(src.contains(concat!("matches!(event, tauri::RunEvent::", "Exit)")));
     }
 
-    /// One run as `run_engine` does it, on a registry and a lock of the test's own.
-    /// `_tx` in the test stays open: a hung engine reports no end.
+    /// One run as `run_engine` does it, on the test's own registry and lock; `_tx` stays open so a hung engine reports no end.
     async fn tracked_run(
         lock: &'static tauri::async_runtime::Mutex<()>,
         registry: &'static std::sync::Mutex<EngineRegistry>,
@@ -7657,8 +6748,7 @@ mod engine_run_tests {
         assert_eq!(second.stdout, "{}");
     }
 
-    /// The real shape of the one-file engine: a parent whose child inherits the
-    /// pipes. Killing the parent alone leaves the pipe open for the whole ping.
+    /// Real one-file engine shape: a parent whose child inherits the pipes; killing the parent alone leaves the pipe open for the whole ping.
     #[cfg(windows)]
     #[test]
     fn the_tree_kill_also_ends_the_child_that_holds_the_pipes() {
@@ -7813,9 +6903,6 @@ mod off_main_thread_tests {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Export results (core in `workspace_export.rs`)
-// ---------------------------------------------------------------------------
 
 /// Folders written by `export_workspace_results` in THIS process — the only
 /// paths `reveal_export_folder` will open.
@@ -7833,10 +6920,7 @@ fn was_exported_here(path: &str) -> bool {
     EXPORTED_FOLDERS.lock().map(|v| v.iter().any(|f| f == path)).unwrap_or(false)
 }
 
-/// "Export results" dry run: issues, the exact `machine_info` / model JSON,
-/// CSV columns, rows, bytes and a 6-row Peek per model — built by the same
-/// function the write uses. Writes nothing. Errors: `BAD_REQUEST:` (malformed
-/// request), `NO_DATA:`, `STALE_SESSION:`.
+/// Dry run of Export results: issues, exact JSON, CSV columns, rows, bytes and a 6-row Peek per model, from the same function as the write. Writes nothing. Errors: `BAD_REQUEST:`, `NO_DATA:`, `STALE_SESSION:`.
 #[tauri::command(rename_all = "snake_case")]
 async fn plan_workspace_export(
     request: workspace_export::WorkspaceExportRequest,
@@ -7851,11 +6935,7 @@ async fn plan_workspace_export(
     .map_err(|e| format!("export plan task failed: {e}"))?
 }
 
-/// "Export results": write `<dest_dir>/<folder_name>` (or `_2` … `_99`) with
-/// `machine_info.json` + `models/<key>.json|.csv`, all or nothing. One export
-/// at a time; `workspace-export-progress` is emitted after each model. Errors:
-/// `BAD_REQUEST:` / `NO_DATA:` / `STALE_SESSION:` / `NOT_READY: <n> problem(s)`
-/// / `CANCELLED:` / `WRITE_FAILED:` — nothing is left behind for any of them.
+/// Writes `<dest_dir>/<folder_name>` (or `_2`…`_99`) with `machine_info.json` + `models/<key>.json|.csv`, all or nothing; one export at a time; emits `workspace-export-progress` per model. Errors: `BAD_REQUEST:`/`NO_DATA:`/`STALE_SESSION:`/`NOT_READY: <n> problem(s)`/`CANCELLED:`/`WRITE_FAILED:`; none leave anything behind.
 #[tauri::command(rename_all = "snake_case")]
 async fn export_workspace_results(
     request: workspace_export::WorkspaceExportRequest,
@@ -7906,9 +6986,7 @@ fn cancel_workspace_export(export_id: String) -> bool {
     workspace_export::EXPORTS.cancel(&export_id)
 }
 
-/// Open an exported folder in the system file manager. Only folders written by
-/// `export_workspace_results` in this process (exact path as returned in
-/// `folder`); anything else is `BAD_REQUEST`.
+/// Opens an exported folder; only paths written by `export_workspace_results` in this process (exact `folder` value), else `BAD_REQUEST`.
 #[tauri::command(rename_all = "snake_case")]
 fn reveal_export_folder(path: String, app: tauri::AppHandle) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
@@ -7939,8 +7017,7 @@ mod exported_folder_tests {
     }
 }
 
-/// The session cache, the set-point values written into
-/// the `*_INFO_*.json` files written by the legacy `train_*` commands.
+/// Session cache and `rel_fit_from_response` tests.
 #[cfg(test)]
 mod health_export_tests {
     use super::*;
@@ -7999,7 +7076,6 @@ mod health_export_tests {
         }
     }
 
-    // ---------- session cache semantics ----------
 
     #[test]
     fn relationship_preview_without_a_cached_fit_is_not_fitted() {
@@ -8109,7 +7185,6 @@ mod health_export_tests {
         assert!(health_preview_in(&state, &rel_request(Some("k"))).is_ok());
     }
 
-    // ---------- rel_fit_from_response ----------
 
     #[test]
     fn rel_fit_is_built_column_major_from_the_sidecar_response() {
@@ -8143,22 +7218,15 @@ mod health_export_tests {
         assert!(rel_fit_from_response(&none, &["A".to_string(), "B".to_string()], "T", 1.0, &[4, 7, 9], &[1.0, 2.0, 3.0], &x).is_none());
     }
 
-    // ---------- set-point JSON helpers ----------
 
-    // ---------- Individual files ----------
 
-    // ---------- Clustering files ----------
 
-    // ---------- Relationship files (everything except the sidecar run) ----------
 
-    // ---------- whole Individual flow: CSV -> session -> preview -> export -> file ----------
 
-    // ---------- the exported `validation` block: hourly scoring, no key lost ----------
 
 }
 
-/// Criteria bounds written verbatim, the derived
-/// epoch and the session stamp.
+/// Session stamp tests: it changes on replace and remove, not on add.
 #[cfg(test)]
 mod health_fix_tests {
     use super::*;
@@ -8193,9 +7261,7 @@ mod health_fix_tests {
         }
     }
 
-    // ---------- bug 2: criteria bounds verbatim ----------
 
-    // ---------- bug 1: derived epoch ----------
 
     #[test]
     fn stamp_changes_on_replace_and_remove_but_not_on_add_or_a_noop_remove() {
@@ -8233,14 +7299,11 @@ mod health_fix_tests {
         assert!(state.0.read().unwrap().as_ref().unwrap().rel_cache.is_empty());
     }
 
-    // ---------- bug 8: relationship export pre-checks ----------
 
-    // ---------- bug 8: Individual / Clustering export refusals are coded ----------
 
 }
 
-/// Output-file concept checks (criteria key
-/// spelling, small-band rounding) for the `*_INFO_*.json` model files.
+/// Rounding of the Individual mean/SD and 1SD/3SD bounds (`individual_rounded_metrics`).
 #[cfg(test)]
 mod model_info_output_tests {
     use super::*;
@@ -8253,11 +7316,10 @@ mod model_info_output_tests {
         assert!((a - b).abs() < 1e-12, "expected {b}, got {a}");
     }
 
-    // ---------- individual_rounded_metrics ----------
 
     #[test]
     fn individual_typical_values_match_legacy_three_decimals() {
-        // SD >= 1: identical to the old fixed 3-decimal rounding.
+        // SD >= 1: rounded to 3 decimals.
         let (mean, sd) = (1234.56789, 12.34567);
         let (m, s, b1, b3) = individual_rounded_metrics(mean, sd);
         let (lm, ls) = (legacy_r3(mean), legacy_r3(sd));
@@ -8296,8 +7358,7 @@ mod model_info_output_tests {
 
     #[test]
     fn individual_constant_sensor_boundaries_equal_the_mean() {
-        // PINNED current behaviour (the health score validates/guards it): SD = 0
-        // → every boundary equals the mean, so a band-width denominator is 0.
+        // SD = 0: every boundary equals the mean (band-width denominator is 0); the health score guards it.
         let (m, s, b1, b3) = individual_rounded_metrics(7.25, 0.0);
         assert_eq!(m, 7.25);
         assert_eq!(s, 0.0);
@@ -8305,7 +7366,6 @@ mod model_info_output_tests {
         assert_eq!(b3, [7.25, 7.25]);
     }
 
-    // ---------- build_cluster_info ----------
 
 }
 
@@ -8456,10 +7516,7 @@ mod scatter_sample_tests {
     }
 }
 
-/// Resolve (and create) the persistent error-log location:
-/// `<app-log-dir>/frontend-errors.log` — `%LOCALAPPDATA%/<identifier>/logs`
-/// on Windows. Lives outside the install dir so it never needs elevated
-/// writes and survives reinstalls.
+/// `<app-log-dir>/frontend-errors.log`; outside the install dir so it needs no elevated writes and survives reinstalls.
 fn error_log_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     use tauri::Manager;
     let dir = app
@@ -8470,8 +7527,7 @@ fn error_log_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> 
     Ok(dir.join("frontend-errors.log"))
 }
 
-/// Once the log reaches this size it is moved to `<name>.old.log` (replacing
-/// the previous one) and a fresh file starts, so the log holds at most ~2× this.
+/// At this size the log moves to `<name>.old.log` (replacing the old one), so it holds at most ~2× this.
 const ERROR_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 /// Longest message / detail kept per entry; anything past it is cut.
 const ERROR_LOG_MAX_MESSAGE: usize = 4 * 1024;
@@ -8541,9 +7597,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_shell::init())
         .setup(|_app| {
-            // Persist Rust panics to the same error log the frontend reporter
-            // writes to — an installed build has no console, so without this a
-            // panicked command/thread vanishes without a trace.
+            // Persist Rust panics to the error log: an installed build has no console.
             {
                 let handle = _app.handle().clone();
                 let default_hook = std::panic::take_hook();
@@ -8554,24 +7608,7 @@ pub fn run() {
                     default_hook(info);
                 }));
             }
-            // Native decorations are OFF everywhere except macOS, because the
-            // frontend draws its own titlebar (see TitleBar.tsx — it renders
-            // custom window buttons whenever the platform isn't macOS).
-            //
-            // Windows gets this from `tauri.windows.conf.json`, which Tauri
-            // merges over `tauri.conf.json` at build/dev time. Setting it there
-            // rather than stripping decorations here means the window is BORN
-            // undecorated — a runtime strip can't help but create the window
-            // with a native frame first, risking a visible flash before the
-            // call lands.
-            //
-            // macOS deliberately keeps `decorations: true` (base config) so the
-            // native traffic lights still exist — without them, and with the
-            // custom buttons suppressed on macOS, the window would have no
-            // close/minimise affordance at all.
-            //
-            // Linux has no platform config file of its own, so it still needs
-            // the runtime strip to match the custom titlebar.
+            // Native decorations are off (the frontend draws its own titlebar) except on macOS; Windows sets it in its platform config, Linux strips them at runtime.
             #[cfg(target_os = "linux")]
             {
                 use tauri::Manager;
@@ -8615,24 +7652,8 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        // Exit the app when the last *visible* webview window is destroyed.
-        // Overrides Tauri's default "stay alive on macOS after all windows
-        // close" — otherwise closing every window leaves the process running
-        // with no UI but a phantom macOS menu bar, which the user has no way
-        // to recover from short of Cmd+Q.
-        //
-        // The visibility filter handles the recent-workspace-navigation case:
-        // when the user clicks a Recent Workspace whose `lastRoute` is
-        // `failure-group` / `predictive-model` (old routes that no longer exist —
-        // a sub-window is a `?window=` label now), the main window calls
-        // `Window.destroy()` immediately after spawning the sub-window. If
-        // that destroy races a re-mount and the manager-map entry lingers as
-        // a hidden window, the visibility filter ignores it so the app still
-        // exits when the sub-window closes.
-        //
-        // Belt-and-suspenders: if `app_handle.exit(0)` doesn't terminate the
-        // process within 500 ms (it sometimes hangs on the cocoa runloop
-        // after the last window is gone), force-kill with `std::process::exit(0)`.
+        // Exit when the last visible window is destroyed (overrides macOS stay-alive); hidden leftovers are ignored.
+        // If exit(0) has not ended the process in 500 ms, force std::process::exit(0).
         .run(|app_handle, event| {
             use tauri::Manager;
             // An engine left running would keep working with no app to answer.
@@ -8678,19 +7699,13 @@ pub fn run() {
         });
 }
 
-/// `preview_relationship_model`'s response contract: bounded,
-/// aligned `predicted` / `predictor_raw` / `target_raw` + `n_rows` when
-/// `max_points` is given, full arrays without it, and a session cache
-/// that always holds the FULL fit. Driven through `finish_relationship_response`
-/// with a fake sidecar response (the real command needs a sidecar process).
+/// Contract of `preview_relationship_model`: `max_points` gives bounded aligned arrays + `n_rows`; the cache keeps the FULL fit.
 #[cfg(test)]
 mod relationship_response_tests {
     use super::*;
     use std::collections::HashSet;
 
-    /// y[i] = 100 + 10*sin(i/50) with a unique spike (max) and dip (min);
-    /// predicted[i] = 2*y[i] + 1 so alignment is checkable from the arrays alone;
-    /// x0[i] = i, which makes every sampled row index recoverable.
+    /// y = 100 + 10*sin(i/50) plus a spike and a dip; predicted = 2*y + 1, x0 = i, so alignment is checkable.
     struct Fixture {
         n: usize,
         x: Vec<Vec<f64>>,
@@ -8764,7 +7779,6 @@ mod relationship_response_tests {
         v.get(k).and_then(|x| x.as_array()).unwrap_or_else(|| panic!("{k} missing"))
     }
 
-    // ---------- relationship_sample_indices ----------
 
     #[test]
     fn sample_is_every_row_when_n_is_at_or_below_the_cap() {
@@ -8820,7 +7834,6 @@ mod relationship_response_tests {
         assert_eq!(relationship_sample_indices(1000, 0, &f.y, None).len(), 1);
     }
 
-    // ---------- bounded response ----------
 
     #[test]
     fn bounded_arrays_are_aligned_capped_and_keep_the_extremes() {
@@ -8876,8 +7889,7 @@ mod relationship_response_tests {
         assert!(resp.get("cache_key").is_none());
         assert!(resp.get("cached").is_none());
         assert!(resp.get("health_preview").is_none());
-        // An error response keeps its shape (still gets a bounded raw sample +
-        // n_rows), but the engine's own text is replaced by the fixed sentence.
+        // An error response keeps its shape (bounded sample + `n_rows`) but the engine's text becomes the fixed sentence.
         let err = run(&f, &state, serde_json::json!({"error": "boom", "trace": "t"}), Some("k"), Some(100));
         assert_eq!(err["error"], serde_json::json!(ENGINE_FIT_FAILED));
         assert!(err.get("trace").is_none(), "the traceback is never shipped");
@@ -8991,7 +8003,6 @@ mod relationship_response_tests {
         assert!(arr(&r, "predicted").len() <= 4000);
     }
 
-    // ---------- backwards compatibility (no max_points) ----------
 
     #[test]
     fn without_max_points_every_row_and_residual_are_returned_as_before() {
@@ -9007,7 +8018,6 @@ mod relationship_response_tests {
         assert_eq!(resp["n_rows"], serde_json::json!(3000));
     }
 
-    // ---------- the cache keeps the FULL fit ----------
 
     #[test]
     fn the_cache_holds_every_row_even_when_the_response_is_bounded() {
@@ -9117,10 +8127,7 @@ mod signed_sidecar_tests {
         assert!(py.contains("msg = json.loads(_verified_body(line))"), "backend.py must verify before parsing");
     }
 
-    /// End to end against the BUILT engine (`bin/backend-<triple>`): a line this
-    /// module signs is answered, the same request unsigned is refused. Needs the
-    /// real binary, so it is ignored by default:
-    /// `cargo test --lib built_engine -- --ignored`.
+    /// Runs against the BUILT engine; ignored by default (`cargo test --lib built_engine -- --ignored`).
     #[test]
     #[ignore]
     fn built_engine_answers_a_signed_line_and_refuses_an_unsigned_one() {

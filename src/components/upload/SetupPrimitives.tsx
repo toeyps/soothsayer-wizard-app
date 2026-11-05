@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { mono, type Tokens } from './uploadTheme';
 
-/** Small presentational pieces shared by the setup steps (1 and 2) of the Import page. */
+/** Small presentational pieces shared by the setup steps of the Import page. */
 
 export function Card({ T, children, style = {} }: { T: Tokens; children: ReactNode; style?: CSSProperties }) {
   return (
@@ -68,7 +68,7 @@ export function Eyebrow({ T, children, style = {} }: { T: Tokens; children: Reac
   );
 }
 
-/** The footer's primary action ("Continue" on step 1, "Open Dashboard" on step 2). */
+/** The footer's primary action ("Continue", "Open Dashboard"). */
 export function PrimaryButton({
   T, enabled, onClick, children,
 }: { T: Tokens; enabled: boolean; onClick: () => void; children: ReactNode }) {

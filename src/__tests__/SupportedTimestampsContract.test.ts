@@ -1,13 +1,5 @@
 // @vitest-environment node
-/**
- * QA 2026-10-19 — the Import page's "Supported:" list (`SensorDataPanel.tsx`
- * SUPPORTED_TIMESTAMPS, shown when 2+ files are picked) promises the user that these
- * shapes are read. The promise is kept by the Rust test
- * `the_timestamp_shapes_the_import_page_lists_are_the_ones_parsed` in
- * `src-tauri/src/csv_processor.rs` — but only while every listed example is IN that test.
- * This reads the real Rust source so an example added to the page without a Rust check
- * (or a Rust test trimmed later) fails here instead of silently shipping an untested claim.
- */
+/** Every `SUPPORTED_TIMESTAMPS` example must appear in the Rust test that checks the Import page list. */
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync } from 'node:fs';

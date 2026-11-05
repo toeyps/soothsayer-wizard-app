@@ -22,12 +22,7 @@ import type { TrainQueueItem, TrainRun } from '../types/trainQueue';
 import { sameModelFitProps, type ModelFitPageProps } from '../components/windows/workbench/ModelFitPage';
 import { longName, restoreNames, stubNamesCut, stubNamesFit } from './helpers/nameGeometry';
 
-/*
- * Train sensor / Train all with a queue —
- * the presentational parts on their own. The wiring (the queue driving the
- * window's train, locks, the close dialog, STALE) is covered in
- * BuildModelWindow.test.tsx's "train queue" block.
- */
+/* Presentational Train parts alone; queue wiring is covered in BuildModelWindow.test.tsx ('train queue' block). */
 
 afterEach(() => cleanup());
 
@@ -68,7 +63,7 @@ describe('TrainAllBar', () => {
     it('is disabled with its reason as text (amber for the running condition, red for STALE)', () => {
         const { rerender } = withMeta(<TrainAllBar counts={{ ready: 0, upToDate: 0, missing: 3 }} running={false} reason={TRAIN_NEEDS_RUNNING_CONDITION} reasonTone="warn" onOpen={() => {}} />);
         expect((screen.getByTestId('train-all') as HTMLButtonElement).disabled).toBe(true);
-        // The step bar is gone: no text on screen may say "Step 1" (the shared reason constant still does).
+        // The reason reads "Set the running condition first." with no "Step 1".
         expect(screen.getByTestId('train-all-reason').textContent).toBe('Set the running condition first.');
         expect((screen.getByTestId('train-all') as HTMLButtonElement).title).toBe('Set the running condition first.');
         expect(screen.getByTestId('train-all-reason').className).toContain('tq-why--warn');
@@ -84,9 +79,7 @@ describe('TrainAllBar', () => {
     });
 });
 
-// The ▾ menu's copy:
-// "Re-train" is only said about a model that has been trained before; the all-row says it
-// only when EVERY model of the sensor has. Every model row carries a small state line.
+// 'Re-train' only for a model trained before (the all-row: only when all were); every model row has a state line.
 describe('sensorTrainMenuCopy', () => {
     const READY = { kind: 'ready' } as const;
     const UP = { kind: 'upToDate', reason: 'up to date', complete: false } as const;
@@ -153,8 +146,7 @@ describe('sensorTrainMenuCopy', () => {
         expect(copy.only[1]).toEqual({ label: 'Re-train Clustering only', small: 'Pick a Y sensor' });
     });
 
-    // A sensor with ONE model never reads "Train all 1 model": there is no all-row, and its
-    // own row is a whole sentence ("… only" would have nothing to be the only one of).
+    // A one-model sensor has no all-row, and its row is a whole sentence (no '... only').
     it('one model: NO all-row; its row reads "Train the Individual model" / "Re-train the Relation model"', () => {
         const fresh = sensorTrainMenuCopy([m('individual', READY, false)]);
         expect(fresh.all).toBeNull();
@@ -220,8 +212,7 @@ describe('SensorTrainButton', () => {
         expect((screen.getByTestId('train-sensor-menu-toggle') as HTMLButtonElement).disabled).toBe(true);
     });
 
-    // Workbench redesign §1: at most one filled button on screen — the button is filled
-    // (primary) only while it is the next action, a ghost otherwise. Both halves follow.
+    // At most one filled button: primary only while it is the next action, a ghost otherwise (button and ▾ both).
     it('filled = primary on the button AND its ▾; not filled = a ghost on both', () => {
         const { rerender } = withMeta(<SensorTrainButton filled label="▶ Train sensor · 1 of 2" disabled={false} why="" whyTone="neutral" onTrain={() => {}} menu={menu()} />);
         expect(screen.getByTestId('train-sensor').className).toContain('rcx-btn--pri');
@@ -329,9 +320,7 @@ describe('RunStrip', () => {
     });
 });
 
-// CLAUDE.md naming rule: the tabs and the Train menu said
-// "Relation model" while the run strip, the Train-all rows and the close dialog still
-// said "Relationship".
+// Naming rule: 'Relation model' everywhere in the run UI (strip, Train-all rows, close dialog), never 'Relationship'.
 describe('a Relation model is named "Relation model" everywhere in the run UI', () => {
     const REL: TrainRowModel = { id: 'r9', kind: 'relationship', tag: 'TAG2', groupNos: [2], plan: { kind: 'ready' } };
     const rows = new Map([...ROW_MAP, [REL.id, REL]]);
@@ -380,8 +369,7 @@ describe('TrainAllModal', () => {
         onOpenModel: vi.fn(), onRetry: vi.fn(), onTrainNotStarted: vi.fn(), onRemoveFromRun: vi.fn(),
     });
 
-    // SPEC workbench-redesign §6: rows say "Ready", amber "Skipped" + Fix → with the long
-    // reason on a second line under the row, or grey "Skipped — up to date".
+    // Rows say 'Ready', amber 'Skipped' + Fix → with the long reason on a second line, or grey 'Skipped — up to date'.
     it('preflight: grouped by failure group (each model once), Ready / amber Skipped + reason line + Fix → / grey Skipped — up to date', () => {
         const p = base();
         withMeta(<TrainAllModal view="preflight" run={null} summary={null} {...p} />);
@@ -611,7 +599,7 @@ describe('locked settings, queued card, Health score banner', () => {
         expect(screen.getByTestId('run-setpoints-line').textContent).toBe('Trained in the run 14:05 · 3 need set points · this is 2 of 3');
         expect(screen.getByTestId('run-setpoints-text').textContent).toBe('3 need set points');
         expect(banner.querySelector('.wbx-dt')!.textContent).toBe('14:05');
-        // the old sentences are gone
+        // the old sentences must not come back
         expect(banner.textContent).not.toMatch(/in total|Set them here|trained in this run| at 14:05/);
         // a text link, not a second button-shaped control
         const next = screen.getByTestId('next-needing-set-points');

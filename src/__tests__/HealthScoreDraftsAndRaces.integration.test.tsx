@@ -1,19 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 
-/*
- * Health score — set-point drafts (persist / flush / never
- * lost / never overwritten), the preview hook's debounce and race guards seen
- * through the REAL page, every error path, and the "Mark complete" races and
- * failures (double click, close while saving, switch while saving, a slow
- * Relationship export, ok:false, rejects, the disk changing meanwhile, edits
- * made while saving, a workspace switch while saving), plus multi-workspace
- * isolation of the new state and the delete / duplicate behaviour of the
- * output folder.
- *
- * Real Dashboard + real Build Model window, one workspace file, one event bus,
- * the fake Rust health backend (`helpers/fakeHealthRust.ts`).
- */
+/* Health score integration: set-point drafts (persist, flush, never lost), preview debounce and race guards, error paths, Mark complete races, multi-workspace isolation, workspace delete. Real Dashboard + Build Model window, fake Rust health backend. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -68,7 +56,7 @@ afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 const EMPTY_I = { kind: 'individual', lower: null, upper: null, masterLower: 20, masterUpper: 80 };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 
-/** i1 (Individual TAG1, set points cleared by the user), r1 (Relationship TAG1<-TAG3), c1 (Clustering TAG3/TAG5) — all trained & fresh. */
+/** i1 (Individual TAG1, set points cleared), r1 (Relationship TAG1<-TAG3), c1 (Clustering TAG3/TAG5), all trained and fresh. */
 function trainedWs(over: Record<string, Record<string, unknown>> = {}, id = WS) {
     return wsTrained({}, [
         model({ id: 'i1', kind: 'individual', healthSetPoints: EMPTY_I, ...over.i1 }),
@@ -98,9 +86,6 @@ async function openI1Health() {
     await openHealth();
 }
 
-// ---------------------------------------------------------------------------
-// Drafts: typed without blur must be persisted exactly once, never lost
-// ---------------------------------------------------------------------------
 
 describe('a set point typed WITHOUT blur is persisted (exactly once) when the user leaves', () => {
     const leaves: { name: string; leave: () => Promise<void> }[] = [
@@ -169,8 +154,7 @@ describe('a set point typed WITHOUT blur is persisted (exactly once) when the us
         fireEvent.keyDown(bmw().getByTestId('sp-lower'), { key: 'Enter' });
         await settle(100);
         expect(lowerOnDisk()).toBe(11);
-        // The saved verdict of the NEW numbers is persisted once their preview lands (~250 ms
-        // debounce): let that one legitimate write finish before taking the baseline.
+        // The verdict of the new numbers is persisted once their preview lands (~250 ms debounce); wait for that write before taking the baseline.
         await settle(600);
         const n = env.writes.length;
         blurSp('sp-lower');
@@ -180,9 +164,6 @@ describe('a set point typed WITHOUT blur is persisted (exactly once) when the us
     });
 });
 
-// ---------------------------------------------------------------------------
-// The preview hook through the real page: debounce, ordering, model switch
-// ---------------------------------------------------------------------------
 
 describe('compute_health_preview traffic', () => {
     it('rapid typing (12 keystrokes) sends at most 2 requests, and the page ends on the LAST value', async () => {
@@ -241,15 +222,9 @@ describe('compute_health_preview traffic', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
 
 describe('errors from Rust', () => {
-    // A NOT_FITTED fit (e.g. evicted from Rust's fit cache during a long Train all) is
-    // re-fitted automatically ONCE per model + fingerprint; losing the same fit again shows the board
-    // (workbench-redesign §4: no Re-train button in the pane; the model counts as "needs training") with
-    // "Load it again" — the same silent re-fit, asked for by the user — next to "Train sensor ↑".
+    // A NOT_FITTED fit is re-fitted once automatically per model + fingerprint; a second loss shows the board with 'Load it again' next to 'Train sensor ↑'.
     it('NOT_FITTED (Relationship fit dropped from Rust memory): re-fitted once automatically; a second loss -> "Fit no longer in memory" on both pages; "Load it again" recovers without re-training (nothing written)', async () => {
         writeDisk(trainedWs());
         await mountWindows();
@@ -289,8 +264,7 @@ describe('errors from Rust', () => {
         expect(bmw().getByTestId('footer-status').textContent).toBe('Fit no longer in memory · load it again, or re-train with Train sensor ↑');
         fireEvent.click(bmw().getByTestId('page-tab-health'));
         await settle(50);
-        // "Load it again": ONE more fit of the same model, and the page is back — the model on disk
-        // is exactly what it was (not re-trained: same train time and fingerprint, status untouched).
+        // 'Load it again' re-fits once; the model on disk is unchanged (same train time, fingerprint, status).
         const onDisk = { ...diskModel('r1') };
         await act(async () => { fireEvent.click(bmw().getByTestId('health-load-fit')); });
         await settle(400);
@@ -324,14 +298,8 @@ describe('errors from Rust', () => {
         expect(diskModel('i1').healthSetPoints.lower).toBe(6);
     });
 
-    // The page and its inputs stay on screen from the hook's `lastData` under an inline
-    // error banner with a Retry button (a NOT_FITTED error keeps its own full-page "Re-train" message).
-    // Guards against: any preview failure (even a one-off one) replaces the WHOLE
-    // Health score page with "Couldn't load the health score" (HealthScorePage.tsx:51-71:
-    // `useHealthPreview` sets `data: null` on an error). The set-point inputs and Checks
-    // disappear and there is no Retry: the request only re-runs when its key changes,
-    // which the user can no longer do from this page (they must leave the page or the
-    // model and come back).
+    // Page and inputs stay (from the hook's `lastData`) under an inline error banner with Retry; NOT_FITTED keeps its own full-page message.
+    // Guards: a failure replacing the whole page leaves no way to retry.
     it('UX BUG: after a one-off preview failure the user can retry from the Health score page (inputs or a Retry button stay)', async () => {
         writeDisk(trainedWs());
         await mountWindows();
@@ -344,9 +312,6 @@ describe('errors from Rust', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Mark complete races and failures
-// ---------------------------------------------------------------------------
 
 describe('Mark complete: races and failures (it only CHECKS the set points — Export results writes the files)', () => {
     /** Mark complete's own check: the tiny `compute_health_preview` (`checkModelForComplete`). */
@@ -434,10 +399,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         expect(pill()).toBe('Complete');
     });
 
-    // `persistModelComplete` keeps the newer on-disk set points when they were committed while
-    // the check ran, and does NOT mark the model Complete (those numbers were never validated).
-    // Guards against: set points typed + committed WHILE Mark complete runs being silently
-    // reverted to the values that were checked, or marked Complete unvalidated.
+    // persistModelComplete keeps newer on-disk set points committed during the check and does not mark Complete (they were never validated).
     it('a set point edited and committed while the check runs is kept on disk and the model stays Incomplete', async () => {
         await readyI1();
         const g = env.backend!.gate('compute_health_preview', isCheck);
@@ -454,8 +416,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         expect(bmwEl().querySelector('[data-testid="mark-complete-again"]')).toBeNull();
     });
 
-    // The save is refused unless the on-disk model still has the fingerprint that was checked,
-    // and a model whose Mark complete is running cannot be trained meanwhile.
+    // Save is refused unless the on-disk model still has the checked fingerprint; a model whose Mark complete is running can't be trained.
     it('a Relationship model re-configured during its check does NOT end up Complete, and cannot be re-trained until the check ends', async () => {
         writeDisk(trainedWs());
         await mountWindows();
@@ -520,8 +481,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(diskModel('i1').healthSetPoints).toMatchObject({ lower: 20, upper: 80 });
-        // a set-point change makes the model Incomplete in the same write (export round
-        // 2026-10-20): no "changed after saving" hint, the plain Mark complete is back
+        // A set-point change makes the model Incomplete in the same write; plain Mark complete is back.
         await enterSp({ 'sp-upper': '82' });
         expect(diskModel('i1').status).toBe(false);
         expect(bmwEl().querySelector('[data-testid="files-out-of-date"]')).toBeNull();
@@ -537,9 +497,6 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
     });
 });
 
-// ---------------------------------------------------------------------------
-// Workspaces: isolation of the new state, delete / duplicate
-// ---------------------------------------------------------------------------
 
 describe('multi-workspace isolation of the health state', () => {
     it('A -> B re-point: A\'s set points / export state never show in B (same model ids)', async () => {
@@ -573,9 +530,7 @@ describe('multi-workspace isolation of the health state', () => {
         await sendBuildModelData('ws2');
         await act(async () => { g.release(); });
         await settle(200);
-        // Nothing of A's run reaches B. (B's own model may legitimately get its OWN freshly computed
-        // saved verdict - `healthVerdict` - once its preview lands, and a write re-orders the slice's
-        // keys, so compare the parsed content without that one field.)
+        // Compare without `healthVerdict`: B's model may get its own fresh verdict, and a write reorders the slice's keys.
         const parsed = (json: string | undefined) => {
             const o = JSON.parse(json!);
             for (const m of o.failureGroupState.models) delete m.healthVerdict;
@@ -587,12 +542,7 @@ describe('multi-workspace isolation of the health state', () => {
         expect([...env.files.keys()].some(k => k.startsWith('workspaces/ws2/'))).toBe(false);
     });
 
-    // The re-point handler commits pending drafts to the OLD workspace before it switches.
-    // Guards against: re-pointing the window at another workspace drops a set point that was
-    // typed but not yet blurred: the `build-model-data` listener resets `spDrafts` to `{}`
-    // (BuildModelWindow.tsx:708) without committing it to the OLD workspace first. (The
-    // Dashboard normally closes this window when it leaves a workspace, which flushes;
-    // a re-point only happens when the window survived.)
+    // Re-pointing must commit pending drafts to the OLD workspace first: the `build-model-data` listener resets `spDrafts`.
     it('BUG: a set point typed (no blur) in A is saved to A when the window is re-pointed at B', async () => {
         writeDisk(trainedWs());
         writeDisk(trainedWs({}, 'ws2'), 'ws2');
@@ -605,14 +555,8 @@ describe('multi-workspace isolation of the health state', () => {
         expect(lowerOnDisk()).toBe(13);
     });
 
-    // `executeTrain` compares `get_session_generation` with the window's generation before and after.
-    // Guards against: the Build Model window's TRAIN is not bound to the dataset
-    // session: `compute_sensor_stats` / `preview_relationship_model` /
-    // `compute_clustering_preview` carry no expected generation (none of them accept one),
-    // so a window that outlived its dataset (another CSV loaded meanwhile) trains on the
-    // OTHER dataset and stamps the model `lastTrainedAt` / `trainedFingerprint` in ITS
-    // workspace — the model then reads "Trained" with numbers from the wrong data, while
-    // `compute_health_preview` right after answers STALE_SESSION.
+    // `executeTrain` compares `get_session_generation` before and after.
+    // Guards against a window outliving its dataset and stamping the model Trained.
     it('BUG: Train in a window whose dataset was replaced does not stamp the model as trained', async () => {
         const other = plantDataset(30);
         newBackend({ plant: plantDataset(), other });
@@ -637,7 +581,7 @@ describe('multi-workspace isolation of the health state', () => {
         await openI1Health();
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
-        // files an older build's Mark complete left behind (Mark complete writes none any more)
+        // leftover output files in the workspace folder
         env.files.set(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`, '{}');
         env.files.set('workspaces/ws10/output/TAG1/INDV_INFO_TAG1.json', '{}'); // a sibling with a prefix-like id
         expect(env.files.has(`workspaces/${WS}/output/TAG1/INDV_INFO_TAG1.json`)).toBe(true);

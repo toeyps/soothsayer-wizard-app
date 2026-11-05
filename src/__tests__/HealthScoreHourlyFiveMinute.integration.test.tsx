@@ -1,42 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
-/*
- * Health score on 1-hour averages — Train → Health score → Mark complete on
- * 5-MINUTE data, for each model kind, across every zone it touches.
- *
- * REAL here: the Dashboard, the Build Model window with its Model fit / Health
- * score pages, the `useHealthPreview` hook, `workspaceManager` over one
- * in-memory workspace file. The Tauri boundary is the fake Rust backend
- * (`helpers/fakeHealthRust.ts`).
- *
- * The dataset and the expected numbers are the SHARED fixture
- * `src-tauri/tests/fixtures/hourly_score_parity.json`: the real Rust code is
- * asserted against it in `src-tauri/tests/internal/train_test_validation_internal.rs`
- * (`hourly_parity_*`) and the fake in `HealthHourlyRustParity.test.ts`. So for
- * Individual and Clustering this file proves the chain end to end: the request
- * the UI really builds IS the request of the fixture, and what the page shows /
- * the file that Mark complete writes are the numbers Rust is pinned to.
- * (The Relation model needs the engine: its numbers come from the fake's
- * least-squares stand-in — what is pinned here is what the frontend ASKS and
- * what it does with the answer.)
- *
- * What the pieces are tested for on their own, and is only touched here:
- *   - wording of the page / tiles / read-out: HealthScorePage.test.tsx,
- *     ValidationCards.test.tsx, healthChecks.test.ts;
- *   - the footer hint of a model completed before the change:
- *     BuildModelWindow.test.tsx + ScoringPeriodsLegacyWorkspace.integration.test.tsx
- *     (hint shown → Mark complete again → gone → survives a restart);
- *   - which hours the Relation model's ENGINE is asked for when a scoring period
- *     is added / removed: Rust, `only_hours_without_a_stored_prediction_are_planned_…`
- *     and `removing_a_scoring_period_plans_nothing_…`.
- * What only this file sees: one point per clock hour on the Health score page
- * while the Model fit page keeps every raw row; a partly-running hour and a
- * stopped hour through the real UI; the exported `validation` block read back
- * from the file after a real Mark complete; a scoring-period edit after Train
- * never re-trains the Relation model; "Try again" reaching Rust as
- * `retry_test_scoring` exactly once.
- */
+/* Health score on 1-hour averages end to end on 5-minute data, per model kind; Rust is the fake backend. Data and expected numbers come from `src-tauri/tests/fixtures/hourly_score_parity.json`. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -79,7 +44,7 @@ import {
 
 vi.setConfig({ testTimeout: 60_000 });
 
-// ── the plant: 120 rows, 5 minutes apart, from 2024/03/01 00:00 (see the fixture's `_about`) ──
+// The plant: 120 rows, 5 minutes apart, from 2024/03/01 00:00.
 const DATA = fixture.dataset as unknown as HealthDataset;
 const HEADERS = DATA.headers;
 const META = [
@@ -113,7 +78,6 @@ const CLU = () => model({
     clusterRanges: [{ min: 0, max: 50 }, { min: 60, max: 100 }], healthSetPoints: { kind: 'clustering', outerSd: 6 },
 });
 
-// ── reading what was drawn ──
 /** Local wall-clock ms of `h:m` on 2024/03/01 (the charts place a row at its own clock). */
 const at = (h: number, m = 0) => new Date(2024, 2, 1, h, m, 0).getTime();
 /** The hours that have a running row: hour 6 is stopped from start to end. */
@@ -158,9 +122,7 @@ describe('Individual on 5-minute data', () => {
         expect(pill()).toBe('Trained');
         await waitForCharts();
 
-        // ── Model fit: RAW rows, 5 minutes apart — nothing here is averaged ──
-        // (the page prints no row count any more — its tiles are Mean · SD · Outside ±3SD — so the raw statistics
-        // are read from the answer the page was drawn from, and the Mean tile is that answer's mean)
+        // Model fit shows RAW 5-minute rows; stats are read from the answer the page was drawn from.
         const fitStats = (lastPreview('individual').result as any).stats;
         expect(fitStats.rows).toBe(48); // the 4 training hours x 12 rows
         expect(bmw().getByTestId('stat-mean').querySelector('.wb3-kpi-v')!.firstChild!.textContent).toBe(fmtNum(fitStats.mean));
@@ -172,14 +134,12 @@ describe('Individual on 5-minute data', () => {
         expect(Math.max(...raw.map(p => p[1] as number))).toBe(85.5); // a single row's value, never the hour mean
         expect(raw.every(p => p[1] !== 9999), 'no stopped row is drawn').toBe(true);
         expect(env.charts.some(c => seriesOf(c, 'Health score')), 'no score chart on Model fit').toBe(false);
-        // only the TRAIN period is shaded and named (user decision 2026-10-12): the scoring period has no band and
-        // no "S1" — its 45 rows are on the line all the same (counted above)
+        // Only the TRAIN period is shaded and named; scoring rows are still on the line.
         expect(stripOf(lastChart('Value', 0, false))).toEqual(['TRAIN']);
-        // the tooltip of a raw 5-minute row is headed by that row's date AND time (it read "2024-03-01" alone)
+        // A raw row's tooltip shows date and time.
         expect(tipHeading(lastChart('Value', 0, false), at(4, 35))).toBe('2024/03/01 04:35:00');
         expect(tipHeading(lastChart('Value', 0, false), at(0, 5))).toBe('2024/03/01 00:05:00');
 
-        // ── Health score: 1-hour averages ──
         const from = env.charts.length;
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
@@ -207,11 +167,10 @@ describe('Individual on 5-minute data', () => {
         expect(await hoverTime(setChart, at(7, 25))).toBe('2024/03/01 07:00:00 · 1 h avg 52.5 bar · score 100');
         for (const ms of [at(5, 50), at(6, 10), at(6, 55)]) expect(await hoverTime(scoreChart, ms)).not.toContain('06:00'); // the stopped hour is not a point
 
-        // (No per-period tiles: the "Scoring results" card was removed 2026-10-12. The chart's subtitle and
-        // the hover read-outs above are the page's numbers; the per-period block is checked in the file below.)
+        // No per-period tiles; the chart subtitle and hover read-outs carry the numbers.
         expect(bmw().queryByTestId('test-results')).toBeNull();
 
-        // ── Mark complete: the set points are CHECKED (no INFO file: Export results writes the files) ──
+        // Mark complete only checks the set points; it writes no files.
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(env.files.has(`workspaces/${WS}/output/V/INDV_INFO_V.json`)).toBe(false);
@@ -225,7 +184,7 @@ describe('Individual on 5-minute data', () => {
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
 
-        // ── close and reopen: still Complete, no "earlier scoring" hint ──
+        // Close and reopen: still Complete.
         await restartApp(OPTS);
         selectSensor('v');
         await settle(400);
@@ -310,14 +269,14 @@ describe('Relation model on 5-minute data', () => {
         expect(pill()).toBe('Trained');
         await waitFor(() => expect(bmw().getByTestId('model-fit-relationship')).toBeTruthy());
 
-        // ── Train: ONE engine run, and it was told the scoring periods (so their hours are predicted in that run) ──
+        // Train: ONE engine run, told the scoring periods (so their hours are predicted in that run).
         expect(trainsOfRelation()).toHaveLength(1);
         const trainCall = trainsOfRelation()[0];
         expect(trainCall.args.test_periods).toEqual(wire(S_TWO));
         const key = trainCall.args.cache_key as string;
         expect(key).toBe(`r1::${diskModel('r1').trainedFingerprint}`);
 
-        // ── Model fit: raw TRAINING rows only — the time charts stop where training stops ──
+        // Model fit: raw TRAINING rows only; the time charts stop where training stops.
         for (const name of ['Actual', 'Predicted', 'Residual']) {
             const pts = pointsOf(lastChart(name, 0, false), name);
             expect(pts, name).toHaveLength(48);
@@ -328,12 +287,10 @@ describe('Relation model on 5-minute data', () => {
         // ...so the scoring periods (both AFTER the training rows) have no line and no band on this page
         expect(stripOf(lastChart('Residual', 0, false))).toEqual(['TRAIN']);
 
-        // ── Health score: hourly ──
         const from = env.charts.length;
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
-        // here too only the TRAIN period is shaded and named — once, above the UPPER chart of the stacked card (the
-        // score chart under it is the same time axis); the scoring periods' hours are on the line (below)
+        // Only TRAIN is shaded, named once above the upper chart; scoring hours are on the line.
         expect(stripOf(lastChart('Actual', from, true))).toEqual(['TRAIN']); // named once, above the top chart
         expect(stripOf(lastChart('Residual', from, true))).toEqual([]);
         expect(stripOf(lastChart('Health score', from, true))).toEqual([]);
@@ -359,7 +316,7 @@ describe('Relation model on 5-minute data', () => {
         expect(text('chart-card-stack')).toContain('actual − predicted (kW) · 1-hour averages of the running rows');
         expect(await hoverTime(scoreChart, at(4, 5))).toMatch(/^2024\/03\/01 04:00:00 · residual 5(\.\d+)? kW · score 27$/);
 
-        // ── remove S2: nothing is trained, the same fit is scored again ──
+        // Remove S2: nothing is trained, the same fit is scored again.
         const fingerprint = diskModel('r1').trainedFingerprint;
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         let modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
@@ -376,7 +333,7 @@ describe('Relation model on 5-minute data', () => {
         expect(pill()).toBe('Trained');
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
 
-        // ── add a period (08:00 → 09:59): again no training ──
+        // Add a period (08:00 to 09:59): again no training.
         fireEvent.click(bmw().getByTestId('rc-card-open'));
         modal = within(bmw().getByRole('dialog', { name: 'Running condition' }));
         await act(async () => { fireEvent.click(modal.getByTestId('test-add')); });
@@ -400,7 +357,6 @@ describe('Relation model on 5-minute data', () => {
         expect(env.backend!.cmds('compute_health_preview').some(c => c.args.request.retry_test_scoring)).toBe(false);
         expect(env.backend!.calls.filter(c => c.error).map(c => `${c.cmd}: ${c.error}`)).toEqual([]);
 
-        // ── Mark complete ──
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
@@ -416,8 +372,7 @@ describe('Relation model on 5-minute data', () => {
         const FAILED = 'The health score could not be calculated because the Relation model engine did not answer. The model fit is not affected - try again, or train the model again.';
         writeDisk(workspace([], [REL()]));
         await mountWindows(OPTS);
-        // Rust's answer while the engine has not answered: the fit is fine (`valid`), every hourly
-        // score is null, the summary is empty, one WARNING — and no `test_validation` (no period).
+        // Engine has not answered: fit is `valid`, every hourly score null, one WARNING, no `test_validation`.
         env.backend!.override('compute_health_preview', a => a?.request?.kind === 'relationship' && !a.request.retry_test_scoring, async (_a, real) => {
             const res = await real() as any;
             const n = res.hourly.total_points as number;
@@ -482,11 +437,7 @@ describe('a scoring period that starts INSIDE an hour (04:30)', () => {
         expect(p.series.total_points).toBe(48 + 39);
     });
 
-    // A period that starts inside an hour (04:30): its first hourly point sits at the hour start
-    // (04:00), before the period's own start. The Health score page reads its periods from the hour
-    // start (`hourlyScopes`), so that point is inside the scoring period and on the line — with the raw
-    // range it stood alone between two cuts of a symbol-less line and was not drawn at all. (The
-    // scoring period itself is not shaded; its range still decides where the line runs.)
+    // A period starting at 04:30 has its first hourly point at 04:00; `hourlyScopes` reads from the hour start, so that point is drawn.
     it('the score of that hour is visible on the score chart (not a lone point of a symbol-less line)', async () => {
         const p = await ask();
         const option = buildScoreOption(p.hourly.timestamps, p.hourly.score, hourlyScopes(scopesOf(p.test_validation))) as any;

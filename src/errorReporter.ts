@@ -1,18 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 
-/**
- * Central error funnel for production builds, where there are no DevTools:
- * every uncaught error / unhandled rejection / React render crash flows
- * through `reportError()`, which
- *   1. keeps a small in-memory list that <ErrorToasts /> renders as visible
- *      alerts (the user's "why is the screen black" answer), and
- *   2. appends the full detail to `<app-log-dir>/frontend-errors.log` via the
- *      `log_frontend_error` command, so errors survive an app restart and can
- *      be sent back for debugging.
- *
- * The reporter must never throw or recurse: logging failures are swallowed,
- * and duplicate errors (same source+message) are coalesced within a window.
- */
+/** Central error funnel: shows toasts and appends detail to `frontend-errors.log` via `log_frontend_error`. Never throws or recurses; repeats coalesce. */
 
 export interface AppError {
     id: number;
@@ -66,18 +54,13 @@ function toMessage(err: unknown): { message: string; detail: string | null } {
     }
 }
 
-/**
- * Report an error: show it in the toast stack and persist it to the log
- * file. Safe to call from anywhere, including inside catch blocks of the
- * logging path itself (re-entry is cut by the dedupe window).
- */
+/** Toast and log an error; safe anywhere (re-entry is cut by the dedupe window). */
 export function reportError(source: string, err: unknown, extraDetail?: string): void {
     const { message, detail } = toMessage(err);
     const fullDetail = [detail, extraDetail].filter(Boolean).join('\n') || null;
     const now = Date.now();
 
-    // Coalesce repeats (e.g. every pair-plot cell failing the same way):
-    // bump the counter on the existing toast instead of stacking clones.
+    // Coalesce repeats by bumping the existing toast's counter.
     const dup = errors.find(e => e.source === source && e.message === message);
     if (dup && now - dup.at < DEDUPE_WINDOW_MS) {
         dup.count += 1;
@@ -102,13 +85,7 @@ export function reportError(source: string, err: unknown, extraDetail?: string):
 
 const lastFileOnly = new Map<string, number>();
 
-/**
- * Append a line to `frontend-errors.log` WITHOUT showing a toast — for
- * conditions the app already handled safely but that must leave a trace for
- * debugging (e.g. a workspace file that could not be read, so a save was
- * skipped instead of overwriting it). Same line coalesced within the dedupe
- * window; never throws.
- */
+/** Log to file without a toast, for conditions handled safely but worth a trace; dedupes; never throws. */
 export function logToFile(source: string, message: string, detail?: string): void {
     const key = `${source}|${message}`;
     const now = Date.now();
@@ -127,17 +104,13 @@ export function getErrorLogPath(): Promise<string> {
     return invoke<string>('get_error_log_path', {});
 }
 
-/**
- * Install the global hooks once (module-scope call from App.tsx). Captures
- * errors that would otherwise blank the screen with no trace in production.
- */
+/** Install the global hooks once (called from App.tsx). */
 export function initErrorReporter(): void {
     if (installed) return;
     installed = true;
 
     window.addEventListener('error', (event) => {
-        // Plain `error` events also fire for failed <img>/<script> resources
-        // (no ErrorEvent/`error` payload) — only surface real JS errors.
+        // `error` events also fire for failed resources (no payload): report only real JS errors.
         if (event instanceof ErrorEvent && (event.error || event.message)) {
             reportError('uncaught', event.error ?? event.message);
         }

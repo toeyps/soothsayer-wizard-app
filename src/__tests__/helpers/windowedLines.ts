@@ -1,10 +1,6 @@
 import { vi } from 'vitest';
 
-/**
- * jsdom has no layout, so nothing resizes by itself. `captureResizeObservers` stubs `ResizeObserver` so a test can say
- * "the browser noticed a size change" (`fire`) with no React commit; `setLineHeight` is the change itself, read back
- * through `getComputedStyle`. Undo with `vi.unstubAllGlobals()`.
- */
+/** jsdom has no layout: `captureResizeObservers` stubs ResizeObserver so a test can say the browser noticed a size change (`fire`) with no commit; `setLineHeight` is the change itself, read via `getComputedStyle`. Undo with `vi.unstubAllGlobals()`. */
 export interface ResizeObservers {
     fire: () => void;
     watching: (el: Element) => boolean;

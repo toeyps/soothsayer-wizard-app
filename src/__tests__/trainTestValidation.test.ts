@@ -117,8 +117,7 @@ describe('toTestPeriodsWire / testPeriodsKey', () => {
         expect(testNumberFor(undefined, undefined, 2)).toBe(3);
     });
 
-    // Rust numbers a scoring period by its position in the list it RECEIVED; invalid periods are
-    // dropped before sending, so the number has to be mapped back to the list the user sees.
+    // Rust numbers a scoring period by its position in the list it RECEIVED; invalid ones are dropped before sending, so map the number back.
     it('scoringIssueTarget maps test_period_<n>_start/_end back to the S-number of the full list', () => {
         // [S1 invalid, S2, S3 invalid, S4] -> sent as [S2, S4]
         const list = [tp({ end: '' }), tp(), tp({ start: 'x' }), tp({ start: '2026-03-01T00:00', end: '2026-03-31T23:59' })];
@@ -150,7 +149,7 @@ describe('toTestPeriodsWire / testPeriodsKey', () => {
     it('key = start / end in list order; the id and every legacy key are ignored', () => {
         expect(testPeriodsKey([tp()])).toBe(testPeriodsKey([tp({ id: 'x' })]));
         expect(testPeriodsKey(undefined)).toBe(testPeriodsKey([]));
-        // what used to count (the label, a Known problem's event time) no longer does:
+        // the label and event time do not count:
         expect(testPeriodsKey([tp()])).toBe(testPeriodsKey([tp({ label: 'problem' })]));
         expect(testPeriodsKey([tp({ label: 'normal' })])).toBe(testPeriodsKey([tp({ label: 'problem', eventTime: '2026-01-02T00:00', fromHighlight: 'H' })]));
         // what does count:
@@ -185,8 +184,7 @@ describe('scoring-vs-train overlap (a quiet note, never a block)', () => {
         expect(trainOverlapDays(train, tp({ end: '' }))).toBe(0);
     });
     it('the note text names the period S<n>; the days stay raw running time, the results are per HOUR', () => {
-        // Health score on 1-hour averages: a result is an hourly point, so the note says
-        // "hours the model was trained on" (it said "rows" while every row was scored).
+        // Health score uses 1-hour averages, so the note says 'hours', not 'rows'.
         expect(testIncludesTrainNote(0, 12)).toBe('S1 includes 12 d of train running time — results include hours the model was trained on');
         expect(testIncludesTrainNote(2, 15)).toMatch(/^S3 includes 15 d of train running time/);
         expect(testIncludesTrainNote(0, 12)).not.toMatch(/rows/);
@@ -305,13 +303,12 @@ describe('"scoring periods changed" banners (SPEC rule 8)', () => {
 
 describe('the health score could not be calculated (warning test_scoring_failed, review fix 2026-10-07)', () => {
     it('the headlines say the HEALTH SCORE could not be calculated - the Relation model is predicted per hour, training hours included', () => {
-        // Since the score is computed on 1-hour averages a failed engine run hides the whole
-        // score of a Relation model, not only its scoring periods (and can happen with none).
+        // The score is on 1-hour averages, so a failed engine run hides the whole Relation model score, not only the scoring periods (and can happen with none).
         expect(TEST_SCORING_FAILED_TEXT).toBe('The health score could not be calculated — try again');
         expect(TEST_SCORING_OUTDATED_TEXT).toBe('The health score could not be calculated');
         expect(TEST_SCORING_FAILED_TEXT).toBe(`${TEST_SCORING_OUTDATED_TEXT} — try again`);
         for (const t of [TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT]) expect(t).not.toMatch(/scoring periods|could not be scored/i);
-        // The engine run covers the training hours too, so the hint no longer says "these periods".
+        // The engine run covers the training hours too, so the hint doesn't say "these periods".
         expect(SLOW_TEST_SCORING_TEXT).toBe('Calculating the health score with the Relation model — this can take up to ~15 s.');
         expect(SLOW_TEST_SCORING_TEXT).not.toMatch(/these periods/i);
         for (const t of [TEST_SCORING_FAILED_TEXT, TEST_SCORING_OUTDATED_TEXT, SLOW_TEST_SCORING_TEXT]) expect(t).not.toMatch(/test period|LinearGAM/i);

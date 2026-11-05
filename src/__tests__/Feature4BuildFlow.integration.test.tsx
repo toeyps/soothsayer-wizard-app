@@ -2,20 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
 
-/*
- * Cross-zone integration for the Build Model flow.
- *
- * Unlike BuildModelWindow.test.tsx (which mocks `workspaceManager`), everything
- * here is REAL except the Tauri boundary (the Workbench's Train button is
- * the path whose payloads are checked):
- *   - the real workspaceManager runs against an in-memory plugin-fs, so every
- *     read/write is an actual JSON round trip through the real write queue and
- *     `migrateFailureGroupState`;
- *   - events go through one shared in-process bus (every emit reaches every
- *     listener, like Tauri's global broadcast), so origin filtering is real.
- * Only charts are stubbed, and invoke() returns canned results while recording
- * the exact (JSON-serialised) args the Rust side would receive.
- */
+/* Cross-zone Build Model flow: real workspaceManager over in-memory plugin-fs and a shared event bus. Only the Tauri boundary and charts are stubbed; invoke args are recorded. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -43,8 +30,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    // Workspace saves go to a temp sibling and are renamed over the real file
-    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    // Workspace saves go to a temp file, then rename; record the write when it lands.
     writeTextFile: async (p: string, c: string) => { h.files.set(p, c); if (!p.endsWith('.tmp')) h.writes.push(p); },
     rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); h.writes.push(to); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
@@ -98,7 +84,6 @@ import { preflightReason, TRAIN_NEEDS_RUNNING_CONDITION } from '../utils/trainQu
 // A train period is required to Train, a scoring period to Mark complete.
 import { ALL_TIME_TRAIN, ONE_TEST, rcOn } from './helpers/trainTestFixture';
 
-// ── fixtures ────────────────────────────────────────────────────────────
 
 const WS_FILE = 'workspaces/ws1.json';
 const HEADERS = ['TAG1', 'TAG2', 'TAG3'];
@@ -129,7 +114,6 @@ function v1Model(o: Record<string, unknown>) {
     };
 }
 
-/** A model in the current shape. */
 /** Set points the `makeSetPointAwarePreview` fixture accepts (Individual 3SD band 2..8): Mark complete needs them. */
 const VALID_SP = { kind: 'individual', lower: 1, upper: 9, masterLower: 1, masterUpper: 9 };
 
@@ -174,8 +158,7 @@ async function mountBuildModel() {
 /** The "Edit…" modal wrapping RunningConditionPanel (auto-opens at hydration
  *  when the workspace running condition is unset). */
 const rcModal = () => screen.queryByRole('dialog', { name: 'Running condition' });
-/** Close the modal the way a user must before touching the Workbench behind
- *  it (its backdrop covers the whole window in the real app). No-op if closed. */
+/** Close the modal as a user must; its backdrop covers the window. No-op if closed. */
 function closeRcModal() {
     const d = rcModal();
     if (d) fireEvent.click(within(d).getByLabelText('Close'));
@@ -195,26 +178,14 @@ async function otherWindowWrites(patch: Record<string, unknown>, origin = 'dashb
  *  its first model tab — Individual when it has one). */
 const selectSensorRow = (rowIndex = 0) => fireEvent.click(screen.getAllByTestId('sensor-row-label')[rowIndex]);
 const openFirstRow = () => { closeRcModal(); selectSensorRow(0); };
-/** The detail header's Train sensor — replaced the footer's "▶ Train model". */
+/** The detail header's Train sensor button. */
 const trainBtn = () => screen.getByTestId('train-sensor') as HTMLButtonElement;
-/** Train sensor's title for a sensor whose one model the gate blocks: the "set the running condition"
- *  reason while Step 1 is not set at all, else the model's reason in the preflight wording. */
+/** Train button title when blocked: the 'set the running condition' reason while Step 1 is unset, else the model's reason. */
 const blockedTitle = (reason: string) => screen.getByTestId('rc-card').getAttribute('data-state') === 'unset'
     ? TRAIN_NEEDS_RUNNING_CONDITION
     : `Can't train: Individual — ${preflightReason(reason).text}`;
 
-/*
- * Which `compute_sensor_stats` call is Train's?
- *
- * Train is not the only caller of `compute_sensor_stats` (the cluster-range
- * slider's criteria stats, a silent re-run), so a test never reads "the
- * newest call" and never sleeps a fixed time:
- *   - it takes a mark (`h.invokes.length`) right before the Train click and
- *     waits for the FIRST matching call recorded after it (`trainCall`);
- *   - where another call could match too, the trained model's target is a sensor
- *     that is not `HEADERS[0]`, and the predicate names that sensor - the other
- *     call can then never be mistaken for Train's, whatever the timing.
- */
+/* Identify Train's `compute_sensor_stats` call: mark before the click, wait for the first matching call after it; never 'the newest call' or a fixed sleep. Where another call could match, the trained target isn't `HEADERS[0]` and the predicate names it. */
 const firstSince = (mark: number, cmd: string, pred: (a: any) => boolean = () => true) =>
     h.invokes.slice(mark).find(c => c.cmd === cmd && pred(c.args));
 
@@ -225,8 +196,7 @@ async function clickTrain(): Promise<number> {
     return mark;
 }
 
-/** Select a row and press Train (the Workbench's only path that sends the training scope to Rust).
- *  Returns the invoke mark taken just before the click - pass it to `trainCall`. */
+/** Select a row and press Train; returns the invoke mark taken before the click (pass to `trainCall`). */
 async function trainRow(rowIndex = 0): Promise<number> {
     closeRcModal();
     selectSensorRow(rowIndex);
@@ -239,8 +209,7 @@ async function trainCall(mark: number, cmd: string, pred: (a: any) => boolean = 
     return firstSince(mark, cmd, pred)!;
 }
 
-/** Wait until the Train run stamped the model on disk (`lastTrainedAt`) - the one
- *  signal that the run really finished, so no write of it can land in the next test. */
+/** Wait for `lastTrainedAt` on disk: the run really finished, so no write lands in the next test. */
 async function trained(modelId: string) {
     await waitFor(() => expect(readDisk().failureGroupState.models.find((m: any) => m.id === modelId).lastTrainedAt).toBeTruthy());
     await settle(0);
@@ -264,9 +233,6 @@ afterEach(() => {
     cleanup();
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (1) v1 workspace -> migrated at BuildModelWindow hydration
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
     const V1 = wsState({
@@ -299,8 +265,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
             ['r1', 'condition', 'performance'],
             ['c1', null, 'performance'],
         ]);
-        // Running condition: never set -> nothing to convert (no notice), not
-        // silently confirmed; the old legacy-gate flag is no longer written.
+        // Never-set running condition: nothing to convert, no notice, not silently confirmed.
         expect(fg.runningConditionConversion).toBeNull();
         expect(fg.rcLegacyNotice).toBeUndefined();
         expect(fg.runningConditionNoneConfirmed).toBeUndefined();
@@ -324,9 +289,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         // there was no old condition to convert).
         expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();
         expect(screen.getByTestId('category-normalisation-notice')).toBeTruthy();
-        // Workbench: the always-visible Running Condition bar says
-        // Required, and the unset workspace auto-opened the Edit… modal, which
-        // holds the same RunningConditionPanel the old inline card showed.
+        // The unset workspace auto-opens the Running condition modal; the bar says Required.
         expect(screen.getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(rcModal()).toBeTruthy();
         expect(screen.getByTestId('rc-required-pill')).toBeTruthy();
@@ -352,8 +315,7 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
         closeRcModal();
         selectSensorRow(0); // TAG1 row, Individual tab
         expect(trainBtn().disabled).toBe(false);
-        // The Step-1 row count (same filter + a `null` total, both on TAG1) was asked when the
-        // gate became satisfied - before this mark; the first TAG1 stats call after it is Train's.
+        // Step-1 row count was asked before this mark; the first TAG1 stats call after it is Train's.
         const mark = await clickTrain();
         const ranges = [{ start: '2026-01-01T00:00', end: '2026-06-30T23:59' }];
         expect((await trainCall(mark, 'compute_sensor_stats', a => a.sensor === 'TAG1')).args.filter).toEqual({ timestamp_ranges: ranges, value_filters: [{ sensor: 'TAG2', operation: 'greater_than', value1: 10, value2: null }], combine: 'and' });
@@ -361,9 +323,6 @@ describe('(1) opening a v1 (pre-Feature-4) workspace', () => {
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (2) one gate: the footer reason === Train's reason === the shared helper's
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(2) the Workbench notice-line reason and the Train button agree with the shared gate helper', () => {
     const configured = () => wsState(currentFg([model({ id: 'i1' })], { runningConditionFilters: [COND] }));
@@ -427,14 +386,9 @@ describe('(2) the Workbench notice-line reason and the Train button agree with t
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (3) what actually reaches Rust: identical ranges/combine on every path
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(3) Train sends one filter to stats and every fit path - and it matches the Rust contract fixture', () => {
-    // The contract fixture's Custom payload, with the ONE condition a model can
-    // have since 2026-10-26 (its first value filter, "TAG2 > 10"); the time
-    // ranges and the field shapes are the fixture's own.
+    // Contract fixture's Custom payload with a model's one condition (its first value filter, TAG2 > 10); the rest is the fixture's.
     const fixture = contract.pm_payloads[0].json!;
     const customOne = { ...fixture, value_filters: [fixture.value_filters[0]], combine: 'and' };
     const customModel = (o: Record<string, unknown>) => model({
@@ -467,8 +421,7 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
     });
 
     it('Individual: the stats call gets the fixture payload; Clustering: the clustering preview and the criteria-sensor stats get the same one', async () => {
-        // Target TAG2, not HEADERS[0]: the Custom model's debounced row count (always on TAG1,
-        // once with this filter and once with `filter: null`) can then never be read as Train's call.
+        // Target TAG2, not HEADERS[0]: the Custom model's debounced row count (always TAG1) can't be mistaken for Train's call.
         writeDisk(wsState(currentFg([customModel({ id: 'i1', targetSensor: 'TAG2' })])));
         await mountBuildModel();
         const markI = await trainRow(0);
@@ -512,12 +465,7 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
         await trained('i1');
     });
 
-    // The gate
-    // (`isCompleteCondition`) ignores a `between` row whose max is empty, but
-    // `dashboardFilterPayload` only drops rows with an empty value1, so the row
-    // still goes to Rust as `between(v1, null)` - and Rust's `keeps()` treats
-    // `between` with a missing bound as TRUE. Under AND that is harmless; under
-    // OR it matches every row, silently disabling every other OR condition.
+    // A `between` row with an empty max is not sent to Rust: under OR it would match every row and disable the other conditions.
     it('only the conditions the gate counts as complete are sent to Rust (an incomplete "between" under OR would match every row)', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1' })], {
             runningConditionCombine: 'or',
@@ -534,9 +482,6 @@ describe('(3) Train sends one filter to stats and every fit path - and it matche
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (4) a stale writer re-adding the old time keys is harmless
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(4) old time keys re-added by a stale writer', () => {
     it('are dropped at the next hydration, never override the stored periods, and never reach the wire', async () => {
@@ -565,8 +510,7 @@ describe('(4) old time keys re-added by a stale writer', () => {
         await trained('i1');
         expect(JSON.stringify(h.invokes)).not.toContain('2020-');
 
-        // A stale copy landing on disk (old keys back on every model), then the window
-        // reopened: the next hydration drops them again and the periods still win.
+        // A stale copy puts the old keys back on every model; after reopening, hydration drops them and the periods still win.
         cleanup();
         const stale = readDisk();
         stale.failureGroupState.models = stale.failureGroupState.models.map((m: any) => ({ ...m, filterTimeStart: '2019-01-01T00:00', filterTimeEnd: '2019-12-31T23:59' }));
@@ -576,8 +520,7 @@ describe('(4) old time keys re-added by a stale writer', () => {
         const rows = screen.getAllByTestId('sensor-row-label');
         selectSensorRow(rows.length - 1); // TAG2 row
         expect(screen.getByRole('heading', { level: 3 }).querySelector('.sl-desc')?.textContent).toBe('Pump Temp'); // detail pane is TAG2's
-        // i2 is a Custom model on TAG2: its debounced row count asks TAG1 (with the same periods),
-        // so name the target - only Train asks for TAG2.
+        // i2 is Custom on TAG2: its debounced row count asks TAG1, so name the target; only Train asks TAG2.
         const markQ = await clickTrain();
         expect((await trainCall(markQ, 'compute_sensor_stats', a => a.sensor === 'TAG2')).args.filter.timestamp_ranges).toEqual([{ start: Q.start, end: Q.end }]);
         await trained('i2');
@@ -585,16 +528,9 @@ describe('(4) old time keys re-added by a stale writer', () => {
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// Regressions found in the sweep (documented as expected failures)
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('a brand-new workspace (never opened before Feature 4)', () => {
-    // Models are only ever created on the Dashboard, so the Build Model window
-    // is always opened for the first time with models present. A running
-    // condition that was simply never set is not an "old project to convert":
-    // no conversion notice, the card says Not set and the settings modal opens
-    // by itself (the old legacy banner is gone since 2026-10-26).
+    // A never-set running condition is not an old project to convert: no notice, the card says Not set, the modal auto-opens.
     it('a workspace with models and nothing set: Not set + the modal auto-opens, no conversion notice, nothing written', async () => {
         writeDisk(wsState({ models: [model({ id: 'i1', category: null }), model({ id: 'i2', targetSensor: 'TAG2', category: null })], categoryNormalisationNotice: null, runningConditionTimePeriods: [] }));
         await mountBuildModel();
@@ -607,21 +543,13 @@ describe('a brand-new workspace (never opened before Feature 4)', () => {
 });
 
 describe('reason text consistency', () => {
-    // For a missing category the
-    // Overview footer used to show `modelBlockReason`'s text ("...sensor
-    // header", no period) while the status control and Mark complete used
-    // `getBuildBlockReason` ("...sensor header."), so the two surfaces
-    // disagreed on the same model.
-    // Workbench: the clickable status pill that carried
-    // the gate reason as its tooltip was replaced by the separate
-    // "✓ Mark complete" button, which carries the same `gateReasonOf` title.
+    // Missing category: the footer and the Mark complete title must show the same gate reason string.
     it('Overview Build reason and the shared gate reason are the same string for a model without a category', async () => {
         writeDisk(wsState(currentFg([model({ id: 'i1', category: null })], { runningConditionFilters: [COND] })));
         await mountBuildModel();
         openFirstRow();
         const footer = screen.getByTestId('build-block-reason').textContent;
-        // Mark complete is not on this page (health score 3b-2) and the Health score page stays
-        // locked; the Train sensor carries the same gate reason as the footer (preflight wording).
+        // Mark complete isn't on this page and Health score stays locked; Train sensor carries the footer's reason.
         expect(screen.queryByText('✓ Mark complete')).toBeNull();
         expect(screen.getByTestId('page-tab-health').getAttribute('aria-disabled')).toBe('true');
         const train = trainBtn();

@@ -2,22 +2,9 @@ import type { TestPeriod, TimeHighlight, TimePeriod } from '../../types';
 import { removeHighlightOverlap, trainHighlightOverlaps } from '../../utils/timePeriods';
 import { computeCoverage, computeTestCoverage, type DataBounds } from './periodDisplay';
 
-/*
- * Small presentational pieces of the Running Condition UI: the coverage bar of
- * the one-line running condition, and the amber train-period / highlight
- * overlap line of the settings. All maths lives in `periodDisplay.ts`.
- */
+/* Small presentational pieces of the Running Condition UI: the coverage bar and the amber train-period / highlight overlap line. Maths lives in `periodDisplay.ts`. */
 
-/** Dataset timeline with one block per period and "N of M days used".
- *  `className` lets a host (the settings modal) restyle the wrapper;
- *  `mini` is the Step-1 card variant: thinner strip, shorter day caption.
- *
- *  With `tests` (the scoring periods -- every Build Model use passes them) the
- *  strip has two lanes: TRAIN periods on the top half, SCORING periods on the
- *  bottom half in the scoring colour, so a scoring period that overlaps train
- *  time stays readable; the caption reads "117 d train · 59 d scoring". A train
- *  period is required then, so an empty train list draws an empty top lane
- *  (not "all data"). */
+/** Dataset timeline with one block per period and "N of M days used". `className` restyles the wrapper; `mini` = thinner strip, shorter caption. With `tests` (scoring periods): two lanes, TRAIN on top, SCORING below; an empty train list draws an empty top lane, not "all data". */
 export function PeriodCoverageBar({ periods, bounds, className, mini = false, tests }: {
     periods: TimePeriod[];
     bounds: DataBounds | null | undefined;
@@ -69,12 +56,7 @@ export function PeriodCoverageBar({ periods, bounds, className, mini = false, te
     );
 }
 
-/**
- * Train periods that overlap an (enabled) Dashboard time highlight:
- * an amber warning per overlap with a "Remove the overlap" action that cuts
- * the highlight's time out of the train periods. Never a block -- the user may
- * keep the overlap.
- */
+/** Train periods overlapping an enabled Dashboard time highlight: one amber warning per overlap. "Remove the overlap" cuts the highlight out of the train periods. Never blocks. */
 export function TrainHighlightWarnings({ periods, highlights, onPeriodsChange }: {
     periods: TimePeriod[];
     highlights: TimeHighlight[];

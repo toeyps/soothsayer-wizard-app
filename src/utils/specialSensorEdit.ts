@@ -9,36 +9,9 @@ import { replaySpecialSensorRecipes } from './specialSensorReplay';
 import { sameTag } from './specialSensorNaming';
 import { isSessionLostError } from './staleSession';
 
-/**
- * The backend half of "edit (or rename) a special sensor": work out what is
- * built on it, recompute it and everything downstream IN BUILD ORDER, and --
- * if anything fails part-way -- put the session back the way it was.
- *
- * Why this is its own module: the recompute is a sequence of in-place column
- * overwrites (`replace: true`) with no transaction. Without a rollback, a
- * failure on the 3rd of 4 would leave the edited sensor's column holding the
- * NEW formula's values while every recipe still says the old one -- the chart
- * would show numbers no recipe produces until the workspace is reopened. So a
- * failure after the first write is rolled back here: the recipes that were
- * already rewritten are recomputed from their ORIGINAL definitions (build
- * order, `replace: true`), and the half-built column of a rename is dropped.
- *
- * Everything is decided from `recipes` (the caller's FRESH list, read inside
- * the serial queue) and from references read from Rust right now -- never from
- * a cached lookup: one that has not caught up with a just-saved edit would let
- * `A -> $C*2` followed by `C -> $A+1` through as an A <-> C cycle.
- */
+/** Recomputes an edited special sensor and its dependents in build order; rolls back on failure (writes aren't transactional). Decide from fresh `recipes` and refs read from Rust now, never a cached lookup: a stale one lets A->C->A cycles through. */
 
-/**
- * What the edit lock is decided from -- read FRESH by the caller,
- * inside the serial queue, immediately before the edit runs.
- *
- * A special sensor that a model (or the workspace Running condition) uses --
- * directly, or through a special sensor built on it -- may not be renamed, nor
- * have its formula / operation / sources changed: a Trained or Complete model
- * built from it would go stale. Only its description / unit / component can
- * change. `known: false` (the models could not be read) is treated as locked.
- */
+/** Read fresh in the serial queue. A sensor used by a model or the Running condition (even indirectly) can't be renamed or recomputed; only description/unit/component may change. `known: false` (models unreadable) counts as locked. */
 export interface EditFailureState {
     known: boolean;
     models: FailureModel[];
@@ -55,25 +28,9 @@ export interface EditArgs {
     /** The sensor's previous tag -- set exactly when it was renamed. */
     oldTag?: string;
     invoker: Invoker;
-    /** When given, the edit lock is enforced (see `EditFailureState`). Omitted
-     *  = no lock check (only callers that have no models to ask). */
+    /** When given, the edit lock is enforced; omitted = no check. */
     failureState?: EditFailureState;
-    /**
-     * REPAIR mode: the edited sensor could not be restored this
-     * session (it has no column). `missingBefore` lists every special sensor
-     * that had NO column right before the edit (the broken one and everything
-     * skipped because of it), any case. Changes two things:
-     *  - a downstream recipe that had no column before and still fails to
-     *    compute (its OWN formula is refused too) is not fatal: the repair is
-     *    kept and the recipe is reported in `EditOutcome.stillBroken` -- it
-     *    shows up as broken on its own next time the session is checked;
-     *  - a rollback REMOVES the columns this edit created for sensors that had
-     *    none, instead of recomputing their original recipes (those are
-     *    known-bad: Rust refuses them before writing, so a "rollback" by
-     *    recompute would leave the rejected fix's values in place, and the
-     *    sensor would then look healthy).
-     * Never combined with a rename.
-     */
+    /** REPAIR mode: the sensor has no column this session; `missingBefore` lists every special sensor with no column before the edit. A downstream recipe that still fails goes to `stillBroken`, not fatal; rollback removes created columns. Never with a rename. */
     repair?: { missingBefore: string[] };
     /** How error messages name a sensor. Include `next`'s own metadata, it may
      *  be new. Default: the tag. */
@@ -90,31 +47,22 @@ export interface EditOutcome {
     /** The whole list in a valid build order, after the edit -- only when that
      *  differs from the stored order. */
     recipeOrder?: string[];
-    /** The recipe that was actually saved: `next`, or -- for a metadata-only save
-     *  of a locked sensor -- the stored recipe, untouched. */
+    /** The recipe actually saved: `next`, or the untouched stored one for a metadata-only save of a locked sensor. */
     recipe: SpecialSensorRecipe;
-    /** True when nothing but description / unit / component changed on a locked
-     *  sensor: no column was touched, nothing was recomputed. */
+    /** True when only description/unit/component changed on a locked sensor: nothing was recomputed. */
     metadataOnly: boolean;
-    /** Apply the edit to a recipe list (swap in the edited recipe, take the
-     *  rewritten downstream ones). Pure; run it on whatever the list is now. */
+    /** Apply the edit to a recipe list; pure, run it on the current list. */
     applyEdit: (list: SpecialSensorRecipe[]) => SpecialSensorRecipe[];
-    /** Repair mode only: downstream sensors that still have no column after
-     *  the repair, in build order -- `reason` is the backend's message, or
-     *  "built on X, which still needs fixing". Their recipes are unchanged. */
+    /** Repair mode: downstream sensors still without a column, in build order; `reason` is the backend message. Recipes unchanged. */
     stillBroken?: Array<{ tag: string; reason: string }>;
 }
 
-/** Thrown by `runSpecialSensorEdit`. `touched` is true when a column in the
- *  session was already overwritten before the failure (so other windows should
- *  refetch); `inconsistent` lists sensors the rollback could NOT put back. */
+/** `touched`: a session column was already overwritten (other windows should refetch). `inconsistent`: sensors the rollback couldn't restore. */
 export class SpecialSensorEditError extends Error {
     touched = false;
     rolledBack = false;
     inconsistent: string[] = [];
-    /** Repair mode: sensors that had NO values before the edit, whose column
-     *  the edit created and the rollback could not remove again -- they may
-     *  show values of the refused change until the workspace is reopened. */
+    /** Repair mode: created columns the rollback couldn't remove; may show refused values until reopen. */
     leftover: string[] = [];
 }
 
@@ -129,8 +77,7 @@ export class SpecialSensorLockedError extends Error {
 
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/** JSON with sorted keys and no `undefined`, so two configs that mean the same
- *  thing compare equal whatever order they were built in. */
+/** JSON with sorted keys and no `undefined`, so equal configs compare equal. */
 export function stableJson(value: unknown): string {
     if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
     if (value && typeof value === 'object') {
@@ -141,12 +88,7 @@ export function stableJson(value: unknown): string {
     return JSON.stringify(value) ?? 'null';
 }
 
-/**
- * Do two recipes produce the same values from the same inputs? Compared on what
- * decides the column: kind, tag, formula text (trimmed) / source sensors in
- * order + operation config. An operation's `customName` is ignored -- it is
- * forced back to the tag, so it carries no information of its own.
- */
+/** Same values from the same inputs? Compares kind, tag, trimmed formula or ordered sources + config; `customName` ignored. */
 export function recipesEquivalent(a: SpecialSensorRecipe, b: SpecialSensorRecipe): boolean {
     if (a.kind !== b.kind || a.tag !== b.tag) return false;
     if (a.kind === 'formula' && b.kind === 'formula') return a.formula.trim() === b.formula.trim();
@@ -162,9 +104,7 @@ export function recipesEquivalent(a: SpecialSensorRecipe, b: SpecialSensorRecipe
     return false;
 }
 
-/** Formula tag -> sensors it reads, straight from Rust (`extract_formula_refs`).
- *  The edited formula is asked about on its own, so what a recipe reads and what
- *  the edit would make it read can never be confused. */
+/** Formula tag -> sensors it reads, from Rust; the edited formula is asked separately so old and new reads stay apart. */
 async function readRefs(
     recipes: SpecialSensorRecipe[],
     editedFormula: string | null,
@@ -198,7 +138,6 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
     const identityTag = oldTag ?? next.tag;
     const removesOldColumn = !!oldTag && !sameTag(oldTag, newTag);
 
-    // ---- Read-only phase: nothing in the session changes until the recompute.
     let refsByTag: Map<string, string[]>;
     let nextRefs: string[];
     try {
@@ -208,9 +147,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
             invoker,
         ));
     } catch (err) {
-        // Without it this could neither find what is built on the sensor (to
-        // recompute it) nor rewrite those dependents on a rename -- and would
-        // then drop the old column from under them. Refuse; nothing changed.
+        // Without the refs we can't find or rewrite dependents, and would drop the old column from under them: refuse.
         if (isSessionLostError(err)) throw err;
         console.error('Failed to read formula references:', err);
         const refused = new Error('Still working out which sensors are built on this one. Try again in a moment.');
@@ -236,10 +173,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
         failureKnown: failureState?.known ?? true,
     });
 
-    // ---- Edit lock: decided HERE, in the read-only phase, so a refused edit
-    // has not touched a single column (and the window has not changed its own
-    // state either). Only a rename or a change to what the sensor computes is
-    // refused; description / unit / component never are.
+    // Decided in the read-only phase so a refused edit touches nothing; only renames and computation changes are refused.
     const originalEdited = recipes.find(r => sameTag(r.tag, identityTag));
     if (failureState && originalEdited) {
         const lock = usageFor(usage, identityTag)?.editLock;
@@ -284,7 +218,6 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
         ? await renameTagInRecipes(downstream, oldTag, newTag, invoker)
         : downstream;
 
-    // ---- Write phase.
     const done: SpecialSensorRecipe[] = [];
     let stillBroken: Array<{ tag: string; reason: string }> | undefined;
     try {
@@ -294,9 +227,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
             await recomputeSpecialSensors([next, ...renamedDownstream], invoker, r => done.push(r), labelOf);
         }
     } catch (err) {
-        // The session is no longer this edit's (stale generation, or the window
-        // was re-pointed): the columns in it are not ours to roll back. Stop
-        // here -- no recompute, no replay, no remove -- and let the caller say so.
+        // Session no longer this edit's (stale generation or re-pointed window): touch nothing; let the caller say so.
         if (isSessionLostError(err)) throw err;
         const failure = new SpecialSensorEditError(err instanceof Error ? err.message : String(err));
         failure.touched = done.length > 0;
@@ -315,8 +246,7 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
             } catch (rollbackErr) {
                 // The session went away mid-rollback: its columns are not ours any more.
                 if (isSessionLostError(rollbackErr)) throw rollbackErr;
-                // The targeted rollback itself failed: rebuild EVERYTHING from the
-                // recipes (dependency-ordered, replace: true) as the last resort.
+                // Targeted rollback failed: rebuild everything from the recipes (dependency order, replace: true) as a last resort.
                 try {
                     const res = await replaySpecialSensorRecipes(recipes, invoker);
                     failure.inconsistent = [...res.failed, ...res.skipped].filter(t => touchedTags.has(key(t)));
@@ -339,7 +269,6 @@ export async function runSpecialSensorEdit(args: EditArgs): Promise<EditOutcome>
         throw failure;
     }
 
-    // ---- Next stored list: the edit applied, then a valid build order.
     const applyEdit = (list: SpecialSensorRecipe[]) => list.map(r => {
         if (sameTag(r.tag, identityTag)) return next;
         const rewritten = renamedDownstream.find(d => sameTag(d.tag, r.tag));
@@ -373,13 +302,7 @@ function reasonOf(err: unknown): string {
     return text.replace(/^Error:\s*/, '').trim() || 'its calculation could not be run';
 }
 
-/**
- * Repair-mode recompute: the edited sensor first (a failure there is fatal --
- * the fix itself is refused), then each downstream recipe in build order. A
- * downstream recipe that had no column before the edit and still cannot be
- * computed is recorded and skipped, together with everything built on it;
- * one that HAD a column and now fails is fatal (rolled back by the caller).
- */
+/** Repair recompute: the edited sensor first (failure is fatal), then downstream in build order. One with no column before that still fails is recorded and skipped with its dependents; one that HAD a column is fatal. */
 async function recomputeForRepair(
     next: SpecialSensorRecipe,
     downstream: SpecialSensorRecipe[],
@@ -418,12 +341,7 @@ async function recomputeForRepair(
     return stillBroken;
 }
 
-/**
- * Undo a failed repair. Columns this edit CREATED (the sensor had none before)
- * are removed -- their original recipes are known-bad and would only be refused
- * again, leaving the rejected values in place. Columns it OVERWROTE are
- * recomputed from their original recipes, in build order.
- */
+/** Undo a failed repair: remove columns it created (originals are known-bad), recompute overwritten ones in build order. */
 async function rollBackRepair(
     failure: SpecialSensorEditError,
     done: SpecialSensorRecipe[],

@@ -17,20 +17,14 @@ export const KIND_LETTER: Record<ModelKind, string> = {
     relationship: 'R',
     clustering: 'C',
 };
-/** The app-wide kind names (`utils/modelNames.ts`): Individual / Relation model /
- *  Clustering. In a sentence use `kindModelName` ("… Relation model", never
- *  "Relation model model"). */
+/** App-wide kind names (`utils/modelNames.ts`); in a sentence use `kindModelName`, never "Relation model model". */
 export const KIND_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 export const ALL_KINDS: ModelKind[] = ['individual', 'relationship', 'clustering'];
 
-/** How long the "model deleted — Undo" toast (Dashboard.tsx) stays up; this
- *  sheet's last-group cell tooltip promises it. Defined with the toast itself
- *  (UndoToastStack.tsx) so the Import page can share it without pulling this
- *  sheet into the start-up bundle; re-exported here for existing importers. */
+/** How long the "model deleted — Undo" toast stays up. Defined in `UndoToastStack.tsx` so the Import page can share it; re-exported for existing importers. */
 export { UNDO_SECONDS };
 
-// Sheet geometry (px). The sheet docks to the LEFT edge of the Sensors panel,
-// full height of that panel, and extends over the chart area to its left.
+// Sheet geometry (px): docks to the LEFT edge of the Sensors panel, full height, extending over the chart area.
 const GAP = 10;      // space between the sheet and the Sensors panel
 const EDGE = 8;      // minimum distance to the window's left edge
 const MIN_W = 340;   // below this the matrix columns would crush the group names
@@ -59,10 +53,7 @@ export interface FailureGroupAssignSheetProps {
     canStepPrev: boolean;
     canStepNext: boolean;
     onStep: (direction: -1 | 1) => void;
-    /** `returnFocus` is true when the user closed it from the keyboard or the
-     *  sheet's own buttons (Esc, ✕, Done) — the caller puts focus back on the
-     *  button that opened it. A click outside the sheet passes false: focus
-     *  belongs to whatever was clicked. */
+    /** True `returnFocus` (Esc, ✕, Done): the caller refocuses the opener; a click outside passes false. */
     onClose: (opts?: { returnFocus?: boolean }) => void;
     /** "Assign sensors →": the group being filled. Its row is pinned first,
      *  highlighted and tagged "Assigning". */
@@ -84,24 +75,7 @@ function assignedGroupNos(groups: FailureGroup[], models: FailureModel[], tagKey
         .map(g => g.no);
 }
 
-/**
- * "Failure Group Assignment" — the full-height sheet docked to the left edge of
- * the Dashboard's Sensors panel. One matrix: a row per Failure Group x a column
- * per model kind (Individual / Relation model / Clustering), plus the permanent
- * "Not in Group" row pinned at the bottom.
- *
- * Presentation + local UI state only. Every change goes through the Dashboard's
- * handlers (`onToggleSensorGroupKind`, `onCreateGroupForSensor`,
- * `onRenameGroup`, `onDeleteGroup`), so persistence, cross-window broadcasts and
- * the stale-mirror protection all live there.
- *
- * Rendered through `Portal` (the Sensors panel and its ancestors are all
- * `overflow: hidden`, so an in-place sheet reaching LEFT of the panel would be
- * clipped) and placed with a measured `position: fixed` rect, the same
- * technique `AnchoredPopover` uses. Unlike that popover it is NOT
- * dismissed by scroll/resize — it re-measures instead — because the user is
- * expected to scroll the sensor list while it is open.
- */
+/** "Failure Group Assignment": full-height sheet docked left of the Sensors panel; a matrix of Failure Group rows x model-kind columns, with a pinned "Not in Group" row. Presentation + local UI state only: changes go through the Dashboard's handlers. Rendered via `Portal` with a measured `position: fixed` rect (ancestors are `overflow: hidden`); re-measures on scroll/resize. */
 export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetProps) {
     const { tag, onClose } = props;
     const sheetRef = useRef<HTMLDivElement>(null);
@@ -159,11 +133,8 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
         };
     }, [measure]);
 
-    // Clicking anywhere OUTSIDE the sheet and the Sensors panel — the chart,
-    // the title bar, the other Dashboard panels — closes it. Clicks inside the
-    // panel never do (that is the whole point: pick another sensor's 📁 and the
-    // sheet follows). `mousedown` + capture so a chart that stops its own
-    // click propagation still dismisses it.
+    // Clicking outside the sheet and the Sensors panel closes it (clicks inside the panel just move the sheet).
+    // `mousedown` + capture so a chart that stops click propagation still dismisses it.
     useEffect(() => {
         const onDown = (e: MouseEvent) => {
             const target = e.target;
@@ -194,9 +165,7 @@ export default function FailureGroupAssignSheet(props: FailureGroupAssignSheetPr
                 {geom?.notchTop != null && (
                     <span className="fg-sheet-notch" data-testid="fg-sheet-notch" aria-hidden="true" style={{ top: geom.notchTop }} />
                 )}
-                {/* Keyed by sensor: switching sensors resets the search, the
-                    All/Assigned view, the "Assigned" bucket and any open row menu,
-                    exactly like opening the sheet fresh. */}
+                {/* Keyed by sensor: switching sensors resets search, All/Assigned view, the "Assigned" bucket and any row menu, like opening fresh. */}
                 <SheetBody key={tag} {...props} onClose={onClose} />
             </div>
         </Portal>
@@ -213,10 +182,7 @@ function SheetBody({
 
     const [query, setQuery] = useState('');
     const [view, setView] = useState<'all' | 'assigned'>('all');
-    // The "Assigned" bucket is decided ONCE, when the sheet opens for this
-    // sensor, so toggling a cell never makes a row jump between sections — it
-    // just changes colour in place. Groups created/deleted from the sheet are
-    // the only later edits to it.
+    // "Assigned" bucket is fixed when the sheet opens, so toggling a cell never moves a row; only groups created/deleted here change it.
     const [snapshot, setSnapshot] = useState<number[]>(() => assignedGroupNos(fgGroups, fgModels, tagKey));
     const [menuFor, setMenuFor] = useState<number | null>(null);
     const [renameFor, setRenameFor] = useState<number | null>(null);
@@ -239,15 +205,13 @@ function SheetBody({
     const realGroups = fgGroups.filter(g => g.no !== 0);
     const assignedNow = realGroups.filter(g => isInAny(g.no)).length;
 
-    // The shared rule (also refuses "Not in Group"), so the sheet says why the
-    // Dashboard would refuse a name instead of silently creating nothing.
+    // Shared duplicate rule (also refuses "Not in Group"), so the sheet says why a name is refused.
     const hasName = (name: string, exceptNo?: number) => isDuplicateFailureGroupName(fgGroups, name, exceptNo);
 
     const q = query.trim().toLowerCase();
     const matches = (g: FailureGroup) => !q || g.name.toLowerCase().includes(q) || `fg-${g.no}`.includes(q);
 
-    // The group an "Assign sensors" run is filling: pinned above both sections
-    // (whatever the All/Assigned view says), so it is never hunted for.
+    // The group an "Assign sensors" run is filling is pinned above both sections regardless of the All/Assigned view.
     const pinned = pinnedGroupNo ? realGroups.find(g => g.no === pinnedGroupNo) ?? null : null;
     const showPinned = !!pinned && matches(pinned);
     const assignedRows = snapshot
@@ -264,7 +228,6 @@ function SheetBody({
         return m.groupNos.filter(n => n === 0 || fgGroups.some(g => g.no === n)).length;
     };
 
-    // ── Esc: peel off the innermost thing first, close the sheet last ────────
     const sub = useRef({ renameFor, confirmFor, menuFor });
     sub.current = { renameFor, confirmFor, menuFor };
     const onCloseRef = useRef(onClose);
@@ -284,7 +247,6 @@ function SheetBody({
         return () => document.removeEventListener('keydown', onKey);
     }, []);
 
-    // ── Create ────────────────────────────────────────────────────────────────
     const commitCreate = () => {
         const name = newName.trim();
         if (!name) return;
@@ -300,9 +262,7 @@ function SheetBody({
         setView('all');
     };
 
-    // The Dashboard assigns the group's number, so look the new group up by name
-    // once it shows up in `fgGroups`; then pin it into "Assigned" (the creator
-    // gives this sensor an Individual model in it), flash it and scroll to it.
+    // Find the new group by name once the Dashboard adds it to `fgGroups`; pin it into "Assigned", flash and scroll to it.
     useEffect(() => {
         if (!pendingCreate) return;
         const g = fgGroups.find(x => x.no !== 0 && x.name.trim().toLowerCase() === pendingCreate);
@@ -320,16 +280,13 @@ function SheetBody({
         return () => clearTimeout(timer);
     }, [flashNo]);
 
-    // The inline delete confirm makes its row taller; in a short window that can
-    // push it under the pinned "Not in Group" bar. Centre the row so the whole
-    // confirm (and its buttons) is on screen.
+    // The delete confirm can push its row under the pinned "Not in Group" bar in a short window; centre the row.
     useEffect(() => {
         if (confirmFor === null) return;
         const row = listRef.current?.querySelector(`[data-group-no="${confirmFor}"]`);
         (row as HTMLElement | null)?.scrollIntoView?.({ block: 'center' });
     }, [confirmFor]);
 
-    // ── Rename / delete ──────────────────────────────────────────────────────
     const startRename = (g: FailureGroup) => {
         setRenameFor(g.no);
         setRenameDraft(g.name);
@@ -353,13 +310,10 @@ function SheetBody({
         setMenuFor(null);
     };
 
-    // ── Rendering ────────────────────────────────────────────────────────────
     const renderCell = (group: { no: number; name: string }, kind: ModelKind) => {
         const on = isOn(group.no, kind);
         const model = modelOfKind(kind);
-        // Removing a model's LAST group deletes the whole model (settings and
-        // training included) — the Dashboard then offers a 7s Undo. Say so
-        // before the click, on the cell itself.
+        // Removing a model's LAST group deletes the whole model (settings and training) and the Dashboard offers an Undo; say so on the cell before the click.
         const last = on && !!model && model.groupNos.length === 1;
         const label = KIND_LABEL[kind];
         const title = on
@@ -553,10 +507,7 @@ function SheetBody({
                     </div>
                 )}
 
-                {/* "Not in Group" (FG-0): same per-kind cells as a real group, but
-                    no rename/delete — a permanent bucket for a sensor that has a
-                    model without belonging to a failure mode yet. Pinned to the
-                    bottom of the list whatever the search/filter says. */}
+                {/* "Not in Group" (FG-0): per-kind cells like a real group, no rename/delete; always pinned at the bottom regardless of search. */}
                 <div className="fg-sheet-none">
                     <div className={`fg-sheet-grid fg-sheet-row fg-group-color-slate${isInAny(0) ? ' fg-sheet-row--in' : ''}`} data-group-no={0} data-testid="fg-sheet-row-0">
                         <span className="fg-group-dot fg-sheet-dot" />
@@ -583,9 +534,7 @@ function SheetBody({
                 </button>
                 <button type="button" className="fg-sheet-btn fg-sheet-btn--primary" onClick={() => onClose({ returnFocus: true })}>Done</button>
             </div>
-            {/* Says exactly what Enter (and Create) do — `commitCreate` →
-                the Dashboard's `createGroupForSensor`, which puts THIS sensor's
-                Individual model (reused or new) in the new group; nothing else. */}
+            {/* Says what Enter/Create do: `createGroupForSensor` puts only THIS sensor's Individual model (reused or new) in the new group. */}
             {createError
                 ? <div className="fg-sheet-err" role="alert">{createError}</div>
                 : <div className="fg-sheet-hint" data-testid="fg-sheet-hint">Enter creates the group and adds this sensor&rsquo;s Individual model to it.</div>}

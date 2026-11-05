@@ -39,32 +39,24 @@ export default tseslint.config(
         },
         plugins: { 'react-hooks': reactHooks },
         rules: {
-            // ── The reason this config exists ────────────────────────────
             'react-hooks/rules-of-hooks': 'error',
             'react-hooks/exhaustive-deps': 'warn',
 
-            // ── Deferred to tsc, which already enforces them ─────────────
+            // Deferred to tsc, which already enforces them.
             '@typescript-eslint/no-unused-vars': 'off',
 
-            // Flags defensive initialisers like `let r = 0, g = 0, b = 0`
-            // that every branch overwrites. Removing them is churn with no
-            // benefit and makes the code fragile the moment someone adds a
-            // branch, so this stays advisory rather than blocking.
+            // Advisory only: flags defensive initialisers that every branch overwrites; removing them is churn.
             'no-useless-assignment': 'warn',
 
-            // ── Known debt, surfaced as warnings so CI still passes ──────
-            // 39 pre-existing `any`s; tightening them is its own task.
+            // Known debt, surfaced as warnings so CI still passes.
+            // Tightening the `any`s is its own task.
             '@typescript-eslint/no-explicit-any': 'warn',
-            // Dev-only logging goes through `debugLog()` (src/utils/debugLog.ts),
-            // which stays silent in production builds. console.warn/error are
-            // fine — real problems should be visible in a shipped app.
+            // Dev logging goes through `debugLog()` (silent in production); console.warn/error stay.
             'no-console': ['warn', { allow: ['warn', 'error'] }],
         },
     },
     {
-        // Test files run under Vitest globals (`globals: true` in
-        // vitest.config.ts) and legitimately reach for `any` when building
-        // fixtures and asserting on loosely-typed mock payloads.
+        // Tests run under Vitest globals and use `any` for fixtures and loose mock payloads.
         files: ['src/__tests__/**/*.{ts,tsx}'],
         languageOptions: { globals: { ...globals.node } },
         rules: {

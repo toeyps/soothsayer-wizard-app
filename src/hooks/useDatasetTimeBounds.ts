@@ -8,37 +8,12 @@ export interface UseDatasetTimeBoundsResult {
     error: string | null;
 }
 
-/** Which dataset the bounds are asked for. `undefined` = the caller has no key
- *  (one fetch on mount); `null` = not known yet (nothing is fetched). */
+/** Which dataset the bounds are for. `undefined` = caller has no key (one fetch on mount); `null` = not known yet (nothing fetched). */
 export type DatasetBoundsKey = number | string | null | undefined;
 
 const LOADING: UseDatasetTimeBoundsResult = { bounds: null, loading: true, error: null };
 
-/**
- * Fetch the loaded dataset's TRUE first/last timestamp, over every row —
- * independent of whatever time-range filter is currently applied on the
- * dashboard. `useChartData`'s `ts_min`/`ts_max` can't serve this: they're
- * computed from the (possibly filtered) query population, so once any time
- * filter is applied they stop reflecting the dataset's real extent. This
- * hook is the one source of truth for "what does the whole dataset span" —
- * used for the Time Range panel's "data available" label, to anchor the
- * Y/M/W/D/H relative-range buttons to the data itself instead of the machine's
- * clock, and by the Build Model window's "no data to train on" guards.
- *
- * `datasetKey` — which dataset the bounds are asked for:
- *  - omitted (the Dashboard): one dataset is loaded per Dashboard mount (a new
- *    CSV load always goes back through Import first), so this fetches once on
- *    mount;
- *  - given (the Build Model window: the workspace it is pointed at + the Rust
- *    dataset GENERATION): that window outlives its dataset — it is re-pointed at
- *    another workspace while it stays open — so the bounds are fetched again
- *    whenever the key changes, and they are `null` ("unknown") from the very
- *    render the key changes in until the answer for THAT key has landed. An
- *    answer that belongs to an older key is dropped: it must never be read as
- *    the new dataset's range (the guards would call a valid period "outside the
- *    data"). `null` = the dataset is not known yet: nothing is fetched.
- * One request per key, nothing else.
- */
+/** The loaded dataset's true first/last timestamp over every row, independent of dashboard filters. `datasetKey` omitted = fetch once; given = refetch on change, an older key's answer is dropped. */
 export function useDatasetTimeBounds(datasetKey?: number | string | null): UseDatasetTimeBoundsResult {
     const [held, setHeld] = useState<{ key: DatasetBoundsKey; value: UseDatasetTimeBoundsResult }>({ key: undefined, value: LOADING });
 
@@ -62,7 +37,6 @@ export function useDatasetTimeBounds(datasetKey?: number | string | null): UseDa
         };
     }, [datasetKey]);
 
-    // The answer on hand is for another dataset (the key changed in this very
-    // render, or its own answer is still on its way): unknown, never the old one.
+    // An answer for another dataset (key changed this render, or its answer is still coming) reads as unknown, never the old one.
     return held.key === datasetKey ? held.value : LOADING;
 }

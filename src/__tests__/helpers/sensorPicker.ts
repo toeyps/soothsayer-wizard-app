@@ -1,10 +1,6 @@
 import { fireEvent } from '@testing-library/react';
 
-/**
- * Drives the REAL shared sensor picker (`src/components/sensor/SensorPicker.tsx`)
- * from tests: single = trigger + anchored popover, multi = "Add…" + modal + OK.
- * Rows render through `Portal` (`#wizard-portal-root`), so lookups go through `document`.
- */
+/** Drives the REAL shared sensor picker: single = trigger + popover, multi = 'Add…' + modal + OK. Rows render through `Portal` (`#wizard-portal-root`), so query `document`. */
 
 /** The tag a picker row / label shows: `.sl-tag`, or the description slot when there is no description. */
 export function rowTag(row: Element): string | null {

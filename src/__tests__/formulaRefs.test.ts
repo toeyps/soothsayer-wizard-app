@@ -1,10 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { formulaRefNames } from '../utils/formulaRefs';
 
-/**
- * `formulaRefNames` must read a formula exactly like Rust's `scan_sensor_refs`
- * (src-tauri/src/lib.rs). Each row: formula -> the names Rust extracts.
- */
+/** `formulaRefNames` must read a formula like Rust's `scan_sensor_refs` (src-tauri/src/lib.rs). Row: formula -> names. */
 const TABLE: [string, string[]][] = [
     ['$A + $B', ['A', 'B']],
     ['$11PT1214A.PV - $11PT1214A', ['11PT1214A.PV', '11PT1214A']],

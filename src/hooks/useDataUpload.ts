@@ -7,26 +7,21 @@ export interface UseDataUploadReturn {
   selectedFiles: string[];
   loadReport: CsvLoadReport | null;
   isLoading: boolean;
-  /** True when a successful parse exists but selectedFiles has since changed
-   *  (file added / removed / reordered). Consumers should re-parse before
-   *  trusting loadReport. Stays false while loadReport is null. */
+  /** True when a parse exists but `selectedFiles` changed since; re-parse before trusting `loadReport`. */
   isStale: boolean;
   error: string | null;
   selectFiles: () => Promise<void>;
   removeFile: (path: string) => void;
   uploadDataset: () => Promise<void>;
   clearDataset: () => void;
-  /** A project is about to replace the Rust dataset: forget the parse (running or
-   *  finished), so it cannot touch this screen. The file list stays. */
+  /** A project is about to replace the Rust dataset: forget the parse (running or finished); the file list stays. */
   abandonParse: () => void;
 }
 
 export function useDataUpload(): UseDataUploadReturn {
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [loadReport, setLoadReport] = useState<CsvLoadReport | null>(null);
-  // Snapshot of selectedFiles at the time loadReport was produced. Used to
-  // derive `isStale` so the UI can re-prompt for parse when the selection
-  // diverges from what was actually loaded.
+  // Snapshot of `selectedFiles` at parse time, used to derive `isStale`.
   const [parsedFiles, setParsedFiles] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,8 +62,7 @@ export function useDataUpload(): UseDataUploadReturn {
     setIsLoading(true);
     setError(null);
 
-    // Snapshot before await — selectedFiles can mutate mid-flight via the
-    // file-picker, and we want isStale to reflect what was actually parsed.
+    // Snapshot before await: `selectedFiles` can change mid-flight and `isStale` must reflect what was parsed.
     const snapshot = [...selectedFiles];
 
     try {

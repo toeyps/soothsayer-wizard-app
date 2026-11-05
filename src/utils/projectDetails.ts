@@ -2,12 +2,7 @@ import { emit } from '@tauri-apps/api/event';
 import { PROJECT_DETAILS_CHANGED, type MachineDetails, type ProjectDetailsChangedPayload, type WorkspaceState } from '../types';
 import { loadWorkspaceData, updateWorkspaceData } from '../workspaceManager';
 
-/*
- * Project details: the machine a project is about and the time zone of its
- * data. The project's `name` ("Plant · Machine") and `description`
- * ("tag · notes") are DERIVED from the machine — `saveProjectDetails` is the
- * one writer of all four fields, so they can never disagree.
- */
+/* Project details: the machine and its data time zone. `name` and `description` derive from the machine; `saveProjectDetails` is the one writer of all four fields. */
 
 export const EMPTY_MACHINE: MachineDetails = { plant: '', name: '', tag: '', notes: '' };
 
@@ -23,11 +18,7 @@ export function projectDescription(m: MachineDetails | null | undefined): string
     return [t(m?.tag), t(m?.notes)].filter(Boolean).join(' · ');
 }
 
-/**
- * Does another project already use this Plant · Machine pair? Compared on the
- * display name, trimmed and case-insensitive; the project `selfId` is skipped.
- * An incomplete pair (plant or machine empty) never counts as a duplicate.
- */
+/** Does another project already use this Plant · Machine pair? Trimmed, case-insensitive; `selfId` skipped; an incomplete pair is never a duplicate. */
 export function isDuplicatePlantMachine(
     machine: MachineDetails,
     existing: ReadonlyArray<{ id?: string; name?: string }>,
@@ -76,8 +67,7 @@ export function pcOffsetMin(): number {
 export const MIN_UTC_OFFSET_MIN = -720;
 export const MAX_UTC_OFFSET_MIN = 840;
 
-/** Every offset the time-zone picker offers: each half hour from UTC-12:00 to
- *  UTC+14:00, plus the 45-minute ones (+05:45, +08:45, +12:45, +13:45). Ascending. */
+/** Every offset the time-zone picker offers: half hours from UTC-12:00 to UTC+14:00 plus +05:45, +08:45, +12:45, +13:45. */
 export const TZ_OPTIONS: readonly number[] = [
     ...Array.from({ length: (MAX_UTC_OFFSET_MIN - MIN_UTC_OFFSET_MIN) / 30 + 1 }, (_, i) => MIN_UTC_OFFSET_MIN + i * 30),
     345, 525, 765, 825,
@@ -94,16 +84,7 @@ function trimmedMachine(m: MachineDetails): MachineDetails {
     return { plant: t(m.plant), name: t(m.name), tag: t(m.tag), notes: t(m.notes) };
 }
 
-/**
- * THE one save of Project details. ONE `updateWorkspaceData` writes the
- * derived `name` and `description`, the machine and the data offset —
- * `writeWorkspaceFile` rewrites the project's recent-list entry (name and
- * description included) in that same write, so no second write is needed —
- * then tells every window (`PROJECT_DETAILS_CHANGED`, with `workspaceId`).
- *
- * Returns the broadcast payload, or `null` when the project file does not
- * exist (nothing written, nothing emitted). Rejects when it cannot be saved.
- */
+/** The one Project details save: ONE `updateWorkspaceData` write, then a `PROJECT_DETAILS_CHANGED` broadcast with `workspaceId`. Returns the payload; null when the project file is missing (nothing written or emitted); rejects if it can't save. */
 export async function saveProjectDetails(
     workspaceId: string,
     value: ProjectDetailsValue,
@@ -128,14 +109,7 @@ export async function saveProjectDetails(
     return payload;
 }
 
-/**
- * Give a project the PC's offset as its data time zone when it has none yet.
- * Idempotent and write-free when it is already set: the project is read
- * first, and only one without `dataUtcOffsetMin` is written (re-checked on
- * what is ON DISK inside the write, so a value another window saved meanwhile
- * is kept). Returns the offset the project has afterwards, or `null` when it
- * could not be read.
- */
+/** Gives the project the PC's offset when it has none; re-checked on disk inside the write, so another window's value is kept. Write-free when already set. Returns the offset, or null if unreadable. */
 export async function ensureDataUtcOffset(workspaceId: string): Promise<number | null> {
     let current: WorkspaceState | null;
     try {

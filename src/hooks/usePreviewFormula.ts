@@ -9,42 +9,7 @@ import type {
 } from '../types/formula';
 import { bindToGeneration, isStaleSessionText, StaleSessionError } from '../utils/staleSession';
 
-/**
- * The Formula editor's live check + preview:
- * debounced, bounded calls of Rust's `preview_formula`, which answers with the
- * SAME gate, codes and messages Create / Save use, plus stats over every row
- * and a <= `maxPoints` min/max-preserving downsample.
- *
- * The live check is `preview_formula`, not `validate_formula`:
- * `validate_formula` has no edit mode, so it would apply the
- * create-only refusals (`div_zero`, a one-source block) to a sensor being
- * EDITED, which Save (`replace: true`) skips -- the check and Save could
- * disagree. Sending `replace` here makes them answer alike. (`validate_formula`
- * is still used by the Add Sensor window to say why a stored recipe could not
- * be restored.)
- *
- * Request: `{ formula | aggregate, maxPoints, expectedGeneration, replace,
- * requestId }` -- camelCase keys (Tauri's default; `preview_formula` has no
- * `rename_all`). `expectedGeneration` is stamped by `bindToGeneration`.
- *
- * Ordering:
- *  - Debounced (~220 ms): a newer input replaces a scheduled one.
- *  - Every call carries a fresh, monotonically increasing `requestId`. Rust
- *    keeps ONE token for the app and stops a running preview whose id is no
- *    longer the latest (`CANCELLED: …`). Only one editor previews at a time;
- *    the latest id this window sent is tracked at module level.
- *  - A `CANCELLED:` reply is re-issued only when its id is STILL the latest
- *    this window sent (another window's preview pre-empted it), at most
- *    twice; otherwise a newer call of ours is already on its way.
- *  - A reply for an input that is no longer this hook's current one is dropped.
- *  - `STALE_SESSION` (the window outlived its dataset) is "no information"
- *    (`stale: true`), never a red formula error.
- *
- * Fields describe the LAST answer received; `isCurrent` says whether it is for
- * the current input (keep showing the last chart while the next one loads, but
- * judge validity only from a current answer -- see `resolveFormulaVerdict`).
- * The effect depends on a key string only, so unrelated re-renders do no work.
- */
+/** Debounced (~220 ms) `preview_formula` calls with an increasing `requestId`; Rust cancels older ones. A `CANCELLED:` is re-issued only if still latest (max twice). camelCase keys: no `rename_all`. */
 
 export const PREVIEW_DEBOUNCE_MS = 220;
 export const PREVIEW_MAX_POINTS = 600;
@@ -77,8 +42,7 @@ export interface UsePreviewFormulaOptions {
     input: FormulaPreviewInput | null;
     /** The Rust dataset generation the window is bound to (`expectedGeneration`). */
     generation?: number;
-    /** `true` when editing / restoring an existing sensor -- the SAME value Save
-     *  sends as `replace` (Rust then skips the create-only refusals). */
+    /** `true` when editing/restoring an existing sensor; the same value Save sends as `replace`. */
     replace?: boolean;
     maxPoints?: number;
     debounceMs?: number;
@@ -194,9 +158,7 @@ export function usePreviewFormula(options: UsePreviewFormulaOptions): UsePreview
             } catch (err) {
                 if (mySeq !== seq.current) return;
                 if (isCancelled(err)) {
-                    // Pre-empted by another window's preview while ours was the
-                    // latest we sent: ask again. Otherwise a newer call of ours
-                    // is already on its way and will answer.
+                    // Pre-empted by another window's preview: ask again only while ours is the latest we sent.
                     if (id === latestSentId && attempt < MAX_REISSUES) return send(attempt + 1);
                     setLoading(false);
                     return;
@@ -241,11 +203,7 @@ export interface FormulaVerdict {
     valid: boolean | null;
 }
 
-/**
- * Combine the cheap front-end check with Rust's answer. Rust has the last
- * word: a current Rust answer replaces the front-end verdict entirely (in
- * both directions); until it lands, the front-end issue (if any) is shown.
- */
+/** Rust's current answer replaces the front-end verdict in both directions; until it lands, the front-end issue shows. */
 export function resolveFormulaVerdict(
     cheap: FormulaIssue | null,
     preview: Pick<UsePreviewFormulaReturn, 'isCurrent' | 'ok' | 'issues'>,

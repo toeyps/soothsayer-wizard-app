@@ -1,18 +1,4 @@
-/**
- * The C6 dot renderer for `MachineMorphCanvas`: every dot adds light into ONE
- * pixel buffer (an ImageData covering the machine's bounding box, clipped to
- * the canvas), then the frame is handed to the browser as one `putImageData`
- * into an offscreen canvas + one `drawImage` with 'lighter' compositing.
- * Light adds up, so there is no depth sort and no angle shows a wrong overlap.
- *
- * Constants are ported from the approved mockup — don't re-derive them:
- * `docs/design/handoff/welcome-c6-orbit/machine-art-c6-orbit-reference.html`.
- *
- * Per-frame work allocates nothing once the buffers have grown to the largest
- * box seen: positions/keys live in typed arrays sized at construction, the
- * accumulation buffer and ImageData only ever grow, and the dot stamps are
- * cached per buffer scale.
- */
+/** Dot renderer for `MachineMorphCanvas`: every dot adds light into ONE pixel buffer (one `putImageData` + one 'lighter' `drawImage`), so no depth sort is needed. Constants come from the approved mockup `docs/design/handoff/welcome-c6-orbit/machine-art-c6-orbit-reference.html`; don't re-derive. No per-frame allocation once buffers reach the largest box. */
 import {
   MAX_PARTS,
   PART_STEP,
@@ -46,7 +32,7 @@ export const EDGE_LIFT = 0.12;
 /** Mini variant: tone alphas × 0.6 (on top of the wrapper's opacity 0.45), dots × 0.75. */
 export const MINI_ALPHA = 0.6;
 export const MINI_SIZE = 0.75;
-/** Plunger stroke and phases now live with the other moving parts in `machineShapes.ts`. */
+/** Plunger stroke and phases live with the other moving parts in `machineShapes.ts`. */
 export { PLUNGER_AMP, PLUNGER_PHASES } from './machineShapes';
 
 export interface DotKernels {
@@ -117,13 +103,7 @@ export function buildDotKernels(d: number, mini: boolean): DotKernels {
   return { kern, kR, cols };
 }
 
-/**
- * Tone-map one accumulated pixel to a packed little-endian RGBA word (as
- * written through a Uint32Array view of ImageData). Hue-preserving clamp: when
- * the brightest channel `m` passes 255, every channel is scaled by
- * `255/m × (1 + (m−255)/(m×2.2))` so bright spots keep their hue and lean only
- * slightly to white. Alpha = the brightest channel (capped at 255).
- */
+/** Tone-maps an accumulated pixel to packed little-endian RGBA. Hue-preserving clamp: if the brightest channel `m` > 255, scale channels by `255/m × (1 + (m−255)/(m×2.2))`. Alpha = brightest channel, capped at 255. */
 export function toneMapPixel(r: number, g: number, b: number): number {
   const m = r > g ? (r > b ? r : b) : g > b ? g : b;
   if (m <= 0) return 0;
@@ -200,12 +180,7 @@ export class DotRenderer {
     return true;
   }
 
-  /**
-   * Draw machine A morphing into B (`e` = eased progress, `burst` = dust
-   * scatter) into `ctx` (whose transform is CSS px × dpr). `jit` holds three
-   * per-particle jitter values in [-0.5, 0.5). Returns false when the dot pass
-   * was skipped (e.g. no ImageData support).
-   */
+  /** Draws machine A morphing into B (`e` eased progress, `burst` dust scatter) into `ctx` (CSS px × dpr). `jit` = three per-particle jitters in [-0.5, 0.5). Returns false if the dot pass was skipped. */
   render(
     ctx: CanvasRenderingContext2D,
     A: MachineShape,
@@ -226,9 +201,7 @@ export class DotRenderer {
     const xs = this.xs;
     const ys = this.ys;
     const keys = this.keys;
-    // Moving parts: one small matrix per part per frame (a few sin/cos), then
-    // applied inside the loop below to that part's points only. `spin` does not
-    // advance under reduced motion, so every part then stays in its rest pose.
+    // Moving parts: one small matrix per part per frame, applied to that part's points only (`spin` stands still under reduced motion).
     const MA = this.poseA;
     const MB = this.poseB;
     const sec = spin / SPIN_PER_SECOND;

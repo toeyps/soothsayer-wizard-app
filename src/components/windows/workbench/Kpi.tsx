@@ -1,17 +1,6 @@
 import type { ReactNode } from 'react';
 
-/*
- * KPI tiles of the Build Model Workbench ("Workbench detail pages v2", SPEC §5–§7).
- *
- * A tile is ONE number the user reads first, its unit, and a short caption under
- * it. A row of tiles (`KpiStrip`) sits above the charts of a page: on Model fit it
- * replaces the old "Statistics" table (Individual) and the stat row (Relation
- * model); the Health score page uses the same two components.
- *
- * Tiles never judge: a value is plain text, with no threshold colour and no
- * "good / weak" wording. `tone` exists only for a value that IS a health score
- * (it takes the score's own band colour) — never for a statistic.
- */
+/* KPI tiles of the Build Model Workbench: one number, its unit and a short caption; `KpiStrip` is a row of them. Tiles never judge: `tone` exists only for a value that IS a health score (its own band colour). */
 
 export interface KpiProps {
     label: ReactNode;
@@ -45,12 +34,7 @@ export function Kpi({ label, value, unit, sub, tone, small, title, testId, child
     );
 }
 
-/** The row of tiles; it spans every column of the board it sits in.
- *  `fit` = the Model fit strip: three equal tiles, each capped at about 420 px
- *  and kept to the left, so they do not stretch across a wide window.
- *  `scroll` = the Health score strip: ONE row of equal tiles that never wraps — on a
- *  pane too narrow for them the row scrolls sideways.
- *  `state` is printed as `data-state` (what the tiles currently show). */
+/** Row of tiles spanning every column. `fit` = Model fit strip: three equal tiles capped at ~420 px, kept left. `scroll` = Health score strip: one non-wrapping row that scrolls sideways when narrow. */
 export function KpiStrip({ fit, scroll, state, testId, children }: { fit?: boolean; scroll?: boolean; state?: string; testId?: string; children: ReactNode }) {
     return (
         <div className={`wb3-kpis${fit ? ' wb3-kpis--fit' : ''}${scroll ? ' wb3-kpis--scroll' : ''}`} data-testid={testId} data-state={state}>

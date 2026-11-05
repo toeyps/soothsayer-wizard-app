@@ -1,12 +1,5 @@
 // @vitest-environment node
-/**
- * Bug report 2026-10-30: on the Dashboard line chart, zooming into a year of data drew long
- * diagonal lines jumping back months. Cause: ECharts 6.1's `sampling: 'lttb'` mixes up
- * zoom-window and full-series indexes once a series holds a null, so the drawn points come out
- * of time order. LineChart now uses `sampling: 'minmax'`. This test runs the real ECharts
- * (server-side render, no DOM) with the same shape of option and checks the points ECharts keeps
- * for drawing are in time order while zoomed.
- */
+/** ECharts 6.1 `sampling: 'lttb'` mixes up zoom-window and full-series indexes once a series holds a null, so drawn points come out of time order (long diagonal lines while zoomed). LineChart uses `'minmax'`. Runs real ECharts (server-side render) with the same option shape and checks kept points are in time order while zoomed. */
 import { describe, expect, it } from 'vitest';
 import * as echarts from 'echarts';
 

@@ -1,38 +1,5 @@
-//! SPECIAL SENSORS, Rust side, PRIVATE surface: are the computed values right,
-//! also after a sensor is EDITED?
-//!
-//! Included from `lib.rs` as a `#[cfg(test)]` child module (its own `#[path]`
-//! line, like `qa_health_internal`), so it can reach the private formula engine
-//! (`compute_formula_sensor`, `compute_operation_sensor`, the session-level
-//! `evaluate_formula_in_state` / `calculate_sensor_in_state`), the chart
-//! pipeline (`chart_query::build_chart_view`) and the scatter sampler.
-//!
-//! Every number is checked against an INDEPENDENT reference written here as a
-//! plain Rust closure per formula (never through fasteval / the registry):
-//!
-//!   A. formula numerics — operators, precedence, associativity, unary minus,
-//!      parentheses, constants/decimals/e-notation, functions, NaN/missing,
-//!      division by zero, sensor names with spaces / Thai / special chars;
-//!   B. operation sensors — every single op, Sum (all-or-nothing) vs
-//!      Mean/Median (skip missing), all-missing rows;
-//!   C. EDIT after creation — edit a sensor that
-//!      others are built on, recompute in build order exactly the way the
-//!      frontend does (`replace: true`, `customName` = tag), then verify EVERY
-//!      row of every affected sensor, in the raw columns, the line-chart view
-//!      (raw + every hourly aggregation + min/max decimation) and the scatter
-//!      sample; edit -> revert is bit-exact; operation -> formula kind change;
-//!      rename (incl. Thai + space) and case-only rename; self-reference and
-//!      stale-generation guards leave the data untouched;
-//!   D. reopen — real CSV files (two files merged by timestamp, Buddhist-Era
-//!      years incl. the BE leap day 2567-02-29), recipes replayed onto a fresh
-//!      load must reproduce the edited values bit-for-bit;
-//!   E. the formula strings the FRONTEND builds for
-//!      shortcuts / chains / "then apply" wraps, read from the shared fixture
-//!      `tests/fixtures/special_sensor_formulas.json` (the TS side pins that
-//!      it builds exactly these strings) and evaluated here numerically.
-//!
-//! A known bug is pinned as a test asserting the CORRECT behaviour, marked
-//! `#[ignore = "BUG: ..."]` (project convention) until fixed.
+//! Special sensors, Rust side: values are right, also after an edit, checked against independent reference closures (never fasteval).
+//! A formula numerics, B operations, C edit, D reopen (CSV merge, BE years), E frontend formula strings.
 
 #![allow(clippy::type_complexity)]
 
@@ -47,9 +14,6 @@ use crate::{
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-// ===========================================================================
-// Helpers
-// ===========================================================================
 
 const NAN: f64 = f64::NAN;
 
@@ -74,10 +38,8 @@ impl Rng {
     }
 }
 
-/// Raw sensors of the synthetic dataset. Names chosen to hit every tokenizer
-/// path: spaces + parentheses + slash, Thai with combining vowels (Alphabetic
-/// -> bare `$name` works), Thai with a tone mark (NOT Alphabetic -> must be
-/// braced), a dash, a name that is a prefix of a dotted one, mixed case.
+/// Raw sensors that hit every tokenizer path: spaces/parentheses/slash, Thai (bare `$name` works; a tone mark needs braces),
+/// a dash, a name that is a prefix of a dotted one, mixed case.
 const RAW: [&str; 10] = [
     "A",
     "B",
@@ -91,8 +53,7 @@ const RAW: [&str; 10] = [
     "Temp",
 ];
 
-/// 240 rows, 10 minutes apart (40 hourly buckets). ~8% of cells missing; B has
-/// exact zeros (division by zero) and negatives (sqrt/pow domain).
+/// 240 rows, 10 minutes apart (40 hourly buckets); ~8% of cells missing; B has zeros (division) and negatives (sqrt/pow domain).
 fn dataset(seed: u64) -> ColumnarData {
     let n = 240;
     let mut rng = Rng::new(seed);
@@ -190,9 +151,7 @@ fn eval(data: &ColumnarData, formula: &str) -> Result<Vec<f64>, String> {
     compute_formula_sensor(data, formula, Some("__qa_out"), false).map(|(_, c)| c)
 }
 
-/// `SensorOperationConfig` built from the exact JSON the frontend sends
-/// (`recomputeCall` in `specialSensorRecompute.ts`), so the camelCase keys are
-/// part of what is tested.
+/// `SensorOperationConfig` from the exact JSON the frontend sends (`recomputeCall`), so the camelCase keys are tested.
 fn op_config(json: serde_json::Value) -> SensorOperationConfig {
     serde_json::from_value(json).expect("frontend operation config must deserialize")
 }
@@ -213,9 +172,6 @@ fn strs(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
 }
 
-// ===========================================================================
-// A. Formula numerics
-// ===========================================================================
 
 type Case = (&'static str, &'static [&'static str], fn(&[f64]) -> f64);
 
@@ -354,9 +310,7 @@ fn a06_large_magnitudes_keep_full_f64_precision_and_overflow_is_missing() {
     assert!(got[1].is_nan(), "1e308 * 10 overflows to inf -> stored as missing");
 }
 
-/// Pins CURRENT fasteval behaviour that differs from what many users expect.
-/// Not marked as a bug (it is a convention, Excel does the same) but the
-/// customer should know: unary minus binds tighter than `^`.
+/// Pins fasteval behaviour (Excel does the same): unary minus binds tighter than `^`.
 #[test]
 fn a07_unary_minus_binds_tighter_than_power_pinned_convention() {
     let data = dataset(11);
@@ -369,9 +323,7 @@ fn a07_unary_minus_binds_tighter_than_power_pinned_convention() {
     assert_col_eq(&got, &want, 1e-12, "0 - $A ^ 2 == -(A^2)");
 }
 
-/// Pins CURRENT behaviour: fasteval's `log(x)` is BASE 10 (not natural log),
-/// and `log(b, x)` takes the base FIRST. See the BUG test below for why this
-/// matters (the help panel lists `log` next to `log10`).
+/// Pins that fasteval's `log(x)` is base 10 and `log(b, x)` takes the base first.
 #[test]
 fn a08_log_is_base_10_pinned() {
     let data = dataset(12);
@@ -382,13 +334,7 @@ fn a08_log_is_base_10_pinned() {
     assert_col_eq(&got, &reference(&[c], &|v| v[0].log2()), 1e-12, "log(base, x)");
 }
 
-/// BUG (MEDIUM): the formula help panel (`SensorTooling.tsx`, "Formula Syntax
-/// Help") lists `abs, sqrt, pow, log, log10, exp, ...` — offering `log` NEXT TO
-/// `log10` reads as "log = natural log", but fasteval's `log(x)` is log10, and
-/// there is no `ln` at all (an `ln(...)` call silently empties every row, see
-/// a10). A user typing `log($X)` for ln(X) gets values 2.303x too small.
-/// Fix: add `("ln", [x]) => Some(x.ln())` to `eval_extra_math_fn` (lib.rs) and
-/// spell the help out ("log = log10, ln = natural log").
+/// `log` listed next to `log10` reads as natural log but is log10, so a natural-log `ln` must exist (`eval_extra_math_fn`).
 #[test]
 fn a09_bug_natural_log_is_available_as_ln() {
     let data = dataset(13);
@@ -397,23 +343,10 @@ fn a09_bug_natural_log_is_available_as_ln() {
     assert_col_eq(&got, &reference(&[c], &|v| v[0].ln()), 1e-12, "ln($C)");
 }
 
-/// BUG (HIGH): an unknown identifier or function — `$A * pi` (fasteval wants
-/// `pi()`), `ln($A)`, `sqrt($A, 2)` (wrong arity), a typo like `sqr($A)`, a
-/// stray letter — is a per-row evaluation ERROR, which
-/// `compute_formula_sensor` (lib.rs, the `match expr_ref.eval(..)` arm
-/// `_ => new_col.push(f64::NAN)`) turns into "missing" for EVERY row and
-/// returns `Ok`. The sensor is created/edited "successfully" with no data at
-/// all. `validate_formula` would catch it (it test-evaluates with dummy
-/// values), but neither the Create path nor the Manage-tab EDIT path gates on
-/// it — the edit form never calls `validate_formula` at all.
-/// Fix: in `compute_formula_sensor`, test-evaluate once with dummy values
-/// (exactly as `validate_formula` does) before the row loop and return
-/// `Err("Formula error: ...")` on an eval error; keep NaN only for NaN/inf
-/// RESULTS. Frontend: show the validation result in `SpecialSensorEditor`.
+/// An unknown identifier or function (`pi`, `sqrt($A, 2)`, `sqr($A)`) must be refused, not silently give an all-missing sensor.
 #[test]
 fn a10_bug_unknown_identifier_or_function_is_refused() {
     let data = dataset(14);
-    // `ln($A)` was on this list until `ln` became a real function (a09).
     for formula in ["$A * pi", "sqrt($A, 2)", "sqr($A)", "$A + x", "$A * e", "lnn($A)"] {
         match eval(&data, formula) {
             Err(_) => {}
@@ -450,11 +383,7 @@ fn a10b_the_refusal_names_the_problem_and_matches_the_editor_check() {
     assert!(eval(&data, "($A - $A) / ($B - $B)").unwrap().iter().all(|v| v.is_nan()));
 }
 
-/// `round(x, n)` written the spreadsheet way: fasteval reads the two
-/// arguments the other way round — `round(modulus, x)` — so `round($A, 2)`
-/// would round the CONSTANT 2 to a multiple of A: every row garbage (0, A or
-/// 2A), with no error. The shape is REFUSED (never silently wrong) with the
-/// exact formula to type instead; that suggested formula rounds to 2 decimals.
+/// Spreadsheet-style `round($A, 2)` would be read as `round(modulus, x)`; it must be refused, naming the formula to type instead.
 #[test]
 fn a11_bug_round_with_decimals_rounds_the_sensor() {
     let data = dataset(15);
@@ -484,15 +413,8 @@ fn many_sensors(n: usize) -> ColumnarData {
     ColumnarData::from_parts(headers, (0..3).map(|i| Some(format!("2024-01-01T00:0{i}:00"))).collect(), cols)
 }
 
-/// BUG (LOW): fasteval's parse slab holds 64 sub-expressions, and every
-/// FUNCTION ARGUMENT is one. The "Spread (max − min)" shortcut builds
-/// `max($S0, …, $Sn) - min($S0, …, $Sn)` — each sensor twice — so a Spread over
-/// roughly 32 or more selected sensors (31 passes, 33 fails) fails with "Formula parse error: SlabOverflow"
-/// (the same is true of any hand-typed `max(...)`/`min(...)` with > 64
-/// arguments). Not silent, but the shortcut is offered for any selection size.
-/// Fix (lib.rs `compute_formula_sensor` + `validate_formula`): parse with
-/// `fasteval::Slab::with_capacity(formula.len().max(64))` instead of
-/// `Slab::new()`.
+/// fasteval's parse slab holds 64 sub-expressions and every function argument is one; a spread over ~32+ sensors (`max(...) - min(...)`) must still evaluate
+/// (`Slab::with_capacity(expr.len().max(64) + 1)`).
 #[test]
 fn a12_bug_spread_over_many_sensors_evaluates() {
     let n = 40;
@@ -502,12 +424,8 @@ fn a12_bug_spread_over_many_sensors_evaluates() {
     assert_eq!(got, vec![(n - 1) as f64, 0.0, 0.0]);
 }
 
-/// BUG (LOW): `MAX_FORMULA_LEN` (4096) is checked on the formula AS TYPED, but
-/// fasteval has its own 4096-byte limit on the REWRITTEN expression, where every
-/// `$Sx` became `__sensor_N` (longer). A chain the app's own limit accepts can
-/// therefore fail with "Formula parse error: TooLong". Fix: rewrite references
-/// to short variables (e.g. `v0`, `v1`, … — fasteval var names may not start
-/// with a digit but `v12` is fine) and/or check the limit on the rewritten text.
+/// `MAX_FORMULA_LEN` (4096) checks the typed text, but fasteval limits the rewritten text (each `$Sx` becomes a longer safe name);
+/// a formula under the app limit must still evaluate.
 #[test]
 fn a13_bug_a_formula_under_the_app_length_limit_evaluates() {
     let n = 400;
@@ -534,8 +452,7 @@ fn a12b_the_only_formula_size_limit_left_is_the_apps_own() {
     let err = eval(&many_sensors(n + 1), &spread(n + 1)).unwrap_err();
     assert!(err.contains("too long"), "{err}");
 
-    // 1024 two-character names `$xy` joined by `+` = 4095 chars typed, but
-    // MORE than 4096 once rewritten (`_0` .. `_1023`): still evaluates.
+    // 1024 two-character names `$xy` joined by `+` = 4095 chars typed, over 4096 once rewritten: still evaluates.
     let alnum: Vec<char> = ('a'..='z').chain('0'..='9').collect();
     let names: Vec<String> = alnum
         .iter()
@@ -559,9 +476,6 @@ fn a12b_the_only_formula_size_limit_left_is_the_apps_own() {
     assert!(eval(&many_sensors(1), &deep(65)).unwrap_err().contains("too deeply nested"));
 }
 
-// ===========================================================================
-// B. Operation sensors (calculate_new_sensor)
-// ===========================================================================
 
 #[test]
 fn b01_every_single_operation_matches_an_independent_calculation() {
@@ -657,18 +571,13 @@ fn b03_sum_mean_median_missing_value_rules_on_2_to_6_sources() {
 
 #[test]
 fn b04_sum_operation_agrees_with_the_equivalent_plus_chain_formula() {
-    // "Sum all" (operation) and "A + B + C" (the default "Combine with
-    // operators" chain) must give the same values — both leave a row empty
-    // when any source is missing.
+    // "Sum all" and the `A + B + C` chain must match: both leave a row empty when any source is missing.
     let data = dataset(24);
     let (_, sum) = compute_operation_sensor(&data, &strs(&["A", "B", "C"]), &multi_cfg("sum", "__qa"), false).unwrap();
     let chain = eval(&data, "$A + $B + $C").unwrap();
     assert_col_eq(&sum, &chain, 1e-12, "sum op vs + chain");
 }
 
-// ===========================================================================
-// C. EDIT after creation — session level, exactly the frontend's call shape
-// ===========================================================================
 
 /// A special-sensor recipe, as `SpecialSensorRecipe` in `types.ts`.
 #[derive(Clone)]
@@ -686,9 +595,7 @@ impl Recipe {
     }
 }
 
-/// `recomputeCall` (specialSensorRecompute.ts) + the Rust command, in one:
-/// formula -> `evaluate_formula(formula, customName = tag, replace)`,
-/// operation -> `calculate_new_sensor(sources, {...config, customName: tag}, replace)`.
+/// `recomputeCall` + the Rust command in one: formula -> `evaluate_formula(formula, customName = tag, replace)`, operation -> `calculate_new_sensor(sources, {...config, customName: tag}, replace)`.
 fn run(state: &AppState, r: &Recipe, replace: bool, generation: Option<u64>) -> Result<String, String> {
     match r {
         Recipe::Formula { tag, formula } => {
@@ -718,9 +625,7 @@ fn chart_filter(sensors: &[&str]) -> DataFilter {
     DataFilter { sensors: strs(sensors), ..Default::default() }
 }
 
-/// Independent hourly aggregation of one column (same bucket rule as the
-/// chart: floor(ts / 1 h), rows with no timestamp skipped, missing values
-/// ignored inside a bucket, empty bucket = None).
+/// Independent hourly aggregation: floor(ts / 1 h), rows without timestamp skipped, missing ignored in a bucket, empty bucket = None.
 fn hourly(data: &ColumnarData, values: &[f64], method: &str) -> (Vec<i64>, Vec<Option<f64>>) {
     const HOUR: i64 = 3_600_000_000;
     let mut buckets: BTreeMap<i64, Vec<f64>> = BTreeMap::new();
@@ -753,8 +658,7 @@ fn hourly(data: &ColumnarData, values: &[f64], method: &str) -> (Vec<i64>, Vec<O
     (keys, vals)
 }
 
-/// Every place the Dashboard reads a special sensor's values from must agree
-/// with `want` (the independent reference) for every sensor in `sensors`.
+/// Every place the Dashboard reads a special sensor's values must agree with `want` for every sensor in `sensors`.
 fn assert_everywhere(state: &AppState, sensors: &[&str], want: &[Vec<f64>], ctx: &str) {
     with_data(state, |data| {
         // 1. the stored column
@@ -827,9 +731,7 @@ fn assert_everywhere(state: &AppState, sensors: &[&str], want: &[Vec<f64>], ctx:
     });
 }
 
-/// The fixture chain: S1 = A + Flow; S2 = S1*2 - B (built on S1);
-/// S3 = mean(S1, C) (operation on a special sensor); S4 = S2 × 3 (single op on
-/// a special sensor, two levels down).
+/// Chain: S1 = A + Flow; S2 = S1*2 - B; S3 = mean(S1, C) (operation on a special sensor); S4 = S2 × 3 (single op).
 fn chain_recipes() -> Vec<Recipe> {
     vec![
         Recipe::f("S1", "$A + ${Flow (m3/h)}"),
@@ -869,9 +771,7 @@ fn c01_create_chain_values_are_correct_everywhere() {
     assert_everywhere(&state, &["S1", "S2", "S3", "S4"], &want, "after create");
 }
 
-/// THE CUSTOMER'S QUESTION: edit S1's formula after S2/S3/S4 were built on it.
-/// The frontend recomputes the edited sensor and then every dependent in build
-/// order (`runSpecialSensorEdit` -> `recomputeSpecialSensors([next, ...downstream])`).
+/// Edit S1 after S2/S3/S4 were built on it: recompute S1, then every dependent in build order (`runSpecialSensorEdit`).
 #[test]
 fn c02_edit_formula_of_a_base_sensor_recomputes_it_and_every_dependent_correctly_everywhere() {
     let state = AppState(RwLock::new(None));
@@ -927,9 +827,7 @@ fn c03_edit_then_revert_restores_every_column_bit_for_bit() {
     }
 }
 
-/// Without recomputing the dependents, a dependent keeps the OLD values — this
-/// is why `runSpecialSensorEdit` must recompute downstream. Guards the
-/// assumption the frontend relies on (Rust never recomputes dependents itself).
+/// Without recomputing, a dependent keeps its OLD values: Rust never cascades, so `runSpecialSensorEdit` must.
 #[test]
 fn c04_rust_does_not_cascade_so_the_frontend_must_recompute_downstream() {
     let state = AppState(RwLock::new(None));
@@ -978,9 +876,7 @@ fn c05_edit_operation_sources_and_type_and_change_kind_operation_to_formula() {
     });
 }
 
-/// Rename S1 -> "ความเร็ว รวม" (Thai + space): the frontend rewrites every
-/// downstream formula with `rename_formula_refs`, recomputes the new name
-/// (appended) and the rewritten dependents, then drops the old column LAST.
+/// Rename S1 to a Thai name with a space: dependents' formulas rewritten with `rename_formula_refs`, old column dropped LAST.
 #[test]
 fn c06_rename_with_thai_and_space_keeps_every_value_and_drops_the_old_column() {
     let state = AppState(RwLock::new(None));
@@ -1058,8 +954,7 @@ fn c08_an_edit_that_reads_itself_or_a_wrong_generation_changes_nothing() {
     }
 }
 
-/// Editing a sensor while a DIFFERENT dataset was loaded under the window
-/// (generation moved on): the column of the new dataset must not be written.
+/// Editing while a different dataset was loaded under the window (generation moved): the new dataset's column must not be written.
 #[test]
 fn c09_edit_from_a_window_bound_to_the_previous_load_is_refused() {
     let state = AppState(RwLock::new(None));
@@ -1080,9 +975,6 @@ fn c09_edit_from_a_window_bound_to_the_previous_load_is_refused() {
     }
 }
 
-// ===========================================================================
-// D. Reopen: real CSV files, multi-file merge, Buddhist-Era years
-// ===========================================================================
 
 fn write_csv(dir: &std::path::Path, name: &str, body: &str) -> String {
     let p = dir.join(name);
@@ -1090,9 +982,7 @@ fn write_csv(dir: &std::path::Path, name: &str, body: &str) -> String {
     p.to_string_lossy().into_owned()
 }
 
-/// Two files, BE years (incl. the BE leap day 2567-02-29 = CE 2024-02-29,
-/// which is NOT a valid date if read as CE 2567), merged by timestamp; one
-/// timestamp present in both files, sensors split across files.
+/// Two files with BE years (incl. leap day 2567-02-29 = CE 2024-02-29), merged by timestamp; one shared timestamp, sensors split across files.
 fn be_files(dir: &std::path::Path) -> Vec<String> {
     let mut f1 = String::from("timestamp,A,B\n");
     let mut f2 = String::from("timestamp,C,Flow (m3/h)\n");
@@ -1154,8 +1044,7 @@ fn d01_reopen_replay_on_real_merged_be_csvs_reproduces_the_edited_values_bit_for
         assert!(col(d, "S1")[r1].is_nan() && col(d, "S3")[r1].is_nan());
     });
 
-    // Session 2 ("reopen"): a NEW load of the same files, recipes replayed in
-    // stored order with replace: true (replaySpecialSensorRecipes).
+    // Reopen: a NEW load of the same files, recipes replayed in stored order with `replace: true`.
     let g2 = install_session(&state, read_merge_csvs_with_report(paths.clone()).unwrap().data).unwrap();
     assert!(g2 > g1);
     for r in &recipes {
@@ -1169,9 +1058,6 @@ fn d01_reopen_replay_on_real_merged_be_csvs_reproduces_the_edited_values_bit_for
     assert_everywhere(&state, &["S1", "S2", "S3", "S4"], &want, "after reopen");
 }
 
-// ===========================================================================
-// E. Formula strings the FRONTEND builds (shared fixture with the TS side)
-// ===========================================================================
 
 const ENGINE_FIXTURE: &str = include_str!("../fixtures/special_sensor_formulas.json");
 
@@ -1208,11 +1094,7 @@ fn e01_every_formula_the_frontend_engine_builds_evaluates_to_the_intended_math()
     }
 }
 
-/// The "Round to N decimals" wrap emits `round(expr * 10^n) / 10^n`, which
-/// stores the exact nearest double (1.13) — like the single-sensor "Round to
-/// decimals" OPERATION (`(x * 100).round() / 100`). A `round(0.01, expr)` wrap
-/// (fasteval = `(x / 0.01).round() * 0.01`) would store values like
-/// 1.1300000000000001.
+/// The Round wrap emits `round(expr * 10^n) / 10^n` (stores 1.13); `round(0.01, expr)` would store 1.1300000000000001.
 #[test]
 fn e02_bug_round_wrap_stores_the_nearest_double_to_the_decimal_value() {
     let data = ColumnarData::from_parts(

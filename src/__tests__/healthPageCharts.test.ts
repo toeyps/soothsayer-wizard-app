@@ -50,8 +50,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         expect(both.filter((l: any) => /^[LH] /.test(l.label)).map((l: any) => [l.label, l.y])).toEqual([['H 12', 12], ['L 1', 1]]);
     });
 
-    // workbench-redesign SPEC §3: "The user's set points are the strongest lines and carry their
-    // value as typed: H 4.6, L 2.2 … Never pad or round a typed value."
+    // Set points carry their value as typed (H 4.6, L 2.2); never pad or round a typed value.
     it('L / H carry their value AS TYPED: never padded ("4.6", not "4.60") and never rounded ("4.61234" stays)', () => {
         // (`?.`: with set points far from the data an inner ±SD line has no label of its own — its neighbour carries it)
         const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label?.startsWith(`${side} `)).label;
@@ -59,7 +58,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         expect(label({ lower: 2.2, upper: 4.6 }, 'H')).toBe('H 4.6');
         expect(label({ lower: 2.2, upper: 4.6 }, 'L')).toBe('L 2.2');
         expect(label({ lower: 2.2, upper: Number('4.60') }, 'H')).toBe('H 4.6');
-        // every typed decimal survives — the old 3-decimal read-out formatter would say "4.612"
+        // every typed decimal survives (a 3-decimal formatter would say "4.612")
         expect(label({ lower: 1, upper: 4.61234 }, 'H')).toBe('H 4.61234');
         expect(label({ lower: 0.0005, upper: 9 }, 'L')).toBe('L 0.0005');
         expect(label({ lower: 0.0000004, upper: 9 }, 'L')).toBe('L 0.0000004');
@@ -71,8 +70,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
         expect(typedText(100)).toBe('100');
     });
 
-    // "L -200" (ASCII hyphen) sat next to "−1SD" and "0 · −9" (a real
-    // minus sign); and a negative zero printed "-0".
+    // A negative set point uses a real minus sign (like "−1SD"), not an ASCII hyphen, and a negative zero prints "0".
     it('a negative set point carries a real minus sign (U+2212) like every other chart label; a negative zero reads "0"', () => {
         const label = (sp: any, side: 'H' | 'L') => lines(ind({ kind: 'individual', ...sp })).find((l: any) => l.label?.startsWith(`${side} `)).label;
         expect(label({ lower: -200, upper: 300 }, 'L')).toBe('L \u2212200');
@@ -113,7 +111,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
             expect(fills(opt)).toEqual([[4, 6, CHART.okFill]]);
             const sd = lines(opt).slice(0, 4);
             expect(sd.map((l: any) => [l.label, l.dashed])).toEqual([['+1SD', false], ['−1SD', false], ['+3SD', true], ['−3SD', true]]);
-            // the amber ±3SD fill and the red L / H fill that are gone
+            // no amber ±3SD fill and no red L / H fill
             expect(JSON.stringify(opt)).not.toContain('rgba(229, 169, 61, 0.07)');
             expect(JSON.stringify(opt)).not.toContain('rgba(238, 90, 69, 0.12)');
         }
@@ -127,8 +125,7 @@ describe('buildIndividualSetPointOption (raw value over time, no histogram)', ()
 
     it('is connected for the shared hover cursor, which keeps its own layer and no hover emphasis', () => {
         expect((ind(null) as any).axisPointer.link).toEqual([{ xAxisIndex: 'all' }]);
-        // The link must not replace the hover settings of the time chart it is spread over:
-        // without them every mousemove re-strokes the lines of BOTH connected charts.
+        // The link must keep the time chart's hover settings, or every mousemove re-strokes both connected charts.
         expect((ind(null) as any).axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false, link: [{ xAxisIndex: 'all' }] });
         expect(HEALTH_SYNC_GROUP).toBeTruthy();
     });
@@ -215,7 +212,6 @@ describe('buildClusterSetPointOption (points + 1x, 3x and N x rings of EVERY clu
         ]);
     });
 
-    // ---- workbench-redesign SPEC §3 "Clustering" ----
 
     it('the user\'s N ring is SOLID red (the strongest ring); 1× stays solid green, 3× dashed amber', () => {
         const opt = cl({ kind: 'clustering', outerSd: 5 });
@@ -456,8 +452,7 @@ describe('scoreColor', () => {
     });
 });
 
-// The ONE chart card of the Health score page ("Workbench detail pages v2"): a time chart
-// with the score chart right under it, on one time axis.
+// The ONE chart card of the Health score page: a time chart with the score chart under it, on one time axis.
 describe('asStackUpper / asStackLower — the two halves of the stacked card', () => {
     const { asStackUpper, asStackLower, buildIndividualSetPointOption, buildRelationshipSetPointOption, buildScoreOption, STACK_INNER_GAP } = healthPageCharts;
     const p = makeHealthPreview({ kind: 'individual' });
@@ -534,8 +529,7 @@ describe('asStackUpper / asStackLower — the two halves of the stacked card', (
     });
 });
 
-// User decision 2026-10-16: the set-point charts follow the zoom window on Y without losing a
-// set point. The spec must survive every copy these builders make (`keepFollowY`).
+// Set-point charts follow the zoom on Y without losing a set point; the spec must survive every copy (`keepFollowY`).
 describe('the Health score set-point charts keep the follow-Y spec', () => {
     it('Individual: the set points L / H are reference lines of the spec; the stacked upper chart keeps it', async () => {
         const { getFollowY } = await import('../components/charts/followYAxis');

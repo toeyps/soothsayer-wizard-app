@@ -16,22 +16,7 @@ import { formatDataStamp } from '../components/windows/periodDisplay';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 import type { IndividualSeries, IndividualStats, RelationshipSeries, RelationshipStats } from '../types/health';
 
-/*
- * The heading of the hover tooltip on the Workbench time charts (Model fit and
- * Health score pages).
- *
- * User report 2026-10-12: the tooltip was headed by the DATE alone ("2025-03-14")
- * — it must show the time too, like the Dashboard chart's. Cause: ECharts heads
- * an axis tooltip with the time axis' default pointer label, whose precision
- * follows the axis' tick unit (day ticks → no time). Fix: the X axis carries
- * `axisPointer.label.formatter` (`timeHeadingFormatter`), which prints the
- * hovered row's own date and time in the app's one date format — a data row's
- * time, always with seconds ("2026/02/09 23:50:00", like the Dashboard tooltip).
- *
- * The first half reads the formatter itself; the second half mounts the REAL
- * options in the installed ECharts and reads the tooltip it builds, so the test
- * fails if ECharts stops taking the heading from that option key.
- */
+/* The Workbench time-chart tooltip heading must show date and time. ECharts' default heading follows the tick unit (day ticks: no time), so the X axis carries `axisPointer.label.formatter` (`timeHeadingFormatter`). First half tests the formatter; the second reads the real tooltip. */
 
 // No canvas under jsdom: give ECharts a text measure instead of letting it try (and log) one per label.
 echarts.setPlatformAPI({ measureText: (text: string) => ({ width: (text ?? '').length * 6 }) });
@@ -162,9 +147,6 @@ describe('every Workbench time chart carries the heading on its time X axis — 
     });
 });
 
-// ---------------------------------------------------------------------------
-// The tooltip ECharts really builds
-// ---------------------------------------------------------------------------
 
 describe('in the real ECharts: the tooltip box is headed by date + time', () => {
     const mounted: { chart: echarts.ECharts; el: HTMLElement }[] = [];
@@ -203,8 +185,7 @@ describe('in the real ECharts: the tooltip box is headed by date + time', () => 
         expect(tip.rows).toEqual(['Value', String(value(i))]);
     });
 
-    // The control: ECharts' own heading follows the axis' tick unit, so on a chart that shows months it is the date alone
-    // (the user's screenshot: "2025-03-14"). If an ECharts upgrade changes that, this is the test to look at.
+    // Control: without the formatter ECharts heads the tooltip by date alone on a months chart; look here if an ECharts upgrade changes that.
     it('why it was needed: without the formatter the same tooltip is headed by the date alone', () => {
         const i = months.indexOf('2026-02-09 23:50:00');
         const o: any = buildTimeSeriesOption({ timestamps: months, lines: [{ name: 'Value', values: months.map((_, k) => value(k)), color: '#4d8cf0' }] });

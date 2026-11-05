@@ -1,9 +1,4 @@
-//! QA: timestamp import edge cases (handover 2026-10-16..19, csv_processor.rs
-//! `normalize_file_timestamps`). The per-shape unit tests live next to the
-//! code; these go through the WHOLE load path (CSV file on disk ->
-//! `read_merge_csvs_with_report` -> `from_parts` -> `build_load_report`), so
-//! they also check what the merge, the Buddhist-Era pass and the report make
-//! of the rewritten text.
+//! Timestamp import edge cases through the whole load path, from CSV on disk to `build_load_report`.
 
 use crate::csv_processor::{
     apply_mapping, build_load_report, load_mapping_csv_data, load_metadata,
@@ -55,7 +50,6 @@ fn rewrite(raw: &[&str]) -> (Vec<String>, Vec<String>) {
     (ts.into_iter().map(|t| t.unwrap()).collect(), w)
 }
 
-// ── Leap days ──────────────────────────────────────────────────────────────
 
 #[test]
 fn a_buddhist_era_leap_day_written_day_first_loads_as_29_feb_2024() {
@@ -106,8 +100,7 @@ fn leap_days_in_ce_shapes_and_an_excel_serial() {
 
 #[test]
 fn excel_serials_outside_the_accepted_range_are_unreadable_not_read_as_1900() {
-    // Serial 60 is Excel's fictitious 1900-02-29; 61 = 1900-03-01. The reader
-    // only takes 20000..=80000 (1954..2119), so tiny serials are never dates.
+    // Serial 60 is Excel's fictitious 1900-02-29; 61 = 1900-03-01. Only 20000..=80000 (1954..2119) are read, so tiny serials are never dates.
     let (m, r) = load(&[("x.csv", &file_of(&["60", "61"]))]);
     assert!(m.data.ts_parsed.iter().all(|&t| t == TS_MISSING), "{:?}", texts(&m));
     assert_eq!(
@@ -117,7 +110,6 @@ fn excel_serials_outside_the_accepted_range_are_unreadable_not_read_as_1900() {
     assert!(!r.warnings.iter().any(|w| w.contains("Excel serial")), "{:?}", r.warnings);
 }
 
-// ── 12-hour clock and midnight ─────────────────────────────────────────────
 
 #[test]
 fn a_12_hour_log_crossing_midnight_reads_month_day_in_order() {
@@ -148,12 +140,10 @@ fn twenty_four_o_clock_and_minute_60_are_unreadable() {
     assert_eq!(w.last().unwrap(), "3 timestamp(s) in f.csv could not be read as a date and time");
 }
 
-// ── Day/month decision ─────────────────────────────────────────────────────
 
 #[test]
 fn identical_gaps_under_both_readings_is_a_flagged_guess() {
-    // Same day, 5-minute steps: both readings give 0 backwards steps and the
-    // same total travel -> month/day, with the "check the dates" note.
+    // Same day, 5-minute steps: both readings tie, so month/day with the 'check the dates' note.
     let (t, w) = rewrite(&["1/2/2026 0:00", "1/2/2026 0:05", "1/2/2026 0:10"]);
     assert_eq!(t, vec!["2026-01-02 00:00:00", "2026-01-02 00:05:00", "2026-01-02 00:10:00"]);
     assert_eq!(
@@ -164,8 +154,7 @@ fn identical_gaps_under_both_readings_is_a_flagged_guess() {
 
 #[test]
 fn twelve_days_of_day_first_data_all_values_12_or_less_read_day_first() {
-    // 1..12 Jan, hourly, written D/M/YYYY. Neither reading steps backwards;
-    // month/day would spread the rows over a year, so the smaller travel wins.
+    // 1..12 Jan hourly, D/M/YYYY: neither reading steps backwards, but month/day would spread rows over a year, so smaller travel wins.
     let mut rows = Vec::new();
     for d in 1..=12 {
         for h in 0..24 {
@@ -183,8 +172,7 @@ fn twelve_days_of_day_first_data_all_values_12_or_less_read_day_first() {
 
 #[test]
 fn a_large_us_file_reads_the_same_whatever_the_thread_split() {
-    // 40 days of 5-minute rows (11 520) in `M/D/YYYY h:mm AM/PM`: the parallel
-    // evidence fold and rewrite must give one strictly increasing series.
+    // 40 days of 5-minute rows (11 520) in `M/D/YYYY h:mm AM/PM`: the parallel fold and rewrite must give one strictly increasing series.
     let start = parse_timestamp("2026-01-01 00:00:00").unwrap();
     let mut rows = Vec::new();
     for i in 0..(40 * 288) {
@@ -202,7 +190,6 @@ fn a_large_us_file_reads_the_same_whatever_the_thread_split() {
     assert!(!r.warnings[0].contains("check the dates"));
 }
 
-// ── Mixed shapes inside ONE file ───────────────────────────────────────────
 
 #[test]
 fn iso_rows_and_slash_rows_in_one_file_are_read_together() {
@@ -230,7 +217,6 @@ fn month_name_rows_and_slash_rows_in_one_file_get_one_line_each() {
     );
 }
 
-// ── Empty and whitespace cells ─────────────────────────────────────────────
 
 #[test]
 fn empty_and_blank_timestamp_cells_are_dropped_not_counted_as_unreadable() {
@@ -251,7 +237,6 @@ fn a_one_row_file_with_a_day_over_12_is_not_a_guess() {
     assert_eq!(w, vec!["Dates in f.csv read as day/month/year (13/1/2026 → 2026-01-13)"]);
 }
 
-// ── Numeric columns ────────────────────────────────────────────────────────
 
 #[test]
 fn epoch_seconds_vs_milliseconds_is_decided_by_digit_count() {
@@ -278,7 +263,6 @@ fn an_epoch_column_with_the_odd_millisecond_row_reads_the_majority() {
     assert_eq!(w.last().unwrap(), "1 timestamp(s) in f.csv could not be read as a date and time");
 }
 
-// ── Years: 2-digit, Buddhist era, Thai digits ──────────────────────────────
 
 #[test]
 fn a_2_digit_numeric_year_is_always_20yy_even_for_a_thai_user() {
@@ -308,7 +292,6 @@ fn thai_words_around_the_time_are_ignored() {
     assert_eq!(t, vec!["2568-01-31 13:05:00"], "year kept as written; from_parts converts it");
 }
 
-// ── Time zones (the wall clock as written is kept) ─────────────────────────
 
 #[test]
 fn every_zone_suffix_keeps_the_written_wall_clock() {
@@ -326,7 +309,6 @@ fn every_zone_suffix_keeps_the_written_wall_clock() {
     }
 }
 
-// ── Several files ──────────────────────────────────────────────────────────
 
 #[test]
 fn three_files_in_three_shapes_merge_to_one_row_per_moment() {
@@ -368,7 +350,6 @@ fn an_iso_file_without_seconds_and_a_rewritten_file_merge_the_same_moment() {
     assert_eq!(m.data.columns[2], vec![10.0]);
 }
 
-// ── Header clean-up: mapping and metadata CSVs ─────────────────────────────
 
 #[test]
 fn a_first_column_with_another_name_is_read_as_the_time_column() {
@@ -447,13 +428,9 @@ fn a_bom_on_the_metadata_csv_header_still_finds_the_tag_column() {
     assert_eq!(meta[0].component, "Pump");
 }
 
-// ── Found by QA ────────────────────────────────────────────────────────────
 
-/// A row in an ISO shape whose date does not exist (`2026-02-30`) is dropped
-/// silently: `is_plain_iso` only checks the byte shape, so the rewrite skips
-/// it and it is never counted in "N timestamp(s) … could not be read", while
-/// the same date written `2/30/2026` IS counted. (A fix must not count a
-/// Buddhist-Era ISO leap day such as `2567-02-29`, which from_parts reads.)
+/// An impossible ISO-shaped date (`2026-02-30`) is dropped silently: `is_plain_iso` only checks bytes, so it is not counted as unreadable.
+/// A fix must not count a BE ISO leap day like `2567-02-29`.
 #[test]
 #[ignore = "QA finding 2026-10-19: impossible ISO-shaped dates are not counted as unreadable"]
 fn an_impossible_iso_date_is_counted_like_any_unreadable_row() {
@@ -486,10 +463,7 @@ fn a_column_twice_in_one_of_several_files_is_reported() {
     assert!(r.warnings.iter().any(|w| w == "Duplicate column 'flow_a' found in file 1"), "{:?}", r.warnings);
 }
 
-/// Design limitation (coordinator 2026-10-19), pinned: a D/M/YYYY file whose
-/// rows all sit on ONE date with both numbers <= 12 (`03/06/2026` = 3 June)
-/// gives both readings the same fit, so it is read month/day (6 March) and
-/// only the "check the dates" note warns. A single-row file is the same.
+/// Pinned limitation: a D/M/YYYY file with all rows on ONE date, both numbers <= 12 (`03/06/2026`), ties and is read month/day with only the 'check the dates' note.
 #[test]
 fn one_date_with_day_and_month_12_or_less_ties_and_reads_month_day_with_a_warning() {
     let (t, w) = rewrite(&["03/06/2026 00:00", "03/06/2026 00:05", "03/06/2026 00:10"]);

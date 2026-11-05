@@ -1,16 +1,5 @@
-//! QA: Export results end to end (2026-10-20, `workspace_export.rs`,
-//! `docs/specs/WIZARD_OUTPUT_SPEC.md` v1.0).
-//!
-//! The per-rule unit tests live next to the code. This file is the cross-zone
-//! check: the request comes from `tests/fixtures/export_request_contract.json`,
-//! which the TS side generates with the REAL request builder
-//! (`src/__tests__/ExportResultsContract.integration.test.ts` pins it), the
-//! data goes through the REAL CSV loader, the export goes through the public
-//! `write_export`, and every spec §7 checklist item is then checked by reading
-//! the written folder back — independently of the plan the writer used.
-//!
-//! Included from `lib.rs` with a `#[path]` line (like the other files in
-//! `tests/internal/`), so it can reach the crate-private session types.
+//! QA: Export results end to end (`workspace_export.rs`, WIZARD_OUTPUT_SPEC.md v1.0); every spec §7 item is checked by reading the folder back.
+//! Included from `lib.rs` via `#[path]` to reach crate-private types.
 
 use crate::workspace_export::{plan_in, write_export, WorkspaceExportRequest};
 use crate::{AppState, SessionData};
@@ -27,10 +16,6 @@ const NO_TS: usize = 10;
 /// Row whose timestamp repeats the one of row `DUP - 1`.
 const DUP: usize = 12;
 
-// ---------------------------------------------------------------------------
-// The fixture data (raw arrays, so the expectations below are computed
-// independently of the export code)
-// ---------------------------------------------------------------------------
 
 struct Raw {
     slot: Vec<Option<usize>>,
@@ -80,8 +65,7 @@ fn cell(v: f64) -> String {
 fn csv_body(d: &Raw) -> String {
     let mut s = String::from("timestamp,SPEED,T1,P1,V,I,POWER,X,Y,C\n");
     for r in 0..N {
-        // An unreadable time text keeps the row (TS_MISSING); an EMPTY one is
-        // dropped by the loader already, so it would never reach the export.
+        // Unreadable time text keeps the row (TS_MISSING); an empty one is dropped by the loader and never reaches the export.
         let ts = d.slot[r].map(|k| slot_text(k, ' ')).unwrap_or_else(|| "n/a".into());
         let vals = [d.speed[r], d.t1[r], d.p1[r], d.v[r], d.i[r], d.power[r], d.x[r], d.y[r], d.c[r]];
         s.push_str(&ts);
@@ -94,9 +78,7 @@ fn csv_body(d: &Raw) -> String {
     s
 }
 
-/// The rows the spec says a model's CSV holds: the selected rows, without the
-/// ones that have no timestamp, sorted by time, the LAST row of a repeated
-/// instant kept.
+/// Rows a model's CSV holds per spec: rows with a timestamp, sorted by time, the LAST row of a repeated instant kept.
 fn spec_rows(d: &Raw, keep: impl Fn(usize) -> bool) -> Vec<usize> {
     let mut by_slot: BTreeMap<usize, usize> = BTreeMap::new();
     for r in 0..N {
@@ -139,9 +121,6 @@ fn contract() -> WorkspaceExportRequest {
     serde_json::from_str(CONTRACT).expect("the TS request fixture deserializes into the Rust request")
 }
 
-// ---------------------------------------------------------------------------
-// Readers for the written folder
-// ---------------------------------------------------------------------------
 
 /// The keys of a JSON object's top level, in file order (serde_json's map is
 /// sorted, so the order is read from the text).
@@ -246,8 +225,7 @@ fn strs(v: &serde_json::Value) -> Vec<String> {
     v.as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect()
 }
 
-/// Spec §6 words that must never be a key, a file name or a column (checked
-/// per `_`/`-`/`.` token, plus method/library names as substrings).
+/// Spec §6 words that must never be a key, file name or column (per `_`/`-`/`.` token; method/library names as substrings).
 fn forbidden(name: &str) -> bool {
     let low = name.to_lowercase();
     const SUBSTR: [&str; 7] = ["gam", "gmm", "pkl", "joblib", "lambda", "rmse", "pickle"];
@@ -257,9 +235,6 @@ fn forbidden(name: &str) -> bool {
     SUBSTR.iter().any(|w| low.contains(w)) || low.split(['_', '-', '.']).any(|t| TOKENS.contains(&t))
 }
 
-// ---------------------------------------------------------------------------
-// The test
-// ---------------------------------------------------------------------------
 
 #[test]
 fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
@@ -291,7 +266,6 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let keys: Vec<String> = progress.lock().unwrap().iter().map(|(_, _, k)| k.clone()).collect();
     assert_eq!(keys, ["T1-I1", "T1-R1", "Y-C1", "POWER-I1"]);
 
-    // ── §7.1 machine_info.json exists, every required field filled, spec order ──
     let (mi_text, mi) = read_json(&root.join("machine_info.json"));
     assert_eq!(
         top_keys(&mi_text),
@@ -386,7 +360,6 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!(c["regimes"], serde_json::json!([{ "from": null, "to": 2.0 }, { "from": 2.0, "to": null }]));
     assert_eq!(c["health"], serde_json::json!({ "failure_distance": 5.0 }));
 
-    // ── §7.3 every referenced tag is listed; §7.4 every component reference is in components ──
     let listed: HashSet<String> = raw_tags.iter().cloned().chain(derived.iter().map(|x| x["tag"].as_str().unwrap().to_string())).collect();
     let mut referenced = vec![mi["running_status"]["sensor"].as_str().unwrap().to_string()];
     for (_, v) in model_json.values() {
@@ -407,7 +380,6 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
         assert!(components.contains(&s["component"].as_str().unwrap().to_string()), "{s}");
     }
 
-    // ── §7.5 failure groups: only groups with an exported model; keys exist ──
     let fgs = mi["failure_groups"].as_array().unwrap();
     let fg_names: Vec<&str> = fgs.iter().map(|g| g["name"].as_str().unwrap()).collect();
     assert_eq!(fg_names, ["Overheat", "Pump wear"], "the unused group is left out");
@@ -423,7 +395,6 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
         }
     }
 
-    // ── §7.6 health ordering ──
     let w = &r["health"]["warning"];
     let f = &r["health"]["failure"];
     let n = |v: &serde_json::Value| v.as_f64().unwrap();
@@ -435,7 +406,6 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     }
     assert!(n(&c["health"]["failure_distance"]) > 3.0);
 
-    // ── §5 training CSVs: exactly the rows Train used, spec columns, ISO time with offset ──
     let ws_scope = |r: usize| d.speed[r] > 100.0; // SPEED > 100 inside the workspace period (all rows)
     let ind_rows = spec_rows(&d, |r| ws_scope(r) && d.t1[r].is_finite());
     let rel_rows = spec_rows(&d, |r| {
@@ -460,23 +430,15 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
         assert!(stamps.iter().all(|s| s.ends_with("+07:00")));
     }
     assert_eq!(res.rows, ind_rows.len() + rel_rows.len() + clu_rows.len() + pow_rows.len());
-    // The edge cases really are in the data: the row without a time and the
-    // repeated instant were dropped; a criteria value ON the inner boundary
-    // (2) is written.
+    // The edge cases are really in the data: the no-time row and the repeated instant were dropped; a criteria value ON the inner boundary (2) is written.
     assert!(!ind_rows.contains(&NO_TS) && ind_rows.contains(&DUP) && !ind_rows.contains(&(DUP - 1)));
     let clu_csv = &expected[2].1;
     assert!(clu_csv.lines().skip(1).any(|l| l.ends_with(",2")), "criteria == inner boundary is included");
-    // Every model here has a train period, so the training scope itself
-    // already leaves the row without a timestamp out (a period can only keep a
-    // row that has a time); the "rows without a timestamp" note can only count
-    // rows of a scope with no time limit. Either way it is not in any CSV.
+    // Every model's train period already excludes rows without a timestamp; the note only counts rows of a scope with no time limit.
     assert_eq!(plan.rows_without_timestamp, 0);
-    // The loader already merges a repeated timestamp (later row wins), so the
-    // export's own "repeated instants" counter sees none here; the CSV holds
-    // the LATER row's values (checked by the exact CSV comparison above).
+    // The loader already merges repeated timestamps (later row wins), so the export's counter sees none.
     assert_eq!(plan.duplicate_instants_dropped, 0);
 
-    // ── §7.7 / §6 nothing trained, no internal names ──
     for name in listing(&models_dir).iter().chain(listing(&root).iter()) {
         assert!(name == "models" || name.ends_with(".json") || name.ends_with(".csv"), "unexpected file {name}");
         assert!(!forbidden(name), "file name {name}");
@@ -518,9 +480,7 @@ fn qa_workspace_export_contract_fixture_on_a_stale_session_writes_nothing() {
 
 #[test]
 fn qa_workspace_export_unfinished_model_blocks_the_whole_export() {
-    // One model loses its set points (the UI would show it as not Complete):
-    // the dry run names that model, the export refuses with NOT_READY and
-    // writes nothing.
+    // One model loses its set points: the dry run names it, the export refuses with NOT_READY and writes nothing.
     let (state, _d) = load_state(1);
     let mut req = contract();
     req.models[1].set_points = Default::default();
@@ -549,9 +509,7 @@ fn qa_workspace_export_auto_divided_ranges_export() {
     let m = plan.models.iter().find(|m| m.id == "c1").unwrap();
     let json = serde_json::to_value(&m.json).unwrap();
     assert_eq!(json["regimes"], serde_json::json!([{ "from": null, "to": 1.5 }, { "from": 1.5, "to": null }]));
-    // The open outer edges keep every row: C == 0 (the data minimum, the
-    // stored finite `min`) is in the first cluster, so the CSV holds the same
-    // rows as the contract's own null-edged ranges.
+    // Open outer edges keep every row: C == 0 (the data minimum, stored as finite `min`) falls in the first cluster, same rows as the null-edged contract ranges.
     let open = plan_in(&state, &contract()).unwrap();
     let open_rows = open.models.iter().find(|m| m.id == "c1").unwrap().rows;
     assert_eq!(m.rows, open_rows);

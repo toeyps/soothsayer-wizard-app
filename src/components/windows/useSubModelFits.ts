@@ -5,25 +5,7 @@ import { debugLog } from '../../utils/debugLog';
 import { TRAIN_STALE_MESSAGE } from '../../utils/trainQueue';
 import { HEALTH_DEFAULT_MAX_POINTS } from '../../utils/healthRequest';
 
-/*
- * Sub-model fits for a Relationship model ("Compare predictors" / "Sub-models").
- * The Build Model Workbench's Model fit page is its only caller.
- *
- *   predictors = [p1, p2, p3] -> three SEQUENTIAL `preview_relationship_model`
- *   calls for the cumulative subsets [p1], [p1,p2], [p1,p2,p3]. Each full
- *   payload is kept so the modal can draw a per-step scatter beside the step's
- *   R^2 / 2*RMSE. Sequential on purpose: the sidecar is a single-process pool,
- *   so parallel calls would only queue, and serial gives cheap progress.
- *
- * These calls pass NO `cache_key`, so they never touch the Rust fit cache the
- * health score reads (only the main Train fit is cached). They DO pass
- * `max_points`: each response carries only a bounded sample of rows for the
- * scatter, and the true row count in `n_rows` (logged; no longer shown on the cards). The reused
- * Train response (`reusable`) is bounded the same way.
- *
- * Lives next to the components, not in
- * `src/hooks/`: it is presentation plumbing for this one modal.
- */
+/* Sub-model fits for Relationship 'Compare predictors': SEQUENTIAL `preview_relationship_model` calls on cumulative predictor subsets (the sidecar is single-process). No `cache_key`, so the Rust fit cache the health score reads is untouched; `max_points` bounds each response. */
 
 /** Runs engine calls one at a time, in the order asked. */
 export type EngineQueue = <T>(fn: () => Promise<T>) => Promise<T>;
@@ -54,14 +36,9 @@ export interface SubModelFitsOptions {
     filter: unknown;
     /** The scope is unusable (invalid period, missing condition...) — never fit. */
     blocked?: boolean;
-    /** The fit of the FULL predictor list when the caller already has an
-     *  up-to-date one: the last step reuses it instead of fitting twice. Pass
-     *  `null` when there is none or it is out of date. */
+    /** Fit of the FULL predictor list when up to date, reused for the last step; null if none or out of date. */
     reusable: RelationshipPreviewResult | null;
-    /** Anything that makes every cached sub-fit moot when it changes (target,
-     *  stiffness, training scope). A predictor-list change is NOT part of it:
-     *  that is surfaced as `stale` instead, so the user chooses when to pay for
-     *  the extra sidecar calls. */
+    /** Anything that makes every cached sub-fit moot (target, stiffness, training scope); a predictor-list change shows as `stale` instead. */
     resetKey: string;
     /** The caller's engine queue, so these calls also wait for its other engine calls. */
     serialize?: EngineQueue;
@@ -86,9 +63,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [progress, setProgress] = useState({ current: 0, total: 0 });
-    // Generation counter: each `run` claims one and only commits while it is
-    // still current, so a late-finishing older call can never overwrite a
-    // newer one, and an older run stops asking the engine as soon as it is not current.
+    // Generation counter: only the latest run commits, and an older run stops asking the engine.
     const genRef = useRef(0);
 
     const stale = useMemo(() => {
@@ -134,9 +109,7 @@ export function useSubModelFits(opts: SubModelFitsOptions): SubModelFitsState {
                     target: targetSensor,
                     lambda,
                     filter,
-                    // Bounded response: an aligned strided sample (extremes kept) of
-                    // at most this many rows + the real count in `n_rows` — never
-                    // every row of a 150k-row dataset.
+                    // Bounded response: a strided sample (extremes kept) of at most this many rows, real count in `n_rows`.
                     max_points: HEALTH_DEFAULT_MAX_POINTS,
                 })));
                 if (!r) return;

@@ -1,25 +1,11 @@
 import type { FailureGroup } from '../../types';
 
-/**
- * The ONE place a Failure Group record is shaped. The Dashboard's Failure
- * Groups tab ("+ Add failure group", "Edit details") and the Import page's
- * step 3 both build groups through these pure helpers, so a group named at
- * setup is byte-for-byte the record the Dashboard would have created — same
- * numbering, same fields, nothing forked.
- *
- * Pure (no React, no Tauri): the Dashboard runs each one against its mirror
- * for the instant UI update and again against what is on DISK inside the
- * write (`persistFailureGroupStateFrom`).
- */
+/** The one place a Failure Group record is shaped: the Dashboard tab and Import step 3 build groups through these pure helpers. The Dashboard runs each against its mirror (instant UI) and against what is on DISK inside the write (`persistFailureGroupStateFrom`). */
 
-/** The permanent group 0 every workspace's `failureGroupState.groups` starts
- *  with — the Dashboard's default when a workspace has no Failure Group slice. */
+/** The permanent group 0 every workspace starts with; the Dashboard's default when there is no Failure Group slice. */
 export const NOT_IN_GROUP: FailureGroup = Object.freeze({ no: 0, name: 'Not in Group' });
 
-/** Same rule everywhere a group is named: trimmed, case-insensitive,
- *  `excludeNo` = the group being renamed. The name "Not in Group" is reserved
- *  for the built-in group 0 and is always taken (whether or not the list
- *  carries the sentinel), so no real group can be confused with it. */
+/** Group-name uniqueness: trimmed, case-insensitive, `excludeNo` = group being renamed; 'Not in Group' is always taken. */
 export function isDuplicateFailureGroupName(
     groups: readonly FailureGroup[],
     name: string,
@@ -59,15 +45,7 @@ export interface FailureGroupDraft {
     recommendation: string;
 }
 
-/**
- * The `failureGroupState.groups` of a brand-new workspace from the groups
- * named on Import step 3: "Not in Group" first, then each draft in order,
- * numbered FG-1, FG-2 … exactly as if the user had added them one by one on
- * the Dashboard's Failure Groups tab and then filled in "Edit details". A
- * draft with an empty name is dropped; one with no description and no
- * recommendation stays a bare `{ no, name }`, like a group the tab created and
- * never edited. `[]` drafts (Skip) → just "Not in Group".
- */
+/** Initial `groups` of a new workspace from Import step 3 drafts: 'Not in Group' first, then each draft numbered FG-1, FG-2 … as if added on the Dashboard. An empty-name draft is dropped; no description/recommendation stays a bare `{ no, name }`; no drafts (Skip) gives just 'Not in Group'. */
 export function buildInitialFailureGroups(drafts: readonly FailureGroupDraft[]): FailureGroup[] {
     let groups: FailureGroup[] = [NOT_IN_GROUP];
     for (const d of drafts) {

@@ -1,13 +1,4 @@
-/*
- * Evenly spaced ticks for a chart's TIME axis.
- *
- * ECharts places time ticks on the calendar: with a weekly step it marks the
- * 1st, 8th, 15th, 22nd and 29th of every month AND the 1st of the next one, so
- * the gap at each month end is 2–3 days (the 29th is then hidden as an
- * overlap) and the visible labels read 7, 7, 7, 9–10 days apart — an uneven
- * row. These ticks keep ONE fixed step across the whole axis instead, anchored
- * to a fixed day so they do not slide while the user pans.
- */
+/* Evenly spaced ticks for a chart time axis. ECharts places weekly ticks on the calendar (uneven at month ends); these keep one fixed step anchored to a fixed day so they don't slide while panning. */
 
 const MIN = 60_000;
 const HOUR = 60 * MIN;
@@ -27,7 +18,7 @@ const MONTH_MS = 30.4375 * DAY;
 export const MAX_TIME_TICKS = 2000;
 
 export interface TimeTicks {
-    /** Identifies the step ("d7", "h6", "m1" …): the same key = the same grid of ticks. */
+    /** Identifies the step ("s21600000", "d7", "m1" …): the same key = the same grid of ticks. */
     key: string;
     /** Tick positions (epoch ms, local-time aligned), ascending, inside [from, to]. */
     values: number[];
@@ -45,12 +36,7 @@ function dayIndex(d: Date): number {
     return Math.round((Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) - Date.UTC(2000, 0, 1)) / DAY);
 }
 
-/**
- * Ticks one fixed step apart covering `[from, to]`, with at most about
- * `maxLabels` of them inside `[visibleFrom, visibleTo]` (the step is chosen for
- * the VISIBLE span; the ticks are generated for the wider range so a pan does
- * not need new ones). Day steps sit on local midnights, month steps on the 1st.
- */
+/** Ticks one fixed step apart covering `[from, to]`, at most about `maxLabels` in the visible range. The step fits the VISIBLE span; ticks cover the wider range so panning needs no new ones. Day steps on local midnights, month steps on the 1st. */
 export function evenTimeTicks(visibleFrom: number, visibleTo: number, maxLabels: number, from = visibleFrom, to = visibleTo): TimeTicks {
     const span = visibleTo - visibleFrom;
     if (!Number.isFinite(span) || span <= 0 || !Number.isFinite(from) || !Number.isFinite(to) || to < from) return { key: 'none', values: [] };

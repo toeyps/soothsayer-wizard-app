@@ -1,12 +1,5 @@
-//! Bounded, display-oriented query pipeline for the Dashboard.
-//!
-//! filter → operation transform → optional hourly aggregation → min/max
-//! downsample, all executed Rust-side over the columnar store. The frontend
-//! only ever receives O(max_points) chart points or one table page — never
-//! the full dataset. This replaces the old flow where `get_data` streamed
-//! every row to the WebView and React redid the transforms per render
-//! (duplicating the dataset in the JS heap and freezing the main thread on
-//! large CSVs).
+//! Bounded Dashboard query pipeline, all Rust-side: filter, operation, optional hourly aggregation, min/max downsample.
+//! The frontend only gets O(max_points) points.
 
 use crate::csv_processor::{micros_to_naive, ColumnarData, TS_MISSING};
 use crate::{DataFilter, ResolvedFilter};
@@ -14,29 +7,19 @@ use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Hard ceiling on `max_points` so a bad caller can't request a "sample"
-/// the size of the dataset and reintroduce the renderer OOM this module
-/// exists to prevent.
+/// Hard ceiling on max_points so a caller can't request a dataset-sized sample.
 const MAX_POINTS_CEILING: usize = 100_000;
 
-/// One clock hour in epoch-microseconds (the unit of `ts_parsed`). Shared with
-/// the health score's hourly grouping (`health_hourly`) so both bucket a row
-/// into the SAME hour.
+/// One clock hour in epoch microseconds (the ts_parsed unit); shared with health_hourly.
 pub(crate) const HOUR_US: i64 = 3_600_000_000;
 
-/// The timestamp text of an hour bucket: the START of clock hour `hour`
-/// (`ts_parsed.div_euclid(HOUR_US)`), e.g. `2024-01-05T13:00:00`. THE one label
-/// rule of an hourly point - the Dashboard's hourly aggregation and the health
-/// score's hourly points both use it.
+/// Label of an hour bucket: the start of clock hour `hour` (ts_parsed.div_euclid(HOUR_US)).
 pub(crate) fn hour_label(hour: i64) -> String {
     micros_to_naive(hour.saturating_mul(HOUR_US))
         .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S").to_string())
         .unwrap_or_default()
 }
 
-// ---------------------------------------------------------------------------
-// Wire types (deserialized from the frontend `SensorOperationConfig` verbatim)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SingleOp {
@@ -54,8 +37,7 @@ pub struct MultiOp {
     pub op_type: String,
 }
 
-/// Mirrors the frontend `SensorOperationConfig` (camelCase keys). Extra
-/// wire fields (e.g. `customName`) are ignored by serde's default behavior.
+/// Mirrors the frontend SensorOperationConfig (camelCase); extra wire fields are ignored.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationConfig {
@@ -67,14 +49,8 @@ pub struct OperationConfig {
     pub multi_op: Option<MultiOp>,
 }
 
-// ---------------------------------------------------------------------------
-// Output types
-// ---------------------------------------------------------------------------
 
-/// Columnar chart payload: one x-axis array + one value array per header.
-/// `series[s]` aligns with `headers[s]`; `null` = missing. Bounded to
-/// `max_points` rows by min/max decimation, so IPC size, JS heap, and
-/// ECharts' internal buffers stay constant regardless of dataset size.
+/// Columnar payload: `series[s]` aligns with `headers[s]`, null = missing; bounded to max_points.
 #[derive(Debug, Serialize)]
 pub struct ChartView {
     pub headers: Vec<String>,
@@ -88,9 +64,6 @@ pub struct ChartView {
     pub ts_max: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Resolved query context
-// ---------------------------------------------------------------------------
 
 /// Operation pre-parsed out of its wire (string) form so the per-cell hot
 /// loops don't compare strings millions of times.
@@ -113,8 +86,7 @@ enum MultiKind {
     Sum,
     Mean,
     Median,
-    /// Unrecognized op id — all-null result column (legacy JS left
-    /// `result = null` for unmatched switch arms).
+    /// Unrecognized op id: all-null result column.
     Unknown,
 }
 
@@ -214,9 +186,7 @@ impl QueryCtx<'_> {
         self.out_headers.len()
     }
 
-    /// Value of output column `c` at dataset row `r` (NaN = missing),
-    /// with the operation transform applied. Mirrors the legacy JS
-    /// `filteredData` math exactly, including its edge cases.
+    /// Value of output column `c` at dataset row `r` (NaN = missing) with the operation applied.
     #[inline]
     fn out_value(&self, c: usize, r: usize) -> f64 {
         match &self.op {
@@ -230,7 +200,7 @@ impl QueryCtx<'_> {
                     SingleKind::Add(x) => v + x,
                     SingleKind::Sub(x) => v - x,
                     SingleKind::Mul(x) => v * x,
-                    // Legacy JS: divide-by-zero returns the value unchanged.
+                    // Divide by zero returns the value unchanged.
                     SingleKind::Div(x) => {
                         if *x != 0.0 {
                             v / x
@@ -280,13 +250,8 @@ impl QueryCtx<'_> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hourly aggregation ("Sampling (1 hr)" select: avg/max/min/first/last)
-// ---------------------------------------------------------------------------
 
-/// Post-op rows folded into one row per wall-clock hour of the data's own
-/// timestamps (load-time-parsed; rows with unparseable timestamps are
-/// dropped, they can't be bucketed). Output is chronological.
+/// Post-op rows folded to one per wall-clock hour; rows with unparseable timestamps are dropped. Chronological.
 struct AggRows {
     timestamps: Vec<String>,
     /// `rows[k][c]` — row-major, NaN = missing. Small: one row per hour.
@@ -379,18 +344,9 @@ fn aggregate_hourly(ctx: &QueryCtx, method: &str) -> AggRows {
     AggRows { timestamps, rows }
 }
 
-// ---------------------------------------------------------------------------
-// Min/max decimation
-// ---------------------------------------------------------------------------
 
-/// Decimate `n` logical rows down to at most `max_points` output rows.
-///
-/// Rows are split into `max_points / 2` contiguous buckets; each bucket
-/// emits up to two rows — every series' bucket-minimum (stamped at the
-/// bucket's first timestamp) and bucket-maximum (at the last). On a chart
-/// where each bucket spans ~1–2 px this preserves the exact vertical
-/// envelope of the raw trace (spikes included), which plain striding would
-/// destroy. Under `max_points` rows it's a straight passthrough.
+/// Decimate to at most max_points: max_points/2 buckets, each emitting every series' min (at its first timestamp) and max (at its last).
+/// Passes through unchanged when n <= max_points.
 pub(crate) fn decimate(
     n: usize,
     n_cols: usize,
@@ -475,24 +431,9 @@ pub(crate) fn decimate(
     (timestamps, series)
 }
 
-// ---------------------------------------------------------------------------
-// Dataset-wide time bounds (NOT filtered — see `get_dataset_time_bounds`)
-// ---------------------------------------------------------------------------
 
-/// True first/last timestamp across the WHOLE dataset, ignoring any
-/// dashboard filter. `ChartView::ts_min`/`ts_max` can't serve this — they're
-/// computed from the (possibly filtered) query population, so once any time
-/// filter is applied they stop reflecting the dataset's real extent. This is
-/// the one source of truth for "what does this dataset span," used to label
-/// the Time Range panel and to anchor the relative-range (Y/M/W/D/H) buttons
-/// to the data itself instead of the machine's clock.
-///
-/// Scans `ts_parsed` rather than trusting `timestamps.first()`/`.last()`:
-/// rows are ordered by the ORIGINAL text (string order), which only matches
-/// chronological order when every row shares one zero-padded format — a
-/// single unparseable row at either end (e.g. a Buddhist-calendar leap day
-/// that isn't one in the Gregorian calendar) would otherwise silently skew
-/// the bound by that row's position rather than being excluded.
+/// True first/last timestamp of the whole dataset, ignoring filters.
+/// Scans ts_parsed, not first()/last() text: string order isn't chronological and an unparseable end row would skew it.
 pub fn full_dataset_time_bounds(data: &ColumnarData) -> (Option<String>, Option<String>) {
     let mut min_us: Option<i64> = None;
     let mut max_us: Option<i64> = None;
@@ -507,9 +448,6 @@ pub fn full_dataset_time_bounds(data: &ColumnarData) -> (Option<String>, Option<
     (min_us.and_then(fmt), max_us.and_then(fmt))
 }
 
-// ---------------------------------------------------------------------------
-// Public entry points
-// ---------------------------------------------------------------------------
 
 pub fn build_chart_view(
     data: &ColumnarData,
@@ -559,16 +497,13 @@ pub fn build_chart_view(
     })
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::csv_processor::ColumnarData;
 
-    /// 6 rows, minute-spaced across two hours (3 rows in 00:xx, 3 in 01:xx).
+    /// 6 rows across two hours (3 rows in 00:xx, 3 in 01:xx).
     /// A = [1, 2, NaN, 4, 5, 6], B = [10, 20, 30, 40, NaN, 60].
     fn dataset() -> ColumnarData {
         let ts: Vec<Option<String>> = vec![
@@ -679,7 +614,7 @@ mod tests {
         assert_eq!(v.series[0][0], Some(6.0));
         assert_eq!(v.series[0][2], None); // null stays null
 
-        // Legacy JS behavior: divide by zero returns the value unchanged.
+        // Divide by zero returns the value unchanged.
         let v = build_chart_view(&d, &filter(&["A"]), Some(&single_op("divide", 0.0)), "raw", 100).unwrap();
         assert_eq!(v.series[0][0], Some(1.0));
     }
@@ -768,11 +703,7 @@ mod tests {
         assert_eq!(v.series.len(), 1);
     }
 
-    /// Perf smoke test over a 2M-row dataset — run explicitly with
-    /// `cargo test -- --ignored perf_smoke` (prints per-query timings).
-    /// Asserts the payload stays bounded; the timing printout is the
-    /// evidence that dashboard interactions stay sub-second even in a
-    /// debug build.
+    /// Perf smoke on 2M rows; run with `cargo test -- --ignored perf_smoke`; asserts the payload stays bounded and prints timings.
     #[test]
     #[ignore]
     fn perf_smoke_two_million_rows() {

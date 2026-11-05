@@ -1,22 +1,7 @@
-//! Statistical metric helpers used across the predictive-model code paths.
-//!
-//! All helpers are pure `std`, side-effect free, and operate on `&[f64]`.
-//! Edge cases (empty input, single-element where the metric is undefined)
-//! return `f64::NAN` instead of panicking. This matches the behaviour of
-//! numpy / pandas on degenerate inputs and keeps callers from needing to
-//! sprinkle `is_empty()` guards everywhere.
-//!
-//! Numerical contract: parity with the corresponding numpy/pandas reference
-//! to within 1e-9 on hand-computed fixtures (see `tests` below).
-//!
-//! `mean` and `sample_sd` are wired into `compute_sensor_stats`. `population_sd`, `r2_score`,
-//! and `rmse` are kept available for future callers.
+//! Pure `std` metric helpers on `&[f64]`; degenerate input returns `f64::NAN` instead of panicking.
+//! Parity with numpy/pandas to within 1e-9 on hand-computed fixtures (see `tests`).
 
-/// Coefficient of determination (R²).
-///
-/// `1 - SS_res / SS_tot` where `SS_tot` is computed against the mean of
-/// `y_true`. Returns `NaN` if the inputs are empty, mismatched in length,
-/// or `SS_tot` is zero (constant `y_true`, undefined R²).
+/// R² = 1 - SS_res / SS_tot against the mean of `y_true`; NaN for empty, mismatched length, or constant `y_true`.
 pub fn r2_score(y_true: &[f64], y_pred: &[f64]) -> f64 {
     if y_true.is_empty() || y_true.len() != y_pred.len() {
         return f64::NAN;
@@ -36,9 +21,7 @@ pub fn r2_score(y_true: &[f64], y_pred: &[f64]) -> f64 {
     1.0 - ss_res / ss_tot
 }
 
-/// Root mean squared error.
-///
-/// `sqrt(mean((y_true - y_pred)^2))`. Returns `NaN` for empty/mismatched input.
+/// NaN for empty or mismatched input.
 pub fn rmse(y_true: &[f64], y_pred: &[f64]) -> f64 {
     if y_true.is_empty() || y_true.len() != y_pred.len() {
         return f64::NAN;
@@ -63,10 +46,7 @@ pub fn mean(values: &[f64]) -> f64 {
     acc / (values.len() as f64)
 }
 
-/// Population standard deviation (ddof=0). Divides by `N`.
-///
-/// Returns `NaN` on empty input. The caller must pass a precomputed mean to
-/// avoid recomputing it (callers typically already have it).
+/// Population SD (ddof=0, divides by N); the caller passes the precomputed mean; NaN on empty.
 pub fn population_sd(values: &[f64], mean: f64) -> f64 {
     if values.is_empty() {
         return f64::NAN;
@@ -79,10 +59,7 @@ pub fn population_sd(values: &[f64], mean: f64) -> f64 {
     (acc / (values.len() as f64)).sqrt()
 }
 
-/// Sample standard deviation with Bessel's correction (ddof=1). Divides by `N - 1`.
-///
-/// Matches `pandas.Series.std()` (the wizard.py default). Returns `NaN` on
-/// empty input or single-element input (where ddof=1 is undefined).
+/// Sample SD (Bessel, ddof=1, divides by N - 1), matching `pandas.Series.std()`; NaN for fewer than 2 values.
 pub fn sample_sd(values: &[f64], mean: f64) -> f64 {
     let n = values.len();
     if n < 2 {
@@ -96,16 +73,10 @@ pub fn sample_sd(values: &[f64], mean: f64) -> f64 {
     (acc / ((n - 1) as f64)).sqrt()
 }
 
-/// Minimum number of decimals kept by [`round_metric`] — the legacy
-/// `wizard.py` `round(x, 3)` behaviour.
+/// Minimum number of decimals kept by [`round_metric`].
 const METRIC_MIN_DECIMALS: i32 = 3;
 
-/// Decimals [`round_metric`] keeps for `x`: `max(3, 3 - floor(log10|x|))`.
-///
-/// That is 3 decimals whenever those already give >= 4 significant digits
-/// (|x| >= 1), and otherwise exactly enough decimals for 4 significant
-/// digits (0.000412345 -> 7 decimals -> 0.0004123). `0` / NaN / ±inf use 3
-/// (nothing meaningful to scale by).
+/// Decimals `round_metric` keeps: 3 for |x| >= 1, else enough for 4 significant digits; 0 / NaN / ±inf use 3.
 fn metric_decimals(x: f64) -> i32 {
     if x == 0.0 || !x.is_finite() {
         return METRIC_MIN_DECIMALS;
@@ -114,8 +85,7 @@ fn metric_decimals(x: f64) -> i32 {
     (METRIC_MIN_DECIMALS - exp).max(METRIC_MIN_DECIMALS)
 }
 
-/// Round `x` to `decimals` places; returns `x` unchanged when the scaling
-/// would overflow/underflow (huge magnitudes are already integral anyway).
+/// Returns `x` unchanged when scaling would overflow (huge magnitudes are already integral).
 fn round_to_decimals(x: f64, decimals: i32) -> f64 {
     if !x.is_finite() || x.abs() >= 1e15 {
         return x;
@@ -131,28 +101,13 @@ fn round_to_decimals(x: f64, decimals: i32) -> f64 {
     scaled.round() / scale
 }
 
-/// Rounding for every numeric metric written to the `*_INFO_*.json` model
-/// files (replaces the old fixed `r3`, `round(x, 3)` in `wizard.py`).
-///
-/// IDENTICAL to 3-decimal rounding whenever that keeps at least 4
-/// significant digits (|x| >= 1); for smaller magnitudes it keeps 4
-/// significant digits instead. Why: a sensor with SD ~0.0004 rounded to 3
-/// decimals collapses `1sd_boundary` / `3sd_boundary` onto the same number
-/// (or onto the mean), which turns the later health-score denominator into
-/// zero. `0` stays `0`; NaN / ±inf pass through untouched.
-///
-/// Examples: `1234.5678 -> 1234.568`, `0.000412345 -> 0.0004123`,
-/// `-0.000412345 -> -0.0004123`, `0.123456 -> 0.1235`.
+/// Rounding for every reported metric: 3 decimals when |x| >= 1, else 4 significant digits.
+/// With a tiny SD, 3 decimals would merge the 1 SD and 3 SD boundaries (zero health-score denominator). 0 stays 0; NaN / ±inf pass through.
 pub fn round_metric(x: f64) -> f64 {
     round_to_decimals(x, metric_decimals(x))
 }
 
-/// [`round_metric`] for a value that sits next to a (usually much smaller)
-/// spread — a mean/centre/boundary and its SD. Uses whichever of the two
-/// needs MORE decimals, so `mean ± k·sd` stays resolvable even when `|mean|`
-/// is large and `sd` tiny (mean 1000.0, sd 0.0004 would otherwise collapse
-/// every boundary onto 1000.0). A zero / non-finite `scale` is ignored.
-/// Equal to [`round_metric`] whenever `|scale| >= 1` or `scale` is absent.
+/// `round_metric` for a value next to a smaller spread: uses the finer of the two precisions so `mean ± k·sd` stays resolvable.
 pub fn round_metric_scaled(x: f64, scale: f64) -> f64 {
     let own = metric_decimals(x);
     let by_scale = if scale == 0.0 || !scale.is_finite() {
@@ -178,7 +133,6 @@ mod tests {
         );
     }
 
-    // ---------- mean ----------
 
     #[test]
     fn mean_simple() {
@@ -200,13 +154,10 @@ mod tests {
         assert!(mean(&[]).is_nan());
     }
 
-    // ---------- population_sd ----------
 
     #[test]
     fn population_sd_known_three_values() {
-        // values = [2,4,4]  mean = 10/3
-        // pop variance = ((2-10/3)^2 + (4-10/3)^2 + (4-10/3)^2) / 3
-        //              = (16/9 + 4/9 + 4/9) / 3 = 24/27 = 8/9
+        // Hand-computed: values [2,4,4], population variance 8/9.
         let v = [2.0, 4.0, 4.0];
         let m = mean(&v);
         approx(population_sd(&v, m), (8.0_f64 / 9.0).sqrt());
@@ -229,13 +180,10 @@ mod tests {
         assert!(population_sd(&[], 0.0).is_nan());
     }
 
-    // ---------- sample_sd ----------
 
     #[test]
     fn sample_sd_known_four_values() {
-        // values = [1,2,3,4]  mean = 2.5
-        // sum sq dev = 2.25 + 0.25 + 0.25 + 2.25 = 5.0
-        // sample variance = 5/3 -> sd = sqrt(5/3)
+        // Hand-computed: values [1,2,3,4], sample variance 5/3.
         let v = [1.0, 2.0, 3.0, 4.0];
         approx(sample_sd(&v, mean(&v)), (5.0_f64 / 3.0).sqrt());
     }
@@ -279,7 +227,6 @@ mod tests {
         approx(samp, (32.0_f64 / 7.0).sqrt());
     }
 
-    // ---------- r2_score ----------
 
     #[test]
     fn r2_perfect_fit_is_one() {
@@ -297,12 +244,7 @@ mod tests {
 
     #[test]
     fn r2_known_value() {
-        // y = [3, -0.5, 2, 7], yhat = [2.5, 0.0, 2, 8]  (sklearn doc fixture)
-        // ss_res = 0.25 + 0.25 + 0 + 1 = 1.5
-        // mean_y = 2.875
-        // ss_tot = (3-2.875)^2 + (-0.5-2.875)^2 + (2-2.875)^2 + (7-2.875)^2
-        //        = 0.015625 + 11.390625 + 0.765625 + 17.015625 = 29.1875
-        // r2 = 1 - 1.5/29.1875 = 0.9486081370449679
+        // sklearn doc fixture: ss_res = 1.5, ss_tot = 29.1875.
         let y = [3.0, -0.5, 2.0, 7.0];
         let yp = [2.5, 0.0, 2.0, 8.0];
         approx(r2_score(&y, &yp), 1.0 - 1.5 / 29.1875);
@@ -326,7 +268,6 @@ mod tests {
         assert!(r2_score(&[], &[]).is_nan());
     }
 
-    // ---------- rmse ----------
 
     #[test]
     fn rmse_zero_when_perfect() {
@@ -359,10 +300,8 @@ mod tests {
         assert!(rmse(&[], &[]).is_nan());
     }
 
-    // ---------- round_metric ----------
 
-    /// The legacy fixed 3-decimal rounding the new rule must reproduce
-    /// wherever 3 decimals already give >= 4 significant digits.
+    /// Fixed 3-decimal rounding; `round_metric` must match it wherever 3 decimals already give >= 4 significant digits.
     fn legacy_r3(x: f64) -> f64 {
         (x * 1000.0).round() / 1000.0
     }
@@ -373,7 +312,7 @@ mod tests {
         assert_eq!(round_metric(1.23456), 1.235);
         assert_eq!(round_metric(5.0), 5.0);
         assert_eq!(round_metric(99.9996), 100.0);
-        // Anything with |x| >= 1 is bit-identical to the old r3.
+        // Anything with |x| >= 1 is bit-identical to `legacy_r3`.
         for x in [1.0, 1.0005, 3.14159, 12.3456, 250.5555, 9999.9999, -1.2346, -75.4321] {
             assert_eq!(round_metric(x), legacy_r3(x), "x = {x}");
         }
@@ -385,7 +324,7 @@ mod tests {
         assert_eq!(round_metric(0.00412345), 0.004123);
         assert_eq!(round_metric(0.0412345), 0.04123);
         assert_eq!(round_metric(0.123456), 0.1235);
-        // The motivating case: legacy r3 collapsed this to 0.0.
+        // A tiny value that fixed 3-decimal rounding collapses to 0.0.
         assert_eq!(legacy_r3(0.0004), 0.0);
         assert_eq!(round_metric(0.0004), 0.0004);
     }
@@ -421,14 +360,13 @@ mod tests {
 
     #[test]
     fn round_metric_keeps_small_sd_bands_distinct() {
-        // SD ~0.0004: with legacy r3 the 1SD and 3SD half-widths were both 0.0.
+        // SD ~0.0004: with fixed 3-decimal rounding (`legacy_r3`) the 1SD and 3SD half-widths would both be 0.0.
         let sd = round_metric(0.000412);
         assert_eq!(sd, 0.000412);
         assert!(round_metric(sd) > 0.0);
         assert_ne!(round_metric(1.0 * sd), round_metric(3.0 * sd));
     }
 
-    // ---------- round_metric_scaled ----------
 
     #[test]
     fn round_metric_scaled_equals_round_metric_when_scale_is_not_small() {

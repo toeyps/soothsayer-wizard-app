@@ -1,23 +1,4 @@
-/**
- * RecentProjectCard -- the Rename / Delete actions must never fall through to
- * "open the project".
- *
- * In the real app (Tauri / WebView2) clicking the pencil or the red
- * trash on a recent-project card must not load the workspace. A plain
- * `fireEvent.click(renameButton)` always passes, because jsdom does no hit
- * testing. The hazard (seen in Chromium with real clicks): while the
- * actions were shown, the time label (opacity 0 -> its own stacking context)
- * painted ABOVE the buttons (opacity 1, no stacking context), so the click hit
- * the invisible "2 h ago" and bubbled to the card. Further fall-through paths:
- *   1. the actions were hit-testable ONLY while React's hover/focus state was
- *      true (`pointer-events: none` otherwise) -- a lost hover state (a
- *      spurious mouseleave, a touch tap) let the press land on the time label
- *      / full-card "Open" button underneath, whose click opens the project;
- *   2. a press that starts on Rename/Delete and is released on another element
- *      makes the browser dispatch `click` to the common ancestor -- the card,
- *      whose onClick opens the project.
- * These tests drive those paths directly.
- */
+/** Rename/Delete must never fall through to open; jsdom has no hit testing, so tests drive the hazard paths directly. */
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import RecentProjectCard from '../components/upload/RecentProjectCard';

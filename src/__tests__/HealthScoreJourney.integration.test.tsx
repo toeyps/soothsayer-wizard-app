@@ -1,19 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Health score — the FULL user journey per model kind,
- * with the REAL Dashboard and the REAL Build Model window (and its real Model
- * fit / Health score pages, ScoreRuler, ChecksCard) on ONE in-memory
- * workspace file, ONE event bus, and a fake Rust backend that implements the
- * real health contract (`helpers/fakeHealthRust.ts`): validation codes and
- * messages, scores, generation guard, the Relationship fit cache, the export.
- *
- * Dashboard (FG sheet creates the model) -> Build Model -> Running condition
- * Apply -> settings -> Train -> Model fit -> Health score -> set points ->
- * Checks / score chart -> Mark complete -> files -> Dashboard dot green ->
- * Mark incomplete -> reopen -> "close and reopen the app" (re-hydrate from disk).
- */
+/* Full user journey per model kind: real Dashboard and Build Model window, one in-memory workspace, one event bus, fake Rust health backend (`helpers/fakeHealthRust.ts`). */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -101,8 +89,7 @@ describe('Individual: the whole journey', () => {
 
         // 3) Model fit page (Individual): the KPI tiles + value-over-time + distribution; no residual chart.
         await waitFor(() => expect(bmw().getByTestId('model-fit-individual')).toBeTruthy());
-        // The tiles print the statistics of the 49 training rows (the page shows no row count any more:
-        // Mean · SD · Outside ±3SD — "Workbench detail pages v2", SPEC §5).
+        // The tiles print the statistics of the 49 training rows (Mean · SD · Outside ±3SD); no row count on the page.
         const fitStats = (env.backend!.cmds('compute_health_preview').filter(c => c.args.request.kind === 'individual' && c.result !== undefined).pop()!.result as any).stats;
         expect(fitStats.rows).toBe(49);
         expect([...bmw().getByTestId('fit-kpis').children].map(c => c.getAttribute('data-testid'))).toEqual(['stat-mean', 'stat-sd', 'stat-outside3']);
@@ -147,8 +134,7 @@ describe('Individual: the whole journey', () => {
         await settle(350);
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
 
-        // 5) Mark complete -> the set points are checked (no files: Export results writes them),
-        //    status Complete on disk with the checked set points.
+        // Mark complete checks the set points and sets Complete on disk; it writes no files (Export results does).
         await markComplete();
         await waitFor(() => expect(bmw().getByTestId('mark-incomplete')).toBeTruthy());
         expect(bmw().queryByTestId('save-ok')).toBeNull();
@@ -266,8 +252,7 @@ describe('Relationship: the whole journey', () => {
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'relationship')).toBe('complete'));
 
-        // Restart: a new Rust session has no fit; opening the Complete model re-fits in the background
-        // (persistMeta:false — nothing written, still Complete) and the Health page works again.
+        // After restart Rust has no fit; opening the Complete model re-fits silently (`persistMeta:false`: nothing written).
         await restartApp();
         selectSensor('tag1');
         await settle(400);
@@ -310,8 +295,7 @@ describe('Clustering: the whole journey', () => {
         expect(m0.clusterRanges).toHaveLength(2);
 
         await waitFor(() => expect(bmw().getByTestId('model-fit-clustering')).toBeTruthy());
-        // Model fit: both clusters are drawn with their rings on the ONE full-width chart
-        // (the "Clusters" summary card beside it was removed 2026-10-11).
+        // Both clusters with their rings on the one full-width chart; no Clusters summary card.
         expect([...bmw().getByTestId('model-fit-clustering').children].filter(c => c.tagName === 'SECTION').map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
         expect(bmw().queryByTestId('cluster-summary')).toBeNull();
         expect(chartsWithSeries('Cluster 1 3× SD').length).toBeGreaterThan(0);

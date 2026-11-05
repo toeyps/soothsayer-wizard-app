@@ -1,16 +1,4 @@
-/**
- * Cross-zone: Rust's 10 MB refusal for a tag-name (mapping) CSV
- * (`MAX_SIDE_CSV_BYTES`, csv_processor.rs `check_side_csv_size`, 2026-10-28)
- * must reach the user verbatim through the REAL `useMappingData` hook and the
- * REAL `TagNamesPanel`.
- *
- * Tauri rejects `invoke` with the bare Rust `Err(String)` — a plain string,
- * not an `Error` — so this test rejects with a string exactly as the command
- * does. The hook's own unit test only covers an `Error` object, and the
- * panel's test only feeds a ready-made `mapping.error`, so neither alone
- * proves the message survives the trip (or that the panel still shows it
- * once the failed file has been cleared and the picker is back).
- */
+/** Rust's 10 MB refusal for a tag-name CSV must reach the user verbatim through the real `useMappingData` and `TagNamesPanel`. Tauri rejects `invoke` with a bare string, not an `Error`. */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { useMappingData } from '../hooks/useMappingData';

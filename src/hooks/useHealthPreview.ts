@@ -12,8 +12,7 @@ import type { RunningConditionFg } from '../utils/runningCondition';
 const DEBOUNCE_MS = 250;
 
 export interface UseHealthPreviewOptions {
-    /** The model to preview — pass the DRAFT-merged model when the user has
-     *  unsaved edits, exactly like Train. `null`/`undefined` = nothing to show. */
+    /** The model to preview; pass the draft-merged model when there are unsaved edits, as Train does. */
     model: FailureModel | null | undefined;
     /** Workspace slice (supplies the workspace running condition). */
     fg: RunningConditionFg;
@@ -32,8 +31,7 @@ export interface UseHealthPreviewOptions {
     includeOutOfScope?: boolean;
     /** Rust session generation (`metadata.generation`) — stale windows get `STALE_SESSION`. */
     expectedGeneration?: number;
-    /** Bump to force a refetch of an otherwise identical request (e.g. right
-     *  after a Relationship re-train re-populated Rust's fit cache). */
+    /** Bump to refetch an otherwise identical request (e.g. after a Relationship re-train). */
     revision?: number;
     debounceMs?: number;
     /** Counts the requests Rust is working on, superseded ones too: they still hold the engine. */
@@ -41,41 +39,24 @@ export interface UseHealthPreviewOptions {
 }
 
 export interface UseHealthPreviewResult {
-    /** The latest successful response for THIS model. Kept while the next one
-     *  loads (charts never blank out) and while the hook is disabled (a stale
-     *  model keeps its old charts, shown "Out of date"). `null` before the first
-     *  success, for another model's data, and after an error. */
+    /** Latest successful response for this model, kept while the next loads or while disabled; null before first success, for another model, and after an error. */
     data: HealthPreview | null;
     loading: boolean;
     /** Readable message of the last failure, or `null`. */
     error: string | null;
     /** Stable Rust code of the last failure (`NOT_FITTED`, `NO_DATA`, ...), or `null`. */
     errorCode: HealthErrorCode | null;
-    /** The Relation-model fit is gone from Rust's memory — the pages show the
-     *  "Fit no longer in memory" board ("Load it again"; a model that is not
-     *  Complete can also be re-trained with Train sensor). */
+    /** Relation-model fit gone from Rust memory: pages show the 'Fit no longer in memory' board. */
     notFitted: boolean;
     /** Same as `notFitted`; the name the train flow uses. */
     needsRetrain: boolean;
-    /** Why no request is being made (`null` while active). `'stale'` = the model
-     *  was trained but its inputs changed since; `'inputs'` = a required sensor
-     *  is missing; `'disabled'` = `enabled` is false / no model. */
+    /** Why no request is made: 'stale' (inputs changed since training), 'inputs' (required sensor missing), 'disabled'; null while active. */
     idle: 'stale' | 'inputs' | 'disabled' | null;
-    /** The last SUCCESSFUL response for THIS model, kept even after a later
-     *  request failed (`data` is `null` then, because it no longer matches the
-     *  request that failed). The Health score page draws its page and inputs
-     *  from it while an error banner shows, so a one-off failure never makes
-     *  the page disappear. `null` before the first success and for another model.
-     *  (Optional in the type only so hand-built fixtures need not spell it; the
-     *  hook always returns it.) */
+    /** Last successful response for this model, kept after a later failure so the page doesn't vanish under an error banner. */
     lastData?: HealthPreview | null;
     /** Ask again for the same request (the error banner's Retry button). */
     retry?: () => void;
-    /** Ask again AND tell Rust to retry scoring the scoring periods:
-     *  after a failed Relation-model prediction Rust remembers the failure so
-     *  debounced set-point edits don't re-run the slow sidecar; only the
-     *  `test_scoring_failed` notice's "Try again" clears it, by sending
-     *  `retry_test_scoring: true` on exactly ONE request. */
+    /** Re-ask and clear Rust's remembered scoring failure; sent as `retry_test_scoring` on ONE request. */
     retryTestScoring?: () => void;
 }
 
@@ -90,21 +71,7 @@ interface State {
 
 const EMPTY: State = { modelId: null, data: null, lastData: null, loading: false, error: null, errorCode: null };
 
-/**
- * `compute_health_preview` for one model: the bounded series / stats / score /
- * validation the Build Model "Model fit" and "Health score" pages draw.
- *
- * - Requests are built by `buildHealthPreviewRequest` (same training scope as
- *   Train) and keyed by their JSON, so the effect only re-runs when the request
- *   itself changes — an unrelated field changing on the model (name, notes,
- *   category, status ...) never refetches.
- * - Debounced and sequence-guarded: a late response of an older request can
- *   never overwrite a newer one (same pattern as `useChartData`).
- * - No request is made for a stale model (trained, inputs changed since), a
- *   model missing a required sensor, or when `enabled` is false.
- * - A failure resolves to `error` + `errorCode`; `NOT_FITTED` (Relationship fit
- *   no longer in memory) additionally sets `notFitted` / `needsRetrain`.
- */
+/** `compute_health_preview` for one model with the same training scope as Train. Keyed by request JSON, debounced and sequence-guarded; no request for stale, input-missing or disabled models. */
 export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPreviewResult {
     const { model, fg, headers, enabled = true } = opts;
     const [state, setState] = useState<State>(EMPTY);
@@ -112,10 +79,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     // Bumped by `retry`: part of the effect's key, never sent.
     const [retryTick, setRetryTick] = useState(0);
     const retry = useCallback(() => setRetryTick(n => n + 1), []);
-    // Set by `retryTestScoring`: WHICH request the user asked to retry (model id +
-    // Relation-model cache key at click time). Sent once, and only with a request
-    // for that same model and fit -- never carried over to another model's
-    // request after an idle spell or a model switch.
+    // Which request the user asked to retry (model id + fit cache key); sent once and only for that same model and fit.
     const retryScoringRef = useRef<{ modelId: string | null; cacheKey: string | null } | null>(null);
     // Live mirrors for the stable `retryTestScoring` callback (assigned below).
     const keyRef = useRef<string | null>(null);
@@ -142,8 +106,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
         if (!request) idle = 'inputs';
     }
 
-    // The request, serialised: the effect's only trigger (callers pass freshly
-    // built objects every render). `revision` is part of the key but never sent.
+    // The serialised request is the effect's only trigger; `revision` is in the key but never sent.
     const requestKey = healthRequestKey(request);
     const key = requestKey === null ? null : `${model?.id}|${opts.revision ?? 0}|${retryTick}|${requestKey}`;
     const requestRef = useRef(request);
@@ -152,8 +115,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     keyRef.current = key;
     modelIdRef.current = modelId;
     const retryTestScoring = useCallback(() => {
-        // Nothing would be sent while idle (stale model, missing inputs): do not
-        // leave a pending retry behind for whatever request comes next.
+        // Idle (nothing would be sent): leave no pending retry for the next request.
         if (keyRef.current === null) return;
         retryScoringRef.current = { modelId: modelIdRef.current, cacheKey: requestRef.current?.cache_key ?? null };
         setRetryTick(n => n + 1);
@@ -163,8 +125,7 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
     useEffect(() => {
         const req = requestRef.current;
         if (key === null || !req) {
-            // Idle: drop any in-flight response, keep the last data on screen,
-            // and forget a pending test-scoring retry (it was for that request).
+            // Idle: drop the in-flight response, keep the last data on screen, forget a pending scoring retry.
             retryScoringRef.current = null;
             seqRef.current++;
             setState(s => (s.loading ? { ...s, loading: false } : s));
@@ -196,16 +157,13 @@ export function useHealthPreview(opts: UseHealthPreviewOptions): UseHealthPrevie
                 .catch(err => {
                     if (seqRef.current !== mySeq) return;
                     const { code, message } = parseHealthError(err);
-                    // The old data no longer matches the request that failed (`data` is
-                    // null), but the last good answer stays available as `lastData`.
+                    // `data` no longer matches the failed request, but the last good answer stays in `lastData`.
                     setState(s => ({ modelId, data: null, lastData: s.modelId === modelId ? s.lastData : null, loading: false, error: message, errorCode: code }));
                 });
         }, debounceMs);
         return () => {
             clearTimeout(timer);
-            // Invalidate the in-flight request so its late resolve is ignored.
-            // This ref is a monotonic race-guard counter, not a DOM node — the
-            // cleanup must see its live value.
+            // Invalidate the in-flight request so its late resolve is ignored; the ref is a counter, so cleanup must read its live value.
             // eslint-disable-next-line react-hooks/exhaustive-deps
             seqRef.current++;
         };

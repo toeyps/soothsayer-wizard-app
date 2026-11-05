@@ -1,11 +1,5 @@
-//! The long-name test data goes through the same Rust that a real import uses.
-//!
-//! The manual test plan's LN section tells a tester to create a project from `scripts/make-longname-testdata.py`'s
-//! files. A new project needs a tag-name file that lists exactly the data's sensors, so two things must hold in the
-//! real loader, not just in the script's own check:
-//!   1. long headers (brackets, " - ", 150+ characters) load as sensor columns, untouched;
-//!   2. a tag-name file whose descriptions are ALL blank still matches: it is the only way left to get a project whose
-//!      sensors show their tag alone.
+//! The long-name test data goes through the same Rust as a real import: the loader must (1) load long headers (brackets, " - ", 150+ chars)
+//! as untouched sensor columns and (2) match a tag-name file whose descriptions are ALL blank (sensors shown by tag alone).
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

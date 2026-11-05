@@ -78,9 +78,7 @@ describe('niceExtent', () => {
     });
 });
 
-// The chart's time axis used `new Date(text)`, so a CSV whose stamps
-// carry an offset ("…+07:00", "Z") was drawn shifted on a PC in another time zone — while the
-// read-outs beside it (`formatDataStamp`) showed the stamp's own clock.
+// Stamps are read as their own wall clock; `new Date(text)` would shift offset stamps on a PC in another zone.
 describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time', () => {
     const local = (y: number, mo: number, d: number, h = 0, mi = 0, s = 0, ms = 0) => new Date(y, mo - 1, d, h, mi, s, ms).getTime();
 
@@ -93,7 +91,7 @@ describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time
         expect(wallClockMs('2026-02-09 23:50:07.250')).toBe(local(2026, 2, 9, 23, 50, 7, 250));
         expect(wallClockMs('2026-02-09 23:50:07,5')).toBe(local(2026, 2, 9, 23, 50, 7, 500));
         expect(wallClockMs('2026-02-09 23:50:07.123456')).toBe(local(2026, 2, 9, 23, 50, 7, 123));
-        // a date alone is that day's LOCAL midnight (`new Date('2026-02-09')` would be UTC midnight)
+        // A date alone is that day's LOCAL midnight (`new Date('2026-02-09')` would be UTC).
         expect(wallClockMs('2026-02-09')).toBe(local(2026, 2, 9));
     });
 
@@ -117,8 +115,7 @@ describe('wallClockMs / parseTimestamps: a stamp sits at its OWN wall-clock time
         const pad = (n: number) => String(n).padStart(2, '0');
         for (const s of stamps) {
             const d = new Date(wallClockMs(s));
-            // the axis draws the LOCAL fields of the ms value: they must be the stamp's own clock
-            // (formatDataStamp prints that clock as "2026/02/09 23:50:00", from the text itself)
+            // The axis draws local fields; they must equal the stamp's own clock (what `formatDataStamp` prints).
             expect(`${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`, s).toBe(formatDataStamp(s));
         }
     });
@@ -203,8 +200,7 @@ describe('hourlyScopes (bands of a chart of hourly points)', () => {
 });
 
 describe('buildTimeSeriesOption', () => {
-    // Measured: a 4,000-point trace was re-stroked on every mousemove (about 40 ms a move);
-    // with the crosshair on its own layer and no hover emphasis a move redraws one line.
+    // A hover must redraw only the crosshair (own layer, no emphasis); a 4,000-point trace re-stroked at ~40 ms per move.
     it('a hover redraws only the crosshair: its own canvas layer, no series emphasis', () => {
         const o: any = buildTimeSeriesOption({ timestamps: ['2026-02-09T22:00:00', '2026-02-09T23:00:00'], lines: [{ name: 'V', values: [1, 2], color: '#fff' }] });
         expect(o.axisPointer).toEqual({ zlevel: 1, triggerEmphasis: false });
@@ -234,9 +230,7 @@ describe('buildTimeSeriesOption', () => {
         expect(o.series[0].data).toEqual([1, null, 3]);
     });
 
-    // workbench-redesign SPEC §3: a reference line is thin and named OUTSIDE the plot, on its
-    // right edge (the grid keeps a gutter for the text); one of the user's set points is the
-    // strongest line and carries its label INSIDE the plot at the right end.
+    // Reference lines are thin and named outside the plot; a user set point is stronger and labelled inside at the right end.
     it('reference-line labels sit at the right edge OUTSIDE the plot; a set point is labelled inside, above or below its line', () => {
         const o: any = buildTimeSeriesOption({
             ...spec,
@@ -284,9 +278,7 @@ describe('buildTimeSeriesOption', () => {
         expect(unlabelled.grid.right).toBe(18);
     });
 
-    // ECharts places a line's end label only while it animates the
-    // line in, so after a zoom the name stayed behind and could sit beside the OTHER line. A data
-    // line is therefore never named on the plot.
+    // ECharts places end labels only while animating in, so after zoom a name could sit by the other line: data lines are never named.
     it('a data line is NEVER named on the plot: no end label on any series, and no gutter kept for one', () => {
         const o: any = buildTimeSeriesOption({
             ...spec,
@@ -301,7 +293,7 @@ describe('buildTimeSeriesOption', () => {
         expect(JSON.stringify(o)).not.toContain('endLabel');
     });
 
-    // Review item 3: the range is rounded to a 1/2/5 step — the axis must STEP by it too.
+    // The range is rounded to a 1/2/5 step; the axis must STEP by it too.
     it('the Y axis steps by the step its range was rounded to; a fixed yRange leaves the step to the caller', () => {
         const o: any = buildTimeSeriesOption({ ...spec, lines: [{ name: 'V', values: [1.2, 5.1, 8.7], color: '#fff' }] });
         expect([o.yAxis.min, o.yAxis.max, o.yAxis.interval]).toEqual([0, 10, 2]);
@@ -310,8 +302,7 @@ describe('buildTimeSeriesOption', () => {
         expect(fixed.yAxis.interval).toBeUndefined();
     });
 
-    // Review item 4: with L / H far from the data the whole ±3SD band is a few pixels tall and
-    // "+1SD" printed on "+3SD" (both sit just above their line).
+    // With L/H far from the data the +-3SD band is a few px tall and '+1SD' printed on '+3SD'.
     describe('reference labels that would print on each other share ONE stacked label', () => {
         const sd = (u1: number, l1: number, u3: number, l3: number): HLine[] => [
             { y: u1, color: '#0f0', label: '+1SD', edge: 'above' },
@@ -328,13 +319,11 @@ describe('buildTimeSeriesOption', () => {
             expect(stackedEdgeLabels(sd(6, 4, 8, 2), 0).size).toBe(0);
         });
 
-        // Real-app report 2026-10-12: the stack used to hang on the OUTER line, so it sat wholly
-        // beyond it — "+1SD" read as the name of the +3SD line and "+3SD" floated over nothing.
+        // The stack hangs on the INNER line, so each name lands by its own line.
         it('stackedEdgeLabels: a close same-side pair is carried by the INNER line, listed top to bottom (each name lands by its own line); the outer line carries nothing', () => {
             const lines = sd(6, 4, 8, 2);
             const m = stackedEdgeLabels(lines, 2.5);
-            // above the lines: the +1SD line (the lower one) carries "+3SD" over "+1SD" — the stack
-            // grows upwards from it, so "+1SD" sits on its own line and "+3SD" one text line higher
+            // Above: the +1SD line carries '+3SD' over '+1SD' (grows upward); below: '-1SD' over '-3SD' (grows downward).
             expect(m.get(0)!.map(h => h.label)).toEqual(['+3SD', '+1SD']);
             expect(m.get(2)).toBeNull();
             // below the lines: the −1SD line (the higher one) carries "−1SD" over "−3SD", growing downwards
@@ -373,8 +362,7 @@ describe('buildTimeSeriesOption', () => {
             });
             const [u1, l1, u3, l3, h, l] = o.series[0].markLine.data;
             expect((8 - 6) / (o.yAxis.max - o.yAxis.min)).toBeLessThan(REF_LABEL_MIN_GAP); // the case this is for
-            // The stack hangs on the ±1SD lines and grows away from the band, so the carrier's own
-            // name ("+1SD" bottom-aligned on its line, "−1SD" top-aligned on its line) is right on it.
+            // The stack grows away from the band, so the carrier's own name sits on its line.
             expect(u3.label).toEqual({ show: false });
             expect(l3.label).toEqual({ show: false });
             expect(u1.label).toMatchObject({ show: true, position: 'end', verticalAlign: 'bottom', formatter: '{l0|+3SD}\n{l1|+1SD}' });
@@ -429,7 +417,7 @@ describe('Individual charts', () => {
         expect(bands).toHaveLength(1);
         expect(bands[0][0]).toEqual({ yAxis: 4, itemStyle: { color: CHART.okFill } });
         expect(bands[0][1]).toEqual({ yAxis: 6 });
-        expect(JSON.stringify(o)).not.toContain('rgba(229, 169, 61, 0.07)'); // the amber ±3SD fill that is gone
+        expect(JSON.stringify(o)).not.toContain('rgba(229, 169, 61, 0.07)'); // no amber ±3SD fill
         expect(Object.keys(CHART)).not.toContain('warnFill');
         expect(Object.keys(CHART)).not.toContain('dangerFill');
         const lines = o.series[0].markLine.data;
@@ -438,7 +426,7 @@ describe('Individual charts', () => {
         expect(lines.map((d: any) => [d.label.formatter, d.label.position])).toEqual([['+1SD', 'end'], ['−1SD', 'end'], ['+3SD', 'end'], ['−3SD', 'end']]);
         expect(lines.map((d: any) => d.label.verticalAlign)).toEqual(['bottom', 'top', 'bottom', 'top']); // + above, − below its line
         expect(o.grid.right).toBe(REF_LABEL_GUTTER);
-        // the Y range still holds the ±3SD lines although they carry no band any more
+        // the Y range still holds the ±3SD lines although they carry no band
         expect(o.yAxis.min).toBeLessThanOrEqual(2);
         expect(o.yAxis.max).toBeGreaterThanOrEqual(8);
     });
@@ -474,12 +462,12 @@ describe('Individual charts', () => {
         expect(wide.xAxis.max).toBeGreaterThanOrEqual(44.07);
         expect([wide.xAxis.min, wide.xAxis.max]).toEqual([32, 46]);
         for (const v of [o.xAxis.min, o.xAxis.max, wide.xAxis.min, wide.xAxis.max]) expect(Number.isInteger(v)).toBe(true);
-        // review item 3: each axis STEPS by the step it was rounded to, so no tick is added at a raw end
+        // each axis STEPS by the step it was rounded to, so no tick is added at a raw end
         expect([o.xAxis.interval, o.yAxis.interval, wide.xAxis.interval]).toEqual([1, 200, 2]);
         for (const a of [o.xAxis, o.yAxis, wide.xAxis]) expect((a.max - a.min) % a.interval).toBe(0);
     });
 
-    // Review item 7: `Math.min()` of nothing is Infinity — the X axis was `min: Infinity, max: -Infinity`.
+    // `Math.min()` of nothing is Infinity; the X axis must not get min: Infinity, max: -Infinity.
     it('Distribution with nothing finite to measure: the X axis is left to ECharts, never ±Infinity / NaN', () => {
         const empty = { bin_edges: [], counts: [], curve: [], bin_width: 0, n: 0 };
         const o: any = buildDistributionOption(empty, [], '°C');
@@ -499,8 +487,7 @@ describe('Individual charts', () => {
         expect('min' in one.xAxis).toBe(false);
     });
 
-    // The Distribution chart's top y label read
-    // "1,713.8000000000002" — the axis max was the raw max × 1.1, printed unformatted.
+    // The y max must be a round tick through the app formatter, not raw max × 1.1 ("1,713.8000000000002").
     it('Distribution: the y max is a nice round count and every value-axis label goes through the app formatter', () => {
         const p = ind();
         const h = { ...p.histogram!, counts: [10, 150, 1558, 130, 10] }; // 1558 × 1.1 = 1713.8000000000002
@@ -705,7 +692,6 @@ describe('Clustering chart', () => {
         expect(o.yAxis.name).toBe('Y');
     });
 
-    // ---- workbench-redesign SPEC §3 "Clustering" ----
 
     it('each ring LEVEL is named once — not once per cluster — at the edge of the ring that reaches furthest right', () => {
         const p = clu(2);
@@ -737,9 +723,7 @@ describe('Clustering chart', () => {
         for (const o of offsets(3)) expect(o[0]).toBe(0);
     });
 
-    // With a fixed "first up, last down" the names of a cluster tilted
-    // up to the right (positively correlated sensors — the usual shape) were pushed INTO each other:
-    // there the 1× edge is the LOWEST point and the N× edge the highest.
+    // The stagger follows the data; a fixed 'first up, last down' order would collide names of a tilted cluster.
     it('the stagger FOLLOWS THE DATA: the name whose ring edge is highest goes up, the lowest down — for a tilt either way', () => {
         const lv = [1, 3, 5].map((sigma, i) => ({ sigma, text: `L${i}`, color: '#fff' }));
         const of = (angle_deg: number) => ringLabelSeries([makeClusterStat(1, { x_center: 10, y_center: 20, x_sd: 4, y_sd: 0.3, angle_deg })], lv).data;
@@ -845,9 +829,9 @@ describe('Clustering chart', () => {
         const far = clusterExtent([400], [-300], [big], [1, 3]);
         expect(far.x[1]).toBeGreaterThanOrEqual(400);
         expect(far.y[0]).toBeLessThanOrEqual(-300);
-        // nothing to measure: a harmless default instead of ±Infinity
+        // both axes step by the step they were rounded to
         expect(clusterExtent([], [], [], [1, 3])).toEqual({ x: [0, 1], y: [0, 1] });
-        // review item 3: both axes step by the step they were rounded to
+        // both axes step by the step they were rounded to
         expect(o.xAxis.interval).toBeGreaterThan(0);
         expect((o.xAxis.max - o.xAxis.min) % o.xAxis.interval).toBe(0);
         expect((o.yAxis.max - o.yAxis.min) % o.yAxis.interval).toBe(0);
@@ -856,7 +840,7 @@ describe('Clustering chart', () => {
         expect([o.yAxis.min, o.yAxis.max, o.yAxis.interval]).toEqual(ex.y);
     });
 
-    // Review item 8: everything at ONE value (a constant sensor, rings of no size) gave min === max.
+    // Everything at ONE value (a constant sensor, rings of no size) must not give min === max.
     it('a degenerate extent (every point at one value, rings of no size) opens around the value — never min === max', () => {
         const dot = makeClusterStat(1, { x_center: 5, y_center: 7, x_sd: 0, y_sd: 0 });
         const ex = clusterExtent([5, 5], [7, 7], [dot], [1, 3]);
@@ -914,22 +898,21 @@ describe('Clustering chart', () => {
         expect(fmtClusterBound(4.61234)).toBe('4.61234'); // not "4.612"
         expect(fmtClusterBound(0.0005)).toBe('0.0005');
         expect(fmtClusterBound(12500.5)).toBe('12,500.5');
-        expect(fmtClusterBound(100 / 3)).toBe('33.333'); // 33.333333333333336 is nobody's typing
-        // review item 9: a negative zero (dragging a boundary down to 0) reads "0", never "-0"
+        expect(fmtClusterBound(100 / 3)).toBe('33.333'); // a negative zero (dragging a boundary down to 0) reads "0", never "-0"
+        // a negative zero (dragging a boundary down to 0) reads "0", never "-0"
         expect(fmtClusterBound(-0)).toBe('0');
         expect(fmtClusterBound(-0.5)).toBe('-0.5'); // a real negative keeps its sign
     });
 
-    // Review item 10: chartTheme held a second, older `fmtNum` that printed a non-zero value below
-    // 0.0005 as "0.000" — against the app's number rule (a non-zero value never shows as 0).
+    // The Workbench formatter must be the app's fmtNum: a non-zero value below 0.0005 never prints as '0.000'.
     it('the Workbench number formatter IS the app\'s fmtNum (plus "—" for no value and "0" for a negative zero)', () => {
         for (const v of [0, 1, 4.5, 12.5, 150.25, 1234.5678, 0.4567, 0.9123, 0.0002, -0.00004, 1e-9, 12345678901, -3.14159]) {
             expect(fmtNum(v), String(v)).toBe(fmtNumApp(v));
         }
-        expect(fmtNum(0.0002)).toBe('0.0002'); // was "0.000"
-        expect(fmtNum(-0.00004)).toBe('-0.00004'); // was "0.000"
-        expect(fmtNum(12.5)).toBe('12.5'); // was the padded "12.50"
-        expect(fmtNum(1234.5678)).toBe('1,234.568'); // was the rounded "1,235"
+        expect(fmtNum(0.0002)).toBe('0.0002');
+        expect(fmtNum(-0.00004)).toBe('-0.00004');
+        expect(fmtNum(12.5)).toBe('12.5');
+        expect(fmtNum(1234.5678)).toBe('1,234.568');
         expect(fmtNum(-0)).toBe('0');
         expect(fmtNum(null)).toBe('—');
         expect(fmtNum(undefined)).toBe('—');

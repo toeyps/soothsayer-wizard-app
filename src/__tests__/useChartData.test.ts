@@ -75,10 +75,7 @@ describe('useChartData', () => {
     });
 
     it('refetches when only `revision` changes, and never sends it to the backend', async () => {
-        // The data behind an unchanged query can change underneath it: editing
-        // a special sensor's recipe recomputes its column in the Rust session
-        // under the same name. Nothing in the query moves, so this is the only
-        // thing that tells the chart to go and look again.
+        // Editing a special sensor's recipe recomputes its column under the same name; only `revision` tells the chart to look again.
         mockInvoke.mockResolvedValue(viewResult);
         const { rerender } = renderHook(
             ({ q }: { q: ChartDataQuery }) => useChartData(q),

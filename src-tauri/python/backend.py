@@ -1,24 +1,10 @@
-"""Sidecar backend for Soothsayer-Wizard.
+"""Sidecar backend: reads one signed JSON line from stdin, writes one JSON line (result or {"error": ...}).
 
-Reads a single JSON line from stdin in the form:
-    {"action": "<name>", "payload": {...}}
-Writes a single JSON line to stdout with the result (or {"error": ...}).
+Request: {"action": "<name>", "payload": {...}}. Actions:
+    - preview_relationship  -> LinearGAM cumulative-feature preview
+    - predict_relationship  -> LinearGAM full-feature fit on the TRAIN rows, predictions for extra (test) rows only
 
-Currently supported actions:
-    - preview_relationship  → LinearGAM cumulative-feature preview
-    - predict_relationship  → LinearGAM full-feature fit on the TRAIN rows,
-                              predictions for extra (test) rows only
-
-Phase 1 (Hybrid Rust/Python architecture) goals satisfied by this file:
-    - No `pandas`, no `sklearn`, no `wizard` import.
-    - Only `numpy + pygam` plus stdlib.
-    - Accepts pre-cleaned `X` matrix and `y` vector — Rust handles
-      column projection and NaN-drop before invoking the sidecar.
-
-Phase 5: the legacy compat shim has been removed. The response now contains
-only the new shape: `request, r2_per_step, rmse2_per_step, predicted,
-residual`. The TypeScript types and the Build Model window's Model fit page consume this
-shape directly.
+Only numpy + pygam + stdlib. X and y arrive pre-cleaned: Rust projects columns and drops NaN.
 """
 
 import sys
@@ -33,16 +19,12 @@ import numpy as np
 import pygam
 
 
-# ── signed requests ─────────────────────────────────────────────────────
-# Only the app may drive this engine: each stdin line is
-# `<unix seconds> <hex HMAC-SHA256> <request JSON>`, signed by Rust
+# Each stdin line is `<unix seconds> <hex HMAC-SHA256> <request JSON>`, signed by Rust
 # (`lib.rs::signed_sidecar_line`) over `<unix seconds>\n<request JSON>`.
 # `_KEY` must match `SIDECAR_KEY` in lib.rs (a Rust test checks it).
 _KEY = bytes.fromhex("284e88bf1b87ea1628f1cd3c0d6da3fa10d9b04e883ea389911ab87704bab7b7")
-# Rust stamps the line just before launching us; the first launch on a slow
-# machine (unpacking + imports, antivirus scan) can take a while, so allow
-# minutes, not seconds. Older lines are refused so a captured line cannot be
-# replayed later.
+# Max age of a line. Generous: the first launch on a slow machine (unpacking, antivirus) is slow;
+# older lines are refused so a captured line cannot be replayed.
 _MAX_AGE_S = 300
 
 
@@ -71,7 +53,6 @@ def _verified_body(line):
     return body
 
 
-# ── numpy-only metric helpers ───────────────────────────────────────────
 def _r2(y_true, y_pred):
     """Coefficient of determination, sklearn-compatible (uniform sample weight)."""
     y_true = np.asarray(y_true, dtype=float)
@@ -90,11 +71,8 @@ def _rmse(y_true, y_pred):
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
-# ── output-file rounding (mirror of src-tauri/src/metrics.rs::round_metric) ─
-# Identical to 3 decimals whenever that keeps >= 4 significant digits
-# (|x| >= 1); otherwise keeps 4 significant digits, so a sensor with SD
-# ~0.0004 no longer collapses its bands to equal numbers. 0 stays 0; NaN/inf
-# pass through. Keep in sync with the Rust implementation.
+# Mirror of src-tauri/src/metrics.rs::round_metric (keep in sync): 3 decimals when that keeps >= 4
+# significant digits (|x| >= 1), else 4 significant digits. 0 stays 0; NaN/inf pass through.
 _METRIC_MIN_DECIMALS = 3
 
 
@@ -107,8 +85,7 @@ def _metric_decimals(x):
 
 
 def _round_metric(x, scale=None):
-    """Scalar round_metric. `scale` (e.g. the matching SD) makes the rounding
-    at least as fine as `scale` needs, so mean±k·sd stays resolvable."""
+    """Scalar round_metric. `scale` (e.g. the matching SD) makes the rounding fine enough to resolve mean±k·sd."""
     x = float(x)
     if not math.isfinite(x) or abs(x) >= 1e15:
         return x
@@ -123,10 +100,7 @@ def _round_metric(x, scale=None):
 
 
 def _extra_matrix(payload, n_features):
-    """Optional `X_extra` (rows to PREDICT with the train-only model, e.g. the
-    test periods of the Train/Test validation) as an n_extra x n_features
-    float matrix, or None when absent/empty. The model is NEVER refitted on
-    these rows."""
+    """Optional `X_extra` as an n_extra x n_features float matrix, or None if absent/empty. Predict-only: never refitted on."""
     raw = payload.get("X_extra")
     if raw is None or len(raw) == 0:
         return None
@@ -140,24 +114,13 @@ def _extra_matrix(payload, n_features):
     return xe
 
 
-# ── action handlers ─────────────────────────────────────────────────────
 def preview_relationship(payload):
     """Cumulative LinearGAM preview.
 
-    Expected payload keys (Phase 1 contract — Rust pre-cleans the data):
-        predictors        : list[str]   feature names (informational only)
-        target            : str         target name (informational only)
-        X                 : list[list]  n_rows × n_predictors, no NaN
-        y                 : list[float] n_rows, no NaN
-        smoothing         : float       optional, default 10000
-        X_extra           : optional    rows to PREDICT with the final (full-feature)
-                                        train-only model - the Train/Test validation's
-                                        test periods, so no second fit is needed
-                                        later. Never fitted on.
-
-    Returns:
-        request, r2_per_step, rmse2_per_step, predicted, residual
-        (+ predicted_extra when X_extra was given)
+    Payload (Rust pre-cleans, no NaN): predictors (names), target (name), X (n_rows x n_predictors),
+    y, smoothing (optional, default 10000), X_extra (optional: rows predicted by the final train-only
+    model, so the Train/Test validation needs no second fit; never fitted on).
+    Returns: request, r2_per_step, rmse2_per_step, predicted, residual (+ predicted_extra with X_extra).
     """
     features = payload["predictors"]
     lamb = payload.get("smoothing", 10000)
@@ -174,10 +137,8 @@ def preview_relationship(payload):
         raise ValueError(
             f"X has {X.shape[1]} columns but {len(features)} predictors named"
         )
-    # Best-effort (code review 2026-10-07): the Train/Test pre-warm must never
-    # fail the Train itself. A bad X_extra is dropped here, a failed prediction
-    # below just omits `predicted_extra`; Rust then predicts the test rows
-    # lazily with `predict_relationship` (and reports a warning if THAT fails).
+    # Best-effort: pre-warm must not fail the Train. A bad X_extra is dropped; if predicting fails,
+    # predicted_extra is omitted and Rust predicts the test rows via `predict_relationship`.
     try:
         X_extra = _extra_matrix(payload, X.shape[1])
     except Exception as e:  # noqa: BLE001 - deliberately broad, see above
@@ -203,7 +164,7 @@ def preview_relationship(payload):
         last_predicted = pred
         last_model = model
 
-    # Full-model predicted/residual = the LAST cumulative step (uses all features).
+    # Full-model predicted/residual = the last cumulative step (all features).
     predicted_full = last_predicted if last_predicted is not None else np.zeros(n_rows)
     residual_full = y - predicted_full
 
@@ -214,8 +175,7 @@ def preview_relationship(payload):
         "predicted": [_finite_or_none(v) for v in predicted_full.tolist()],
         "residual": [_finite_or_none(v) for v in residual_full.tolist()],
     }
-    # Train/Test validation pre-warm: the SAME full-feature model (identical to
-    # `predict_relationship`'s fit) predicts the test rows - RAW, like `predicted`.
+    # Pre-warm: the same full-feature model as `predict_relationship` predicts the test rows, raw like `predicted`.
     if X_extra is not None and last_model is not None:
         try:
             extra = np.asarray(last_model.predict(X_extra), dtype=float)
@@ -226,18 +186,11 @@ def preview_relationship(payload):
 
 
 def predict_relationship(payload):
-    """Full-feature LinearGAM fitted on the TRAIN rows (X, y) — the same fit as
-    `preview_relationship`'s last step — then used to
-    predict `X_extra` only (the test periods of the Train/Test validation). No
-    refit on the extra rows, nothing is saved.
+    """Full-feature LinearGAM fitted on the TRAIN rows (same fit as `preview_relationship`'s last step),
+    used only to predict `X_extra` (the test periods). No refit, nothing saved.
 
-    Expected payload keys:
-        X, y              : the train rows (n_rows x n_predictors, n_rows)
-        X_extra           : rows to predict (n_extra x n_predictors)
-        smoothing         : float       optional, default 10000
-
-    Returns:
-        request, predicted_extra  (raw predictions, None where non-finite)
+    Payload: X, y (train rows), X_extra (rows to predict), smoothing (optional, default 10000).
+    Returns: request, predicted_extra (raw, None where non-finite).
     """
     lamb = payload.get("smoothing", 10000)
     X = np.asarray(payload["X"], dtype=float)
@@ -274,7 +227,6 @@ DISPATCH = {
 }
 
 
-# ── entry point ─────────────────────────────────────────────────────────
 def main():
     try:
         line = sys.stdin.buffer.readline()
@@ -296,7 +248,7 @@ def main():
         sys.stdout.flush()
 
     except _Refused:
-        # No trace: it would only tell a caller where the check lives.
+        # No trace: it would reveal where the check lives.
         print(json.dumps({"error": "Request refused."}))
         sys.stdout.flush()
 

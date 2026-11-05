@@ -65,7 +65,7 @@ describe('FailureGroupsPanel', () => {
         const callout = screen.getByTestId('fg-callout');
         expect(callout.textContent).toContain('No failure groups yet.');
         expect(callout.textContent).toContain('Failure groups come first: create one below, then assign the sensors that show it.');
-        // said once — the old bottom "No failure groups yet" line is gone
+        // said once, with no second bottom line
         expect(screen.getAllByText(/No failure groups yet/)).toHaveLength(1);
     });
 
@@ -105,8 +105,6 @@ describe('FailureGroupsPanel', () => {
         });
     });
 
-    // The header shows one summary chip — see FailureGroupsPanel.tsx's
-    // render for the chip.
     it('shows "N groups · M sensors assigned · x of y models complete" in the header chip (customer batch 2026-10, item 5)', () => {
         const fgModels = [makeModel({ id: 'm1', status: true }), makeModel({ id: 'm2', status: false })];
         const { container } = render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
@@ -150,18 +148,13 @@ describe('FailureGroupsPanel', () => {
     });
 
     it('lists every model in the group by name, without any Complete/Incomplete status (removed per user request)', () => {
-        // The tag is now always appended (see the "shows the
-        // model name when one is set" test below), so the visible text is
-        // "name (tag)" rather than the bare name.
+        // Visible text is "name (tag)", not the bare name.
         const fgModels = [makeModel({ id: 'm1', name: 'Bearing model', status: true }), makeModel({ id: 'm2', name: 'Temp model', status: false })];
         render(<FailureGroupsPanel {...makeProps({ fgModels })} />);
         expect(modelLabels()).toEqual([]); // collapsed: the sensor shows once, not its models
         expandAll();
         expect(modelLabels()).toEqual(['Bearing model (TAG1)', 'Temp model (TAG1)']);
-        // The header's status-dot legend has its own
-        // static "Complete" label now (unrelated to any per-model text),
-        // so this only checks no ADDITIONAL "Complete" text shows up next
-        // to a model row — the legend's one instance is expected.
+        // Only the header legend shows 'Complete'; none next to a model row.
         expect(screen.queryAllByText('Complete')).toHaveLength(1);
         expect(screen.queryByText('Incomplete')).toBeNull();
     });
@@ -181,16 +174,9 @@ describe('FailureGroupsPanel', () => {
         expect(relationshipBadge.className).toContain('kind-badge--relationship');
     });
 
-    // A small status dot at the corner of the I/R/C badge — no dot = never
-    // trained, blue = Trained (fingerprint fresh, not Complete), green =
-    // Complete. Same status rules as BuildModelWindow.tsx's own dot/pill,
-    // so the two views can never disagree.
+    // Dot at the I/R/C badge corner: none = never trained, blue = Trained (fresh), green = Complete; same rules as Build Model.
     describe('status dot on the I/R/C badge', () => {
-        // Badge shell is `.kind-badge` now (see "shows a
-        // colored kind badge" above) — the dot itself deliberately KEPT its
-        // `.f4-kb-dot` class (see FailureGroupsPanel.tsx's renderSensorRow
-        // doc comment: a cross-window integration test outside this pass's
-        // zone asserts that exact class name).
+        // Badge shell is `.kind-badge`; the dot keeps `.f4-kb-dot` because a cross-window integration test asserts that class.
         const badgeFor = (letter: string) => screen.getByText(letter, { selector: '.kind-badge' });
         const dotOn = (badge: HTMLElement) => badge.querySelector('.f4-kb-dot');
 
@@ -229,9 +215,7 @@ describe('FailureGroupsPanel', () => {
             expect(dot!.className).toContain('f4-kb-dot--complete');
         });
 
-        // The same single definition
-        // (`utils/modelStatus.ts`) the Build Model window reads — a Complete
-        // model whose inputs no longer match its train record is NOT complete.
+        // Same as Build Model (`utils/modelStatus.ts`): a Complete model whose inputs changed since training is not complete.
         describe('Complete but out of date (inputs changed since it was trained)', () => {
             const rc: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN };
             const complete = (over: Partial<FailureModel> = {}) => {
@@ -253,8 +237,7 @@ describe('FailureGroupsPanel', () => {
                 expect(screen.getByText('FG-1').closest('.fg-row')!.querySelector('.fg-row-count')!.textContent).toBe('0 / 1');
             });
 
-            // A special sensor the model was trained on changed
-            // its formula since -> out of date here too, once the panel is given the recipes.
+            // A special sensor the model trained on changed formula: out of date once the panel gets the recipes.
             it('a special sensor the model was trained on changed its formula -> no green dot (the recipes are passed in)', () => {
                 const trainedOn = [{ kind: 'formula' as const, tag: 'TAG1', formula: '$RAW * 2' }];
                 const snapshot = snapshotTrainedFormulas(complete(), trainedOn, { ...rc, models: [complete()] });
@@ -277,8 +260,7 @@ describe('FailureGroupsPanel', () => {
             });
         });
 
-        // The Dashboard dot reads the verdict PERSISTED on the model
-        // (`healthVerdict`), the same value the Build Model list dot / tab pill read.
+        // The Dashboard dot reads the persisted `healthVerdict`, like Build Model's list dot and tab pill.
         describe('a trained model whose saved set points were judged (persisted healthVerdict)', () => {
             const rc: Partial<FailureGroupStateSlice> = { runningConditionFilters: [RC_ON], runningConditionTimePeriods: ALL_TIME_TRAIN };
             const trainedWith = (over: Partial<FailureModel> = {}) => {
@@ -315,10 +297,7 @@ describe('FailureGroupsPanel', () => {
                 runningConditionCombine: 'and',
             };
             const model = makeModel({ status: false, category: 'performance', runningConditionMode: 'workspace' });
-            // computeTrainFingerprint doesn't check header presence (it only
-            // cares whether a condition row is filled in), so this fingerprint
-            // is genuinely "fresh" by the fingerprint-equality definition even
-            // though the sensor is about to be reported missing below.
+            // `computeTrainFingerprint` ignores header presence, so the fingerprint stays fresh though the sensor is missing below.
             const fg = { ...runningConditionFg, models: [model] };
             const trained = {
                 ...model,
@@ -482,10 +461,7 @@ describe('FailureGroupsPanel', () => {
         });
     });
 
-    // The
-    // locked structural rule for this tab opens with a search box, same as
-    // the Sensor tab's own ("tab Failure Groups ใช้โครงเดียวกับ tab
-    // Sensors ... ค้นหา -> ชิปสรุป -> แถวกลุ่ม..."). Display/filter only.
+    // This tab opens with a search box like the Sensor tab; display/filter only.
     describe('search box', () => {
         const fgModels = [
             makeModel({ id: 'm1', groupNos: [1], targetSensor: 'TAG1' }),
@@ -590,9 +566,7 @@ describe('FailureGroupsPanel', () => {
         expect(onOpenBuildModel).toHaveBeenCalledTimes(1);
     });
 
-    // The "Edit details" panel edits Name + Description +
-    // Recommendation together; Name isn't independently editable from
-    // the rest.
+    // 'Edit details' edits Name, Description and Recommendation together.
     describe('editing group details ("Edit details" panel)', () => {
         it('the group name is plain text, not independently clickable-to-rename', () => {
             render(<FailureGroupsPanel {...makeProps()} />);
@@ -665,9 +639,7 @@ describe('FailureGroupsPanel', () => {
     });
 
     describe('deleting a group', () => {
-        // 2026-10-17: deleting a group deletes the models only in it (no files are removed since 2026-10-20) —
-        // an exception to the 2026-08-31 "no confirmations" rule, chosen by the user with this
-        // behaviour: the trash asks first and says how many models go.
+        // A group delete removes models only in it; the trash confirms first (an exception to the 'no confirmations' rule).
         it('the trash opens an inline confirm that says how many models are deleted / kept; Delete calls onDeleteGroup, Cancel does not', () => {
             const onDeleteGroup = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onDeleteGroup })} />);

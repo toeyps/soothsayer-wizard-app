@@ -1,35 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
-/*
- * "Just score it" (spec
- * docs/design/handoff/workbench-redesign/README.md §2).
- *
- * ONE journey across every zone it touches, on a workspace saved BEFORE
- * the change: its scoring periods ("test periods" then) still carry `label`,
- * `eventTime` and `fromHighlight`, on the workspace list AND on a Custom-mode
- * model's own list.
- *
- * REAL here: the Dashboard, the Build Model window with its Model fit / Health
- * score pages, `workspaceManager` (write queue, `applyIncompleteRule`,
- * `withFailureGroupState`) over one in-memory workspace file, and the event bus
- * between the two windows. The Tauri boundary is the fake Rust backend
- * (`helpers/fakeHealthRust.ts`), which REJECTS a `test_periods` item that
- * carries anything but `start` / `end` — so a stale caller fails the invoke.
- *
- * What the pieces are tested for on their own, and is therefore only touched
- * here as part of the journey (not re-tested in depth):
- *   - the card / modal showing plain S1, S2 for a legacy list, and Apply writing
- *     id / start / end only: BuildModelWindow.test.tsx ("a workspace saved
- *     before"), against a MOCKED workspaceManager;
- *   - the neutral tiles' wording: ValidationCards.test.tsx;
- *   - the `testsChangedAt` rule: incompleteRule.test.ts / healthPersist.test.ts;
- *   - the wire shape: healthRequest.test.ts / completeModel.test.ts.
- * What only this file sees: all of them together on the real file — a Complete
- * model of an old workspace survives the upgrade, the legacy keys never reach
- * Rust, ONE edited period demotes exactly the models that use that list (and
- * the other window's dot follows), and Mark complete brings it back.
- */
+/* Old workspace with legacy scoring-period keys: they never reach Rust; an edited period demotes only models using that list. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -69,8 +41,7 @@ import { ALL_TIME_TRAIN } from './helpers/trainTestFixture';
 
 vi.setConfig({ testTimeout: 30_000 });
 
-// ── the old workspace ────────────────────────────────────────────────────
-// The plant dataset is 60 hourly rows from 2026-01-01 00:00 (to 2026-01-03 11:00).
+// The old workspace: the plant dataset is 60 hourly rows from 2026-01-01 00:00 to 2026-01-03 11:00.
 
 /** Workspace scoring periods exactly as a build before saved them. */
 const OLD_WS_TESTS = [
@@ -84,7 +55,7 @@ const OLD_CUSTOM_TESTS = [
 const CUSTOM_TRAIN = [{ id: 'ct', start: '2026-01-01T00:00', end: '2026-01-02T00:00' }];
 const SP_TAG1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterUpper: 80 };
 const SP_TAG3 = { kind: 'individual', lower: 0, upper: 200, masterLower: null, masterUpper: 90 };
-/** An export record as an OLD build wrote it: no `scoringIntervalSecs` — its files were scored row by row. */
+/** An export record without `scoringIntervalSecs`. */
 const exportRecord = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints });
 
 /** Everything of the removed feature that must never be shown or sent. */
@@ -105,13 +76,7 @@ function oldWorkspace() {
     ]);
 }
 
-/**
- * The fake backend does not compute `test_validation` (see its header), so the
- * health preview is answered with one built FROM THE REQUEST'S `test_periods` —
- * one result per item sent, echoing its start / end, in the shape
- * `health_validation.rs` returns (facts only). The request has
- * already passed the fake's own "start / end only" check by then.
- */
+/** The fake builds the preview from the request's `test_periods`: one result per item, echoing start/end only. */
 // `lowest_at` = the START of the hour with the lowest hourly score, as Rust labels an hour.
 const FACTS = [
     { pct_below_80: 0, lowest: 91, lowest_at: '2026-01-01T15:00:00' },
@@ -167,9 +132,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         const before = { i1: diskModel('i1'), c3: diskModel('c3') };
         await mountWindows();
 
-        // ── 1) It opens: nothing is migrated, nothing is demoted ────────────────
-        // Opening is not an edit: whatever a window wrote while hydrating, the lists and the
-        // models are what the file held (no migration - the legacy keys are simply not read).
+        // Opening is not an edit: lists and models stay exactly as the file held them; legacy keys are simply not read.
         expect(readDisk().failureGroupState.runningConditionTestPeriods).toEqual(OLD_WS_TESTS);
         expect(diskModel('c3').customTestPeriods).toEqual(OLD_CUSTOM_TESTS);
         expect(diskModel('i1')).toEqual(before.i1);
@@ -191,25 +154,18 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         openDashFgTab();
         await waitFor(() => expect(dashDot(1, 'tag1', 'individual')).toBe('complete'));
         expect(dashDot(2, 'tag3', 'individual')).toBe('complete');
-        // Model fit: the time chart highlights the TRAIN period only (user decision 2026-10-12) — the two old
-        // scoring periods have no band and no name on it. Their plain S1 / S2 numbering is on the Step-1 chips
-        // (above) and on the "Scoring results" tiles (below); that both reached Rust is checked in 3).
-        // (The "Train and scoring periods" table that also listed them was removed 2026-10-11.)
+        // Model fit highlights the TRAIN period only; scoring periods have no band or name here (step 3 checks they reached Rust).
         await waitFor(() => expect(stripOf('Value')).toEqual(['TRAIN']));
         expect(bmw().queryByTestId('train-test-card')).toBeNull();
         expect(bmw().getByTestId('model-fit-individual').textContent).not.toMatch(REMOVED_UI);
 
-        // ── 2) Health score: nothing judged — and no per-period tiles (the "Scoring results" card was removed) ──
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('score-summary').dataset.state).toBe('ready'));
         expect(bmw().queryByTestId('test-results')).toBeNull();
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(REMOVED_UI);
         expect(bmw().getByTestId('health-page').textContent).not.toMatch(/Scoring results/);
         expect(bmw().queryByTestId('scored-pill')).toBeNull(); // the "Scored · N" pill is gone (footer sentence instead)
-        // Still Complete. Its export record is from before 1-hour averages, but Mark complete writes
-        // no files any more (Export results does), so there is no "earlier scoring" hint and no
-        // "Mark complete again" — nothing is written (checked below: the model on disk is
-        // byte-for-byte what the file held).
+        // Still Complete; Mark complete writes no files, so no 'earlier scoring' hint or 'Mark complete again'.
         expect(bmw().queryByTestId('tests-changed-banner')).toBeNull();
         expect(pill()).toBe('Complete');
         expect(bmw().queryByTestId('earlier-scoring')).toBeNull();
@@ -218,7 +174,6 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(bmw().getByTestId('mark-incomplete')).toBeTruthy();
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
 
-        // ── 3) What reached Rust: start / end only ──────────────────────────────
         const WIRE = [
             { start: '2026-01-01T12:00', end: '2026-01-01T23:00' },
             { start: '2026-01-02T00:00', end: '2026-01-03T00:00' },
@@ -226,7 +181,7 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(previewsFor('TAG1').length).toBeGreaterThan(0);
         for (const c of previewsFor('TAG1')) { expect(c.args.request.test_periods).toEqual(WIRE); onlyStartEnd(c.args.request.test_periods); }
 
-        // The Custom model sends ITS list - also start / end only - and shows one tile.
+        // The Custom model sends ITS list - also start / end only.
         selectSensor('tag3', 2);
         await settle(400);
         expect(pill()).toBe('Complete');
@@ -245,7 +200,6 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(diskModel('i1')).toEqual(before.i1);
         expect(diskModel('c3')).toEqual(before.c3);
 
-        // ── 4) Edit ONE workspace scoring period -> Apply ───────────────────────
         selectSensor('tag1');
         await settle(400);
         const writesBeforeApply = wsWrites();
@@ -298,7 +252,6 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(bmw().getByTestId('page-tab-health').getAttribute('aria-disabled')).toBeNull();
         expect(bmw().queryByTestId('page-tab-health-why')).toBeNull();
 
-        // ── 5) Mark complete again ──────────────────────────────────────────────
         if (!bmwEl().querySelector('[data-testid="set-points-card"]')) await openHealth();
         await waitFor(() => expect(bmw().getByTestId('tests-changed-banner').getAttribute('data-state')).toBe('changed'));
         const NEW_WIRE = [WIRE[0], { start: '2026-01-02T00:00', end: '2026-01-02T20:00' }];
@@ -334,7 +287,6 @@ describe('a workspace saved before "just score it" (scoring periods with label /
         expect(diskModel('c3')).toEqual(before.c3);
         expect(JSON.stringify(env.backend!.calls.map(c => c.args))).not.toMatch(REMOVED_WIRE);
 
-        // ── 6) Close and reopen the app: what was saved is what comes back ──────
         await restartApp();
         expect(chips()).toEqual(['S1 · 2026/01/01 12:00 → 2026/01/01 23:00', 'S2 · 2026/01/02 00:00 → 2026/01/02 20:00']);
         expect(bmw().queryByTestId('tests-changed-notice')).toBeNull();

@@ -16,16 +16,7 @@ import type { HealthSetPoints } from '../types';
 import type { HealthIssue, HealthStats } from '../types/health';
 import { makeHealthPreview } from './helpers/healthPreviewFixture';
 
-/*
- * The score ruler of the Health score page ("Workbench detail pages v2" §6): the
- * geometry is pure and tested here without layout — where a rejected value's marker
- * sits, that it never lands on the wrong side of another valid point, the arrow
- * beyond the ruler's end, the rows of colliding labels — plus the states the band
- * renders (rejected = red, empty = dashed amber, not checked = grey) and its a11y
- * wiring. The page around it is covered in HealthScorePage.test.tsx.
- *
- * Fixture numbers: Individual ±3SD = 2 / 8, ±1SD = 4 / 6; Relation 2RMSE = 0.9134.
- */
+/* Score ruler: pure geometry (no layout), band states, a11y. Fixture: Individual ±3SD = 2 / 8, ±1SD = 4 / 6; 2RMSE = 0.9134. */
 
 afterEach(cleanup);
 

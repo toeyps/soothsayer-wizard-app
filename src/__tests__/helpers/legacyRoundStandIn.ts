@@ -1,8 +1,7 @@
 import { convertExcelRoundCall } from '../../utils/formulaRounding';
 import { excelRoundCalls } from '../../utils/formulaTokens';
 
-/** Stands in for Rust's `convert_legacy_round` in tests: every convertible
- *  spreadsheet-order call rewritten, right to left (nested calls included). */
+/** Stand-in for Rust's `convert_legacy_round`: rewrites every convertible spreadsheet-order call, right to left (nested included). */
 export function convertLegacyRoundStandIn(text: string): string {
     let out = text;
     const starts = excelRoundCalls(text).map(c => c.start);

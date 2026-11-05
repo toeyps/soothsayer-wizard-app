@@ -1,27 +1,5 @@
-//! Health score — pure math (no Tauri, no session state).
-//!
-//! Rust is the single source of truth for the score: the frontend only
-//! displays what these functions produce. Every score is piecewise-linear and
-//! clamped to `0..=100`, with the SAME anchor on every model kind — **80 at
-//! exactly 3 standard deviations** (never 85: the 85 in the legacy pandas
-//! reference code is a known bug).
-//!
-//! | kind         | 100                    | 80                     | 0                         |
-//! |--------------|------------------------|------------------------|---------------------------|
-//! | individual   | within ±1σ             | ±3σ                    | the sensor's L / H        |
-//! | relationship | `|residual| <= 2RMSE`  | user's 80-point        | user's 0-point            |
-//! | clustering   | inside the 1×SD ring   | 3×SD ring              | N×SD ring (N > 3, user)   |
-//!
-//! A row with NO score is `None` / `NaN` in the score vectors — never 0. That
-//! is the case for rows outside the training scope and rows whose inputs are
-//! missing. Validation ([`validate_individual`], [`validate_relationship`],
-//! [`validate_clustering`]) is re-run on every call because the training scope
-//! changes σ / 2RMSE / the ellipses, and a score is only ever produced from
-//! parameters that passed it ([`IndividualParams::new`] etc.).
-//!
-//! Also here: the bounded-payload helpers the charts need ([`select_indices`]
-//! — a min/max-preserving downsample, [`histogram`], [`summarize`]) and the
-//! in-session cache of full-resolution Relationship fits ([`RelCache`]).
+//! Health score math (no Tauri, no session state); Rust is the source of truth.
+//! Piecewise-linear 0..=100, 80 at exactly 3 SD (never 85); no score = None/NaN, never 0; scores come only from validated params.
 
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -39,9 +17,6 @@ pub const INNER_SD: f64 = 1.0;
 /// The anchor ring, in standard deviations (80 here).
 pub const ANCHOR_SD: f64 = 3.0;
 
-// ---------------------------------------------------------------------------
-// Validation issues
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -52,10 +27,7 @@ pub enum Severity {
     Warning,
 }
 
-/// One validation finding. `code` is stable (the UI keys on it); `message` is
-/// plain English the UI may show as-is; `field` names the input it belongs to
-/// (`lower`, `upper`, `residual_at_80_lower`, `outer_sd`, `sd`, `two_rmse`,
-/// `cluster_<id>`, ...).
+/// One validation finding: `code` is stable (the UI keys on it), `message` is plain English, `field` names the input.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Issue {
     pub code: String,
@@ -64,10 +36,7 @@ pub struct Issue {
     pub field: String,
 }
 
-/// A set point that is NaN or infinite (code `not_finite`, every kind except
-/// Clustering, whose own `outer_sd_not_a_number` code is kept for compatibility).
-/// JSON cannot carry these, so they only come from a bug in a caller — but
-/// every kind must refuse them the same way.
+/// NaN/infinite set point (`not_finite`; Clustering keeps its own `outer_sd_not_a_number`); every kind must refuse them.
 fn not_finite_issue(field: &str, v: f64) -> Issue {
     issue(
         "not_finite",
@@ -90,9 +59,7 @@ pub fn has_errors(issues: &[Issue]) -> bool {
     issues.iter().any(|i| i.severity == Severity::Error)
 }
 
-/// Human-friendly number for messages (rounded like the INFO files). For
-/// values Rust COMPUTED (SD, 2RMSE, band edges) only - a set point the user
-/// typed goes through [`fmt_typed`].
+/// For values Rust COMPUTED (SD, 2RMSE, band edges); user-typed set points use [`fmt_typed`].
 fn fmt_num(x: f64) -> String {
     if !x.is_finite() {
         return format!("{x}");
@@ -100,25 +67,15 @@ fn fmt_num(x: f64) -> String {
     format!("{}", round_metric(x))
 }
 
-/// A set point the USER supplied, echoed exactly as typed: the shortest text
-/// that reads back as the same number (`-2`, `4.6`, `0.05`, `4.61234`). Never
-/// padded, never rounded (a typed `4.61234` echoed as `4.612` would make
-/// "L = 4.612 must be below 4.612" style messages possible), and `-0`
-/// prints as `0`.
+/// Echoes a user-typed set point exactly (shortest text that reads back the same); never rounded; `-0` prints as `0`.
 fn fmt_typed(x: f64) -> String {
     // Adding +0.0 turns -0.0 into 0.0 and changes nothing else.
     format!("{}", x + 0.0)
 }
 
-// ---------------------------------------------------------------------------
-// User-entered set points (as sent by the frontend)
-// ---------------------------------------------------------------------------
 
-/// The three TS `HealthSetPoints` shapes flattened into one all-optional
-/// struct, so the frontend can send the model's `healthSetPoints` object
-/// as-is. Accepts snake_case (canonical), the TS camelCase names and the
-/// legacy `residual_at_health_*` names; unknown keys (`kind`, `masterLower`,
-/// ...) are ignored. `null` / missing = "not entered".
+/// The three TS `HealthSetPoints` shapes flattened into one all-optional struct.
+/// Accepts snake_case, camelCase and `residual_at_health_*` aliases; unknown keys ignored; null/missing = not entered.
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct SetPointsArg {
     /// Individual: L — health 0 below the mean at this value.
@@ -141,13 +98,8 @@ pub struct SetPointsArg {
     pub outer_sd: Option<f64>,
 }
 
-// ---------------------------------------------------------------------------
-// Interpolation
-// ---------------------------------------------------------------------------
 
-/// Linear interpolation of `y` between `(x0, y0)` and `(x1, y1)` at `x`.
-/// `x1 <= x0` (a collapsed segment) returns `y1` instead of dividing by zero —
-/// validation keeps that from ever being reached.
+/// Linear interpolation; a collapsed segment (`x1 <= x0`) returns `y1` (validation prevents it).
 #[inline]
 fn lerp(x: f64, x0: f64, y0: f64, x1: f64, y1: f64) -> f64 {
     if x1 <= x0 {
@@ -161,14 +113,8 @@ fn clamp_score(s: f64) -> f64 {
     s.clamp(0.0, SCORE_MAX)
 }
 
-// ---------------------------------------------------------------------------
-// Individual
-// ---------------------------------------------------------------------------
 
-/// The ±1σ / ±3σ band of an Individual model exactly as written to
-/// `INDV_INFO_*.json` (the ROUNDED mean / SD / boundaries — see
-/// `individual_rounded_metrics`), so a consumer reading the file reproduces
-/// the same score.
+/// Band with the ROUNDED mean/SD/boundaries (see `individual_rounded_metrics`) so a reader reproduces the same score.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct IndividualBand {
     pub mean: f64,
@@ -193,9 +139,7 @@ impl IndividualBand {
         }
     }
 
-    /// Strictly increasing `lower3 < lower1 < upper1 < upper3` with finite
-    /// values. A constant sensor (σ = 0) collapses every boundary onto the
-    /// mean; a score would divide by zero.
+    /// Needs finite, strictly increasing `lower3 < lower1 < upper1 < upper3`; a constant sensor (σ = 0) would divide by zero.
     pub fn is_degenerate(&self) -> bool {
         let v = [
             self.lower_3sd,
@@ -207,11 +151,7 @@ impl IndividualBand {
     }
 }
 
-/// Validate an Individual model's set points against its band.
-///
-/// Rules: both L and H entered; band not degenerate; `L < H`;
-/// `L < lower 3σ` and `H > upper 3σ`, STRICTLY (equal is invalid — the 80
-/// point and the 0 point would coincide).
+/// L and H entered; band not degenerate; `L < H`; `L < lower 3σ`, `H > upper 3σ`, STRICTLY (equal makes 80 and 0 coincide).
 pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issue> {
     let mut out = Vec::new();
     if sp.lower.is_none() {
@@ -230,9 +170,7 @@ pub fn validate_individual(band: &IndividualBand, sp: &SetPointsArg) -> Vec<Issu
                 .into(),
         ));
     }
-    // A NaN / infinite L or H is refused with its own stable code (`not_finite`)
-    // and then ignored by every other rule (every comparison with NaN is false,
-    // and an infinite 0-point would make the curve never reach 0).
+    // NaN/infinite L or H gets `not_finite` and is ignored by the other rules.
     for (field, v) in [("lower", sp.lower), ("upper", sp.upper)] {
         if let Some(x) = v.filter(|x| !x.is_finite()) {
             out.push(not_finite_issue(field, x));
@@ -346,11 +284,7 @@ impl IndividualParams {
         })
     }
 
-    /// Score of one value; `None` for a non-finite value.
-    ///
-    /// Upper side: `upper1σ -> 100`, `upper3σ -> 80`, `H -> 0`; lower side
-    /// mirrored (`lower1σ -> 100`, `lower3σ -> 80`, `L -> 0`); between the two
-    /// 1σ boundaries = 100; at or beyond H / L = 0.
+    /// None for non-finite. Upper: upper1σ -> 100, upper3σ -> 80, H -> 0; lower mirrored; inside 1σ = 100, at or beyond H/L = 0.
     pub fn score(&self, v: f64) -> Option<f64> {
         if !v.is_finite() {
             return None;
@@ -379,20 +313,10 @@ impl IndividualParams {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Relationship
-// ---------------------------------------------------------------------------
 
-/// Validate a Relationship model's set points.
-///
-/// `w` = the model's `2rmse` half-width (`None` when it isn't known yet — only
-/// the checks that don't need it run). Per side (residual = actual − predicted,
-/// so the lower side is negative): `|80-point| > W` and `|0-point| > |80-point|`,
-/// both STRICT, plus sign sanity and "all four entered".
-///
-/// The messages name a point the way the score ruler does — "80 low", "0 low",
-/// "80 high", "0 high" (user decision 2026-10-14; they used to say "the lower
-/// 80-point" while the ruler beside them said "80 low").
+/// `w` = the model's `2rmse` (None = unknown; only checks not needing it run).
+/// Per side (residual = actual − predicted, lower side negative): `|80-point| > W` and `|0-point| > |80-point|`, both STRICT,
+/// plus sign sanity and all four entered. Messages say "80 low", "0 low", "80 high", "0 high".
 pub fn validate_relationship(w: Option<f64>, sp: &SetPointsArg) -> Vec<Issue> {
     let mut out = Vec::new();
     let fields: [(&str, Option<f64>, &str); 4] = [
@@ -587,12 +511,7 @@ impl RelationshipParams {
         })
     }
 
-    /// Score of one residual (`actual − predicted`, signed); `None` when
-    /// non-finite.
-    ///
-    /// `|r| <= W` = 100. Upper side: `W -> 100`, `upper_80 -> 80`,
-    /// `upper_0 -> 0`; lower side mirrored with the negative values. Beyond the
-    /// 0-point = 0.
+    /// None for non-finite. `|r| <= W` = 100; upper: upper_80 -> 80, upper_0 -> 0; lower mirrored; beyond the 0-point = 0.
     pub fn score(&self, r: f64) -> Option<f64> {
         if !r.is_finite() {
             return None;
@@ -620,15 +539,9 @@ impl RelationshipParams {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Clustering
-// ---------------------------------------------------------------------------
 
-/// One cluster's Gaussian as written to `CLUS_INFO_*.json` (centre / SDs /
-/// angle ROUNDED like the file, so the score reproduces from the file).
-/// `x_sd` is the MAJOR-axis SD and `angle_deg` the major axis' rotation (the
-/// convention of `clustering::EllipseFit` and the UI's ellipse drawing): the
-/// `k×SD` ellipse has semi-axes `k·x_sd` (along the angle) and `k·y_sd`.
+/// One cluster's Gaussian, rounded so the score reproduces. `x_sd` = major-axis SD, `angle_deg` = its rotation.
+/// The k×SD ellipse has semi-axes `k·x_sd` (along the angle) and `k·y_sd`.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ClusterGeom {
     pub cluster_id: u32,
@@ -645,10 +558,7 @@ impl ClusterGeom {
         !v.iter().all(|x| x.is_finite()) || self.x_sd <= 0.0 || self.y_sd <= 0.0
     }
 
-    /// Distance of `(x, y)` from the cluster centre in SD units: the
-    /// Mahalanobis distance of the fitted Gaussian. `d == k` means the point
-    /// lies exactly ON the `k×SD` ellipse (so `d == 3` is the 3σ ring and a
-    /// point there scores 80).
+    /// Mahalanobis distance from the centre in SD units; `d == k` is exactly on the k×SD ellipse (d == 3 scores 80).
     pub fn sd_distance(&self, x: f64, y: f64) -> f64 {
         let dx = x - self.x_center;
         let dy = y - self.y_center;
@@ -662,9 +572,7 @@ impl ClusterGeom {
     }
 }
 
-/// Validate a Clustering model's set point (the one number N) against its
-/// fitted clusters: entered; `N > 3` STRICTLY (equal is invalid); no cluster
-/// with a collapsed ellipse (a zero SD can't be scored).
+/// Set point N must be entered, `N > 3` STRICTLY, and no cluster may have a collapsed ellipse (zero SD can't be scored).
 pub fn validate_clustering(clusters: &[ClusterGeom], sp: &SetPointsArg) -> Vec<Issue> {
     let mut out = Vec::new();
     match sp.outer_sd {
@@ -737,20 +645,8 @@ pub fn score_clustering_distance(d: f64, outer_sd: f64) -> Option<f64> {
     Some(clamp_score(s))
 }
 
-/// Cluster index (0-based) of a criteria value: the FIRST range that contains
-/// it (half-open `(min, max]`, i.e. `min < v <= max` — Wizard Output Spec
-/// §4.4; `None` bound = unbounded). `None` when the value is missing or in
-/// no range.
-///
-/// OUTER EDGES ARE OPEN (2026-10-20): with two or more ranges, the lowest
-/// range (smallest `min`, `None` first; ties keep list order) accepts any
-/// value `<= its max` and the highest range (largest `min`, last on a tie)
-/// accepts any value `> its min` — their stored outer bounds (the Workbench's
-/// auto-divide writes the data's real min/max there) are ignored, matching
-/// the exported regimes (first `from` / last `to` = null). Inner ranges keep
-/// `min < v <= max`; a single range keeps both its bounds. THE one rule for
-/// Train (`compute_clustering_preview`), the health score and the export's
-/// row selection (`workspace_export::training_rows`).
+/// First range containing the value, half-open `min < v <= max` (`None` bound = unbounded); None if missing or in no range.
+/// With 2+ ranges the outer edges are open (lowest takes any `<= max`, highest any `> min`); same rule for Train, score, export.
 pub fn assign_cluster(c: f64, ranges: &[(Option<f64>, Option<f64>)]) -> Option<usize> {
     ClusterAssigner::new(ranges).assign(c)
 }
@@ -781,9 +677,7 @@ impl<'a> ClusterAssigner<'a> {
     }
 }
 
-/// Indices of the lowest and highest range by `min` (`None` = -inf): the first
-/// of equal lows, the last of equal highs. `(None, None)` for fewer than two
-/// ranges (nothing is opened).
+/// Indices of the lowest and highest range by `min` (None = -inf): first of equal lows, last of equal highs; none under 2 ranges.
 fn outer_range_indices(ranges: &[(Option<f64>, Option<f64>)]) -> (Option<usize>, Option<usize>) {
     if ranges.len() < 2 {
         return (None, None);
@@ -831,31 +725,21 @@ impl ClusteringParams {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Score-series summary
-// ---------------------------------------------------------------------------
 
 /// The lowest score of a series and where it happened.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct MinScorePoint {
     pub score: f64,
-    /// Dataset row number (0-based, the same row numbering as `series.rows`).
-    /// For an hourly summary: the FIRST dataset row of that hour.
+    /// Dataset row number (0-based, like `series.rows`); for an hourly summary, the hour's FIRST row.
     pub row: usize,
-    /// The timestamp text of that point, when it has one. For an hourly
-    /// summary: the START of the hour (`2024-01-05T13:00:00`).
+    /// Timestamp text of that point; for an hourly summary, the hour START.
     pub timestamp: Option<String>,
 }
 
-/// `share_basis` of every score summary: the points are 1-hour averages (the
-/// health score since 2026-10-11), so every count and share is in HOURS.
+/// `share_basis` of every score summary: points are 1-hour averages, so counts and shares are in HOURS.
 pub const SHARE_BASIS_HOURS: &str = "hour_count";
 
-/// Summary of one score series. Shares are BY POINT COUNT (each scored point
-/// weighs the same) and the points are 1-hour averages of all three model
-/// kinds: every number below counts HOURS (the TRAINING hours) and
-/// `share_basis` says so ([`SHARE_BASIS_HOURS`]). The field names keep their
-/// `rows` wording on the wire (nothing is renamed).
+/// Shares are BY POINT COUNT and count HOURS (the TRAINING hours); field names keep their `rows` wording on the wire.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ScoreSummary {
     /// Hours that got a score.
@@ -880,10 +764,8 @@ pub struct ScoreSummary {
     pub share_basis: &'static str,
 }
 
-/// Summarise HOURLY `scores` (one entry per 1-hour point, `NaN` = unscored).
-/// `total_hours` = the hours the shares are measured against; `locate(h)` maps
-/// an hour to `(its first dataset row, the hour start's text)` and is only
-/// called for the minimum.
+/// `scores`: one per hour, NaN = unscored; `total_hours` is what shares are measured against;
+/// `locate(h)` gives (first dataset row, hour start text) and is only called for the minimum.
 pub fn summarize_hours(
     scores: &[f64],
     total_hours: usize,
@@ -936,24 +818,13 @@ pub fn summarize_hours(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Bounded series — min/max-preserving downsample
-// ---------------------------------------------------------------------------
 
 /// Hard ceiling for any bounded series sent to the WebView.
 pub const MAX_SERIES_POINTS: usize = 100_000;
 
-/// Choose which of `n` ordered rows to ship, at most `max_points` of them
-/// (never more than `n`), as ascending positions.
-///
-/// The universe is split into contiguous buckets; each bucket keeps its
-/// `primary` minimum AND maximum (a dip and a spike both survive) plus its
-/// `score` MINIMUM (a low score is never averaged away) — and, when there is
-/// no `primary`, its score maximum too so the line still has a top edge.
-/// `NaN` entries are skipped; a bucket with nothing finite keeps its first
-/// row (the gap stays visible). Row 0 and the last row are always kept. The
-/// SAME positions are used for every aligned series, so raw value and score
-/// share one time axis.
+/// Picks at most `max_points` of `n` rows (ascending). Each bucket keeps its `primary` min and max and its `score` MINIMUM
+/// (no `primary` = score max too). NaN skipped; a bucket with nothing finite keeps its first row;
+/// row 0 and the last are kept; the same positions serve every aligned series.
 pub fn select_indices(
     n: usize,
     max_points: usize,
@@ -1034,9 +905,6 @@ pub fn stride_indices(n: usize, max: usize) -> Vec<usize> {
     (0..max).map(|i| i * n / max).collect()
 }
 
-// ---------------------------------------------------------------------------
-// Histogram (Individual distribution)
-// ---------------------------------------------------------------------------
 
 /// Bounded histogram plus a fitted normal curve for the Individual
 /// "Distribution" chart.
@@ -1046,9 +914,7 @@ pub struct Histogram {
     pub bin_edges: Vec<f64>,
     /// Rows per bin (sums to `n`).
     pub counts: Vec<usize>,
-    /// Expected rows per bin under Normal(mean, sd), at each bin centre
-    /// (`n · width · pdf`), so it overlays `counts` directly. All 0 when
-    /// `sd <= 0`.
+    /// Expected rows per bin under Normal(mean, sd) at the bin centre (`n · width · pdf`); all 0 when `sd <= 0`.
     pub curve: Vec<f64>,
     pub bin_width: f64,
     pub n: usize,
@@ -1056,9 +922,8 @@ pub struct Histogram {
 
 pub const MAX_HISTOGRAM_BINS: usize = 80;
 
-/// Histogram of finite `values` in at most `max_bins` (<= 80) equal-width bins
-/// (`ceil(sqrt(n))`, at least 10 unless the range is a single value). The last
-/// bin includes the maximum. `None` for no finite values.
+/// Equal-width bins, at most `max_bins` (<= 80): `ceil(sqrt(n))`, at least 10 unless the range is one value.
+/// Last bin includes the max; None for no finite values.
 pub fn histogram(values: &[f64], mean: f64, sd: f64, max_bins: usize) -> Option<Histogram> {
     let (mut mn, mut mx) = (f64::INFINITY, f64::NEG_INFINITY);
     let mut n = 0usize;
@@ -1114,17 +979,9 @@ pub fn histogram(values: &[f64], mean: f64, sd: f64, max_bins: usize) -> Option<
     })
 }
 
-// ---------------------------------------------------------------------------
-// Relationship fit cache (full resolution, per dataset session)
-// ---------------------------------------------------------------------------
 
-/// Full-resolution output of one Relationship fit (the sidecar's predictions
-/// plus the rows they belong to), kept Rust-side so editing set points
-/// re-scores instantly without re-running the ~12-18 s sidecar. These are the
-/// RAW training rows: the model's statistics, 2RMSE and the Model fit view
-/// come from them, and the hourly means of the training hours are computed
-/// from `actual` / `x_cols`. The health score itself is hourly - see
-/// [`RelHourPoints`] / [`RelExtra`].
+/// Full-resolution output of one Relationship fit, kept Rust-side so editing set points re-scores without the sidecar.
+/// RAW training rows: stats, 2RMSE and Model fit come from them; the hourly score uses [`RelHourPoints`] / [`RelExtra`].
 #[derive(Debug)]
 pub struct RelFit {
     pub target: String,
@@ -1135,9 +992,8 @@ pub struct RelFit {
     pub actual: Vec<f64>,
     /// `NaN` = the sidecar returned no prediction for that row.
     pub predicted: Vec<f64>,
-    /// Predictor values, one column per predictor (`x_cols[k][i]` is row
-    /// `rows[i]`). Kept so the Fit scatter never depends on the live dataset
-    /// columns (which a special-sensor edit may replace).
+    /// Predictor values per column (`x_cols[k][i]` is row `rows[i]`), kept so the Fit scatter never reads live dataset columns,
+    /// which a special-sensor edit may replace.
     pub x_cols: Vec<Vec<f64>>,
     /// The sidecar's cumulative per-step scores (last = full model), for the
     /// "Compare predictors" view.
@@ -1152,20 +1008,8 @@ impl RelFit {
     }
 }
 
-/// Hourly inputs of a Relation model for the engine to PREDICT: one point =
-/// (clock hour, the MEAN of each predictor over that hour's rows).
-///
-/// Since 2026-10-11 the health score of a Relation model is computed on 1-hour
-/// averages (user decision: "resample the raw data to 1 hour, pass that through
-/// the model"): the residual of an hour is its mean actual minus the engine's
-/// answer for these mean predictors. There is no per-row prediction outside the
-/// training rows any more.
-///
-/// Sorted by (hour, predictor values) and unique. The predictor values are
-/// compared BIT FOR BIT: two points are "the same" only for the same hour AND
-/// exactly the same means - an hour whose rows changed (a scoring-period edge
-/// moved inside it) is another point. Stored row-major (`n_pred` values per
-/// point), which is also what the sidecar's `X_extra` carries.
+/// Hourly inputs for the engine to PREDICT: one point = (clock hour, MEAN of each predictor over the hour's rows).
+/// Sorted by (hour, values), unique; values compared bit for bit, so a changed hour is another point. Row-major (`n_pred` per point).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct RelHourPoints {
     n_pred: usize,
@@ -1182,9 +1026,8 @@ fn cmp_bits(a: &[f64], b: &[f64]) -> std::cmp::Ordering {
 }
 
 impl RelHourPoints {
-    /// From points in ANY order - point `i` is `hours[i]` with the `n_pred`
-    /// values `x[i * n_pred..]` - sorted, duplicates dropped. Malformed input
-    /// (`n_pred == 0`, lengths that do not match) gives the empty set.
+    /// Accepts any order (point `i` = `hours[i]` with `x[i * n_pred..]`); sorts and drops duplicates.
+    /// Malformed input (`n_pred == 0`, length mismatch) gives the empty set.
     pub fn from_unsorted(n_pred: usize, hours: Vec<i64>, x: Vec<f64>) -> RelHourPoints {
         if n_pred == 0 || x.len() != hours.len() * n_pred {
             return RelHourPoints {
@@ -1247,8 +1090,7 @@ impl RelHourPoints {
         &self.x[i * self.n_pred..(i + 1) * self.n_pred]
     }
 
-    /// Row-major copy of the predictor values: the sidecar's `X_extra`
-    /// (answered by `predicted_extra`, one prediction per point, same order).
+    /// Row-major predictor values: the sidecar's `X_extra` (`predicted_extra` answers one prediction per point, same order).
     pub fn x_rows(&self) -> Vec<Vec<f64>> {
         (0..self.len()).map(|i| self.x(i).to_vec()).collect()
     }
@@ -1288,18 +1130,9 @@ impl RelHourPoints {
     }
 }
 
-/// The engine's predictions for hourly points ([`RelHourPoints`]) of ONE cached
-/// fit - the answers to the `X_extra` rows Rust sent it (hence the name). The
-/// model is fitted once on the raw training rows; hourly points are only ever
-/// PREDICTED, never fitted on.
-///
-/// Filled by the Train call itself (it sends every hour of its universe in the
-/// same sidecar run) and, for hours a later change brings (a scoring period
-/// added, an edge moved inside an hour), by one `predict_relationship` run.
-/// Predictions are KEPT when a point is no longer needed, so going back to an
-/// earlier set of scoring periods never runs the engine again. A prediction is
-/// only ever found under its own hour AND its own mean predictor values. Lives
-/// and dies with its fit's cache entry.
+/// The engine's predictions for the hourly points of ONE cached fit (answers to the `X_extra` rows).
+/// Filled by Train (every hour in one sidecar run) and by `predict_relationship` for hours a later change adds.
+/// Kept when a point is no longer needed; found only under its own hour AND mean predictors; dies with the fit's cache entry.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct RelExtra {
     points: RelHourPoints,
@@ -1347,9 +1180,7 @@ impl RelExtra {
         self.len() * (8 + 8 * self.points.n_pred + 8)
     }
 
-    /// This set plus the given points (the new value wins on a duplicate
-    /// point). Points with another number of predictors than the stored ones
-    /// cannot belong to the same fit and are ignored.
+    /// This set plus the points (new value wins on a duplicate); points with another predictor count are ignored.
     pub fn merged(&self, points: &RelHourPoints, predicted: &[f64]) -> RelExtra {
         if points.len() != predicted.len() || points.is_empty() {
             return self.clone();
@@ -1405,11 +1236,8 @@ impl RelExtra {
     }
 }
 
-/// Compact identity of a set of hourly points: length, first / last hour and a
-/// 64-bit hash of every hour and every mean predictor value. Used by the "last
-/// attempt failed" marker instead of the points themselves. A collision only
-/// means one remembered failure is reported for a different set - the user can
-/// still "Try again".
+/// Compact identity of a set of hourly points: length, first/last hour, 64-bit hash of hours and means.
+/// A collision only reports a remembered failure for another set; the user can still "Try again".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PointSetSig {
     len: usize,
@@ -1445,9 +1273,7 @@ struct FailedAttempt {
     kind: crate::health_validation::TestScoringFailure,
 }
 
-/// Is `fit` (a handle taken from this cache earlier) the very fit `entry`?
-/// The `Weak` keeps the allocation alive, so its address cannot be reused by a
-/// later fit while the handle exists (no ABA).
+/// Is `fit` the very fit `entry`? The `Weak` keeps the allocation alive so its address can't be reused (no ABA).
 fn same_fit(entry: &Arc<RelFit>, fit: &Weak<RelFit>) -> bool {
     std::ptr::eq(Arc::as_ptr(entry), fit.as_ptr())
 }
@@ -1461,9 +1287,7 @@ struct RelEntry {
     last_used: AtomicU64,
 }
 
-/// Bounded cache of [`RelFit`]s, least recently used evicted first. Lives INSIDE the session
-/// (`SessionData`), so a new `load_csv` drops it with the dataset it
-/// described; the caller-supplied key is `modelId + fingerprint`.
+/// Bounded LRU cache of [`RelFit`]s in the session (`SessionData`), so a new `load_csv` drops it; key = `modelId + fingerprint`.
 #[derive(Debug)]
 pub struct RelCache {
     entries: Vec<RelEntry>,
@@ -1471,21 +1295,14 @@ pub struct RelCache {
     clock: AtomicU64,
     /// Hourly predictions of the entries above (same key), see [`RelExtra`].
     extras: Vec<(String, Arc<RelExtra>)>,
-    /// Cached fits whose LAST hourly-prediction attempt failed (sidecar error /
-    /// timeout, predictions over the budget), with the points that attempt had
-    /// to predict. While the SAME points are missing `compute_health_preview`
-    /// does not run the sidecar again; any other set (scoring periods changed)
-    /// runs once. The marker dies with the fit (re-train = [`RelCache::insert`],
-    /// eviction, [`RelCache::clear`]), on a successful [`RelCache::merge_extra`]
-    /// and on an explicit retry ([`RelCache::clear_extra_failed`]).
+    /// Fits whose LAST hourly-prediction attempt failed (sidecar error/timeout, over budget), with the points it had to predict.
+    /// The SAME missing points don't rerun the sidecar; another set runs once. Cleared by re-train ([`RelCache::insert`]), eviction,
+    /// [`RelCache::clear`], successful [`RelCache::merge_extra`], or [`RelCache::clear_extra_failed`].
     failed: Vec<FailedAttempt>,
     max_entries: usize,
     max_bytes: usize,
-    /// "Derived epoch": bumped by every [`RelCache::clear`] — i.e. by every
-    /// special-sensor recompute / removal, which can change the columns a fit
-    /// was computed from. A Train captures `(generation, epoch)` when it reads
-    /// the columns and `store_rel_fit` refuses a fit whose epoch is no longer
-    /// current, so a fit that straddled such a change is never cached.
+    /// Derived epoch, bumped by every [`RelCache::clear`] (special-sensor recompute/removal).
+    /// Train captures `(generation, epoch)` when reading columns and `store_rel_fit` refuses a stale epoch, so a straddling fit is never cached.
     epoch: u64,
 }
 
@@ -1525,9 +1342,7 @@ impl RelCache {
         self.entries.is_empty()
     }
 
-    /// Drop every entry AND bump the derived epoch (even when the cache is
-    /// empty: a fit may be in flight). Called when a special sensor is
-    /// recomputed or removed.
+    /// Drops every entry AND bumps the derived epoch even when empty (a fit may be in flight). Called on special-sensor recompute/removal.
     pub fn clear(&mut self) {
         self.entries.clear();
         self.extras.clear();
@@ -1540,9 +1355,7 @@ impl RelCache {
             + self.extras.iter().map(|(_, e)| e.approx_bytes()).sum::<usize>()
     }
 
-    /// Remove the least recently used entry TOGETHER with its hourly
-    /// predictions and its failed marker, so the next `total_bytes()` does not
-    /// count orphaned predictions (which would evict more fits than needed).
+    /// Removes the LRU entry WITH its hourly predictions and failed marker, so `total_bytes()` doesn't count orphans (which would evict more fits than needed).
     fn evict_lru(&mut self) {
         let oldest = self
             .entries
@@ -1572,12 +1385,8 @@ impl RelCache {
         }
     }
 
-    /// Insert (replacing the same key), then evict the least recently used
-    /// entries until both bounds hold. The newest entry is always kept, even
-    /// if it alone exceeds the byte budget. Returns the stored fit: its
-    /// identity ([`Arc::downgrade`]) is what [`RelCache::merge_extra`] /
-    /// [`RelCache::mark_extra_failed`] require, so work started for THIS fit
-    /// never lands on a later fit under the same key.
+    /// Replaces the same key, then evicts LRU until both bounds hold; the newest entry is kept even over the byte budget.
+    /// Returns the stored fit; `merge_extra`/`mark_extra_failed` need its [`Arc::downgrade`] so work never lands on a later same-key fit.
     pub fn insert(&mut self, key: String, fit: RelFit) -> Arc<RelFit> {
         self.entries.retain(|e| e.key != key);
         // A new fit under the same key invalidates the old fit's hourly
@@ -1597,10 +1406,8 @@ impl RelCache {
         self.entries.iter().any(|e| e.key == key && same_fit(&e.fit, fit))
     }
 
-    /// Remember that the hourly-prediction attempt for the cached fit `key`
-    /// (exactly `fit`) failed for `points` (what it had to predict). Replaces
-    /// an earlier marker of the key. `false` (nothing marked) when that fit is
-    /// no longer cached - evicted, or replaced by a re-train meanwhile.
+    /// Remembers that the hourly-prediction attempt for `key` (exactly `fit`) failed for `points`, replacing an earlier marker.
+    /// `false` if that fit is no longer cached (evicted or re-trained).
     pub fn mark_extra_failed(
         &mut self,
         key: &str,
@@ -1620,12 +1427,8 @@ impl RelCache {
         true
     }
 
-    /// Did the last hourly-prediction attempt for `key` fail for exactly these
-    /// missing `points` (and nothing cleared the marker since)? The kind of
-    /// that failure, so it is reported with the same wording. A different set,
-    /// with more points (a scoring period added / lengthened) or fewer (one
-    /// removed / shortened, the natural fix for "too much data"), is NOT
-    /// remembered: it gets one fresh attempt.
+    /// Did the last attempt for `key` fail for exactly these missing `points`, with nothing clearing it since? Returns the failure kind.
+    /// A different set is not remembered and gets one fresh attempt.
     pub fn extra_failed(
         &self,
         key: &str,
@@ -1651,18 +1454,9 @@ impl RelCache {
         self.extras.iter().find(|(k, _)| k == key).map(|(_, e)| e.clone())
     }
 
-    /// Add predictions of the cached fit `key` - exactly `fit`, the fit they
-    /// were computed for - for the hourly `points`. `false` (nothing stored,
-    /// the previous predictions of that key kept) when that fit is no longer
-    /// cached (evicted meanwhile, or replaced by a re-train under the same key:
-    /// the predictions belong to the OLD model), when the points do not match
-    /// the fit (another number of predictors, another number of predictions)
-    /// or when the fit plus ALL its predictions cannot fit the byte budget even
-    /// with every other entry evicted.
-    ///
-    /// The fit being merged is marked most recently used FIRST: the budget is
-    /// then paid by the OTHER (older) fits, so a fit can never evict itself
-    /// together with the predictions it was just given.
+    /// Adds predictions of cached fit `key` (exactly `fit`) for `points`. `false` (previous predictions kept) when the fit is gone or replaced,
+    /// points don't match the fit, or fit plus predictions can't fit the byte budget even alone.
+    /// The fit is marked most recently used FIRST, so older fits pay the budget and it can't evict itself.
     pub fn merge_extra(
         &mut self,
         key: &str,
@@ -1705,9 +1499,7 @@ impl RelCache {
         }
         self.extras.push((key.to_string(), Arc::new(merged)));
         self.failed.retain(|f| f.key != key);
-        // Evict the least recently used OTHER fits (each with its own
-        // predictions) until the budget holds (the merged key is the newest, so
-        // it is never removed; the check above guarantees it fits once it is alone).
+        // Evicts LRU OTHER fits (with their predictions) until the budget holds; the merged key is newest so never removed.
         while self.entries.len() > 1 && self.total_bytes() > self.max_bytes {
             self.evict_lru();
         }
@@ -1728,9 +1520,6 @@ impl RelCache {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1761,7 +1550,6 @@ mod tests {
         v.iter().map(|i| i.code.as_str()).collect()
     }
 
-    // ---------- individual score ----------
 
     #[test]
     fn individual_every_knot_upper_side() {
@@ -1836,7 +1624,6 @@ mod tests {
         }
     }
 
-    // ---------- individual validation ----------
 
     #[test]
     fn individual_validation_passes_for_good_set_points() {
@@ -1882,7 +1669,6 @@ mod tests {
         assert!(codes(&v).contains(&"ordering"));
     }
 
-    // ---------- messages echo the typed set point as typed ----------
 
     #[test]
     fn fmt_typed_is_the_shortest_exact_text() {
@@ -1903,15 +1689,14 @@ mod tests {
             // Reads back as the very same number.
             assert_eq!(fmt_typed(x).parse::<f64>().unwrap(), x);
         }
-        // Computed values keep the INFO-file rounding.
+        // Computed values are rounded for display.
         assert_eq!(fmt_num(4.61234), "4.612");
         assert_eq!(fmt_num(0.000123456), "0.0001235");
     }
 
     #[test]
     fn individual_messages_echo_the_typed_set_point_and_round_only_the_band() {
-        // Band edges with more than 3 decimals (never the case in the app, where
-        // they arrive rounded - this only proves which side is rounded).
+        // Band edges with >3 decimals (they arrive rounded in the app); proves which side is rounded.
         let b = IndividualBand::from_rounded(100.0, 10.0, [90.0, 110.0], [70.123456, 130.0]);
         let v = validate_individual(&b, &sp_ind(Some(75.61234), Some(160.0)));
         assert_eq!(codes(&v), vec!["lower_inside_3sd"]);
@@ -2013,7 +1798,7 @@ mod tests {
 
     #[test]
     fn individual_validation_degenerate_constant_sensor() {
-        // sd = 0: every boundary collapses onto the mean (the phase-1 pin).
+        // sd = 0: every boundary collapses onto the mean.
         let flat = IndividualBand::from_rounded(5.0, 0.0, [5.0, 5.0], [5.0, 5.0]);
         let v = validate_individual(&flat, &sp_ind(Some(1.0), Some(9.0)));
         assert_eq!(codes(&v), vec!["degenerate_band"]);
@@ -2023,7 +1808,6 @@ mod tests {
         // Partly collapsed (3σ == 1σ after rounding) is degenerate too.
         let part = IndividualBand::from_rounded(5.0, 0.1, [4.9, 5.1], [4.9, 5.1]);
         assert!(part.is_degenerate());
-        // And NaN.
         let nan = IndividualBand::from_rounded(f64::NAN, f64::NAN, [f64::NAN; 2], [f64::NAN; 2]);
         assert!(nan.is_degenerate());
         assert!(!band().is_degenerate());
@@ -2036,7 +1820,6 @@ mod tests {
         assert_eq!((p.lower, p.upper), (40.0, 160.0));
     }
 
-    // ---------- relationship ----------
 
     fn sp_rel(l80: f64, u80: f64, l0: f64, u0: f64) -> SetPointsArg {
         SetPointsArg {
@@ -2173,7 +1956,6 @@ mod tests {
         assert!(RelationshipParams::new(0.0, &sp_rel(-4.0, 6.0, -10.0, 20.0)).is_err());
     }
 
-    // ---------- clustering ----------
 
     fn geom(angle: f64) -> ClusterGeom {
         ClusterGeom {
@@ -2228,7 +2010,7 @@ mod tests {
             let (x, y) = on_ring(&geom(37.0), 3.0, t);
             let (s, d) = p.score(0, x, y).unwrap();
             approx(d, 3.0);
-            approx(s, 80.0); // would be 85 with the legacy bug
+            approx(s, 80.0);
         }
     }
 
@@ -2308,7 +2090,7 @@ mod tests {
         assert_eq!(assign_cluster(15.0, &shuffled), Some(0));
     }
 
-    /// The sort this replaced, as the reference for the allocation-free scan.
+    /// Reference implementation (stable sort) for the allocation-free scan.
     fn outer_by_stable_sort(r: &[(Option<f64>, Option<f64>)]) -> (Option<usize>, Option<usize>) {
         if r.len() < 2 {
             return (None, None);
@@ -2388,7 +2170,6 @@ mod tests {
         assert_eq!(codes(&v), vec!["degenerate_band"]);
     }
 
-    // ---------- summary ----------
 
     #[test]
     fn summary_counts_shares_and_minimum() {
@@ -2431,7 +2212,7 @@ mod tests {
         approx(s.share_80_100.unwrap(), 50.0);
         approx(s.share_40_80.unwrap(), 25.0);
         approx(s.share_0_40.unwrap(), 25.0);
-        // Every key of the summary is still on the wire under its old name.
+        // The summary's wire keys.
         let j = serde_json::to_value(&s).unwrap();
         let mut keys: Vec<&str> = j.as_object().unwrap().keys().map(String::as_str).collect();
         keys.sort_unstable();
@@ -2461,7 +2242,6 @@ mod tests {
         assert_eq!(s.min_score.unwrap().row, 1);
     }
 
-    // ---------- downsample ----------
 
     #[test]
     fn select_all_rows_when_under_the_cap() {
@@ -2530,7 +2310,6 @@ mod tests {
         assert_eq!(stride_indices(5, 10), vec![0, 1, 2, 3, 4]);
     }
 
-    // ---------- histogram ----------
 
     #[test]
     fn histogram_bins_sum_to_the_row_count() {
@@ -2602,7 +2381,6 @@ mod tests {
         assert_eq!(histogram(&big, 500.0, 288.0, 200).unwrap().counts.len(), 80);
     }
 
-    // ---------- cache ----------
 
     fn fit(n: usize, tag: &str) -> RelFit {
         RelFit {
@@ -2624,7 +2402,6 @@ mod tests {
         c.peek(key).map(|f| Arc::downgrade(&f)).unwrap_or_default()
     }
 
-    // ---------- hourly points + their predictions ----------
 
     /// Hourly points `(hour, mean predictor)` of a one-predictor model, in any
     /// order (they come out sorted).
@@ -2704,8 +2481,7 @@ mod tests {
         assert_eq!(e.get(40, &[4.0]), None, "a NaN prediction is not a prediction ...");
         assert!(e.has(40, &[4.0]), "... but the point is known (never asked for again)");
         assert!(!e.has(11, &[1.0]) && e.get(11, &[1.0]).is_none());
-        // The same hour with OTHER mean predictors (a scoring-period edge moved
-        // inside it) is stored BESIDE the first: going back needs no new run.
+        // The same hour with OTHER mean predictors is stored beside the first, so going back needs no new run.
         assert!(c.merge_extra("a", &w(&c, "a"), &pts(&[(20, 7.0)]), &[9.0]));
         let e = c.peek_extra("a").unwrap();
         assert_eq!(e.points().hours(), &[10, 20, 20, 30, 40]);
@@ -2748,8 +2524,7 @@ mod tests {
 
     #[test]
     fn extra_predictions_count_towards_the_byte_budget() {
-        // Budget fits one 10-row fit (10 * 20 + 80 = 280 bytes) but not many
-        // hourly points too (24 bytes each with one predictor: hour + mean + prediction).
+        // Budget fits one 10-row fit (280 bytes) but not many hourly points as well (24 bytes each).
         let mut c = RelCache::new(8, 400);
         c.insert("a".into(), fit(10, "T"));
         c.insert("b".into(), fit(10, "T")); // evicts "a" (2 x 280 > 400)
@@ -2770,8 +2545,7 @@ mod tests {
 
     #[test]
     fn merging_extras_into_the_oldest_fit_evicts_the_others_never_itself() {
-        // Two 5-row fits (5 * 20 + 40 = 140 bytes each) fit a 300-byte budget;
-        // the extras of the OLDEST one (3 x 24 bytes) push the total over it.
+        // Two 5-row fits (140 bytes each) fit a 300-byte budget; the OLDEST one's extras (3 x 24 bytes) push it over.
         let mut c = RelCache::new(8, 300);
         c.insert("a".into(), fit(5, "T"));
         c.insert("b".into(), fit(5, "T"));
@@ -2794,8 +2568,7 @@ mod tests {
         assert!(c.peek_extra("a").is_some());
     }
 
-    /// "a" = 5-row fit (140 bytes) + 100 hourly predictions (2400 bytes), "b" /
-    /// "c" = 140 bytes each, "a" the least recently used. 2820 bytes in all.
+    /// "a": 140-byte fit + 2400 bytes of predictions, least recently used; "b"/"c": 140 bytes each; 2820 total.
     fn cache_with_heavy_lru(budget: usize) -> RelCache {
         let mut c = RelCache::new(8, budget);
         c.insert("a".into(), fit(5, "T"));
@@ -2808,9 +2581,7 @@ mod tests {
 
     #[test]
     fn merge_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
-        // Merging 30 predictions (720 bytes) into "c" makes 3540 > 2900. Evicting
-        // "a" WITH its predictions leaves 1000: only "a" goes. (Removing only a's
-        // fit would leave 3400, still over, and evict "b" too.)
+        // Merge +720 bytes into "c": 3540 > 2900. Dropping "a" with its predictions leaves 1000, so "b" stays (a's fit alone: 3400).
         let mut c = cache_with_heavy_lru(2900);
         assert!(c.merge_extra("c", &w(&c, "c"), &hrs(0..30), &[1.0; 30]));
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
@@ -2839,9 +2610,7 @@ mod tests {
 
     #[test]
     fn insert_evicts_the_lru_fit_with_its_predictions_and_nothing_more() {
-        // Inserting a 10-row fit (280 bytes): 3100 > 2900. Without "a" and its
-        // predictions: 560 -> only "a" goes (a loop that removed a's fit alone
-        // would still be at 2960 and evict "b" too).
+        // Insert +280: 3100 > 2900. Dropping "a" with its predictions leaves 560; its fit alone leaves 2960 and would evict "b" too.
         let mut c = cache_with_heavy_lru(2900);
         c.insert("d".into(), fit(10, "T"));
         assert!(c.peek("a").is_none() && c.peek_extra("a").is_none());
@@ -2992,7 +2761,6 @@ mod tests {
         assert!(c.peek("huge").is_some());
     }
 
-    // ---------- set points parsing ----------
 
     #[test]
     fn set_points_accept_snake_camel_and_legacy_names() {
@@ -3023,7 +2791,6 @@ mod tests {
         assert!(j["message"].as_str().unwrap().len() > 10);
     }
 
-    // ---------- non-finite set points ----------
 
     #[test]
     fn non_finite_individual_set_points_are_refused_with_one_not_finite_issue_each() {
@@ -3052,7 +2819,7 @@ mod tests {
             assert_eq!(v[0].field, "residual_at_0_lower");
             assert!(RelationshipParams::new(2.0, &sp).is_err());
         }
-        // Finite values keep their old behaviour.
+        // Finite values still pass.
         assert!(validate_relationship(Some(2.0), &sp_rel(-4.0, 6.0, -10.0, 20.0)).is_empty());
     }
 }

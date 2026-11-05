@@ -6,21 +6,9 @@ import {
 import { FIT_GONE_WORDS } from '../components/windows/workbench/WorkbenchShellParts';
 import { NO_MODEL_DATA_WORDS, NO_TRAIN_DATA_SHORT } from '../utils/runningCondition';
 
-/*
- * `helpers/workbenchStatus.ts` is what ~180 assertions of the Workbench integration
- * tests read a model's status through, since "Workbench detail pages v2" removed the
- * footer pill ("Complete" / "Trained" / "Incomplete") and put the status in WORDS on the
- * kind tab (`BuildModelWindow.tabDotOf`). The helper had no test of its own: if it read
- * one of the tab's strings as a better status than the words say, every test that asks
- * "is this model Complete?" would pass on a model that is not.
- *
- * This file pins the helper against EVERY string `tabDotOf` can put on a tab — each base
- * word, with each suffix and every combination of suffixes — and the DOM readers against
- * the markup the window renders (`role="tab"` + `tab-words-<id>`, `wb-notice`, `wb-actions`).
- */
+/* Pins `helpers/workbenchStatus.ts` against every string `BuildModelWindow.tabDotOf` can put on a kind tab, and its DOM readers against the markup. ~180 integration assertions read status through it, so a misreading would pass models that are not Complete. */
 
-// ── every status word the kind tab can show (BuildModelWindow: TAB_WORDS, the set-point
-//    flag, the failed-run words, the fit-gone words, the gate badges) ─────────────────────
+// Every status word the kind tab can show (TAB_WORDS, set-point flag, failed-run, fit-gone and gate words).
 const COMPLETE_WORDS = [
     'Complete',
     `Complete · ${FIT_GONE_WORDS}`,
@@ -43,7 +31,6 @@ const INCOMPLETE_WORDS = [
     'No rows to train on',
 ];
 
-// ── the suffixes `tabDotOf` appends, in the order it appends them ───────────────────────
 const NO_DATA = ` · ${NO_MODEL_DATA_WORDS}`;
 const OUT_OF_DATE = ' · files out of date';
 const UNSAVED = ' · unsaved changes';
@@ -119,10 +106,8 @@ describe('statusFromTabWords — the three states the footer pill used to name, 
     });
 });
 
-// ── the DOM readers, against the markup of the detail pane ──────────────────────────────
 
-/** The kind tabs as `BuildModelWindow` renders them: a `role="tab"` button with the dot and
- *  the words (`tab-words-<modelId>`) inside. */
+/** Kind tabs as the window renders them: a `role="tab"` button with the dot and `tab-words-<id>`. */
 function pane(tabs: { id: string; words: string; open?: boolean }[], extra = ''): HTMLElement {
     const el = document.createElement('div');
     el.innerHTML = `

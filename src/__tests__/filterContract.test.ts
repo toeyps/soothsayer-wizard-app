@@ -3,13 +3,7 @@ import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
 import { toFilterRanges, validatePeriods } from '../utils/timePeriods';
 import type { TimePeriod } from '../types';
 
-/*
- * TS half of the timestamp_ranges contract. The SAME fixture is
- * read by src-tauri/tests/filter_contract_tests.rs, which checks that Rust
- * accepts every shape below and that its struct field names equal the
- * `*_fields` lists. What the Workbench's Train actually puts on the wire is checked
- * against the same fixture in Feature4BuildFlow.integration.test.tsx.
- */
+/* TS half of the timestamp_ranges contract; `src-tauri/tests/filter_contract_tests.rs` reads the same fixture. */
 
 /** What Tauri's IPC actually transmits: JSON (undefined keys vanish). */
 const wire = <T,>(v: T): unknown => JSON.parse(JSON.stringify(v));

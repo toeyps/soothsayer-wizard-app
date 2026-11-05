@@ -415,8 +415,7 @@ describe('useCutRuns', () => {
         });
 
         it('cutting removes the scrollbar, which widens the root past "wide enough": settles instead of looping', () => {
-            // Whole names need a scrollbar (root 300), short ones do not (root 308). Without the pin: 308 >= 300 + 6 + 2,
-            // back to whole, the scrollbar returns, cut again, forever (React #185).
+            // Whole names need a scrollbar (root 300), short ones don't (308); without the pin it loops forever (React #185).
             let extra = 0;
             geometry = el => {
                 if (id(el) === 'root') return { clientWidth: (cutNow(el) ? 308 : 300) + extra };

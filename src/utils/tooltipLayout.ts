@@ -1,9 +1,4 @@
-/**
- * Tooltip row layout for long sensor names (DESIGN_SYSTEM §4 rule 4, SPEC FINAL addition 2): the box is at most
- * 440 px, a row at most 418 px, the description gets the room first, the tag takes what is left, the value
- * never overlaps the name. A row that fits is unchanged. Every tooltip has one look: the whole name, at most two
- * lines, never a separate line for a shared start (user decision 2026-11-03).
- */
+/** Tooltip rows for long sensor names: box at most 440 px, row at most 418 px; the description gets room first, the tag the rest, the value never overlaps the name. A row that fits is unchanged. Whole name, at most two lines. */
 import { displayedName, splitName, type NamedSensor } from './sensorNames';
 import { monoFontFamily, textWidth, uiFontFamily, type MeasureText } from './textMeasure';
 
@@ -108,11 +103,7 @@ function endAfterShared(tag: string, tags: readonly string[]): string {
     return tag.slice(i).replace(/^[\s_.\-]+/, '');
 }
 
-/**
- * Rows with the same description are told apart only by their tags (real data: "… SegmentNo 1" for its avg, max and
- * min). When a tag of such a group has no room, the end that differs would be lost, so the group gets its ends,
- * by tag. Decided from the names alone, so it does not flip as the values change. Tags that fit change nothing.
- */
+/** Rows with the same description differ only by tag; when a tag has no room, the group gets its distinguishing tag ends. Decided from names alone so it doesn't flip as values change. */
 export function tooltipDistinctEnds(rows: readonly TooltipRowInput[], options: TooltipMeasureOptions = {}): Map<string, string> {
     const ends = new Map<string, string>();
     const measure = options.measure ?? textWidth;

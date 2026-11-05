@@ -2,27 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { act, cleanup, fireEvent, waitFor, within } from '@testing-library/react';
 
-/*
- * Spec:
- * docs/design/handoff/workbench-redesign/README.md §1 "the page spine".
- *
- * The two rules of the spine, followed through REAL flows on ONE in-memory
- * workspace file with the real Dashboard + the real Build Model window, the real
- * `workspaceManager` and the fake Rust health backend:
- *
- *   1. at most ONE filled button on screen, and it follows the state;
- *   2. a model's status is said in words on its kind tab (a dot + the short status
- *      words — Workbench detail v2 §2), there is NO status pill and NO footer bar, and
- *      at most ONE notice line — only while there is something to fix or wait for
- *      (v2 §4); everywhere else the status is a dot, and the kind-tab dot, the
- *      sensor-list dot and the Dashboard's Failure Groups dot agree at every step.
- *
- * `BuildModelWindow.test.tsx` ("Workbench redesign §1 — the page spine") pins each
- * state on its own with `workspaceManager` mocked; this file walks from one state
- * to the next the way a user does, so a state that is only wrong when it is
- * REACHED (a stale draft, a verdict not yet saved, a broadcast not yet landed)
- * shows up.
- */
+/* Spine rules in real flows (real Dashboard, Build Model, workspaceManager, fake Rust): one filled button, status words, one notice line, dots agree. BuildModelWindow.test.tsx pins single states; this catches states wrong only when reached. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -71,7 +51,6 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
-// ── what "the spine" looks like from outside ─────────────────────────────
 
 /** Every FILLED button of the Build Model window (a split button's ▾ half belongs
  *  to its main half; a dialog is not the page). */
@@ -83,15 +62,12 @@ const footer = () => bmw().queryByTestId('wb-notice');
 /** `data-primary` of the header's state buttons: which button is the filled one. */
 const primary = () => bmw().getByTestId('wb-actions').getAttribute('data-primary');
 const sentence = () => footer()?.querySelector('.wbx-reason')?.textContent ?? null;
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status of the open kind tab, read from its status words. */
 const footPill = () => openTabStatus(bmwEl());
 const tabDot = (id: string) => bmw().getByTestId(`tab-status-${id}`);
 const tabOf = (id: string) => tabDot(id).closest('[role="tab"]') as HTMLElement;
 
-/** The Dashboard dot that goes with a Build Model dot (both come from `modelDotState`
- *  + `modelSetPointFlag`): the Dashboard draws only what is settled — nothing for a
- *  model that must train (again) or is blocked, blue for "trained, set points valid". */
+/** Dashboard dot: none when the model must train or is blocked, blue when trained with valid set points. */
 type Dash = 'none' | 'trained' | 'need' | 'bad' | 'complete';
 
 interface Spine {
@@ -129,7 +105,7 @@ async function expectSpine(step: string, id: string, key: string, kind: string, 
         if (typeof want.sentence === 'string') expect(sentence(), at('notice sentence')).toBe(want.sentence);
         else expect(sentence(), at('notice sentence')).toMatch(want.sentence);
     }
-    // ...and never a train date or "scored on N periods" (user decision 2026-10-12)
+    // No train date or "scored on N periods" on the page.
     expect(bmwEl().querySelector('.bmw-detail')!.textContent, at('no train date on the page')).not.toMatch(/scored on \d+ period|Trained \d{4}\//);
     // ...no status PILL on a tab (a dot + plain words) or on the set-point card (a dot with a tooltip)
     for (const tab of bmw().getAllByRole('tab')) expect(tab.querySelector('.f4-pill, .model-status-pill'), at('no pill on a kind tab')).toBeNull();
@@ -175,7 +151,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         selectSensor('tag1');
         await settle(50);
 
-        // 1) unset: the card's own button is the one filled button; nothing in the pane is
+        // 1) unset: the card's own button is the one filled button; the pane has none
         expect(bmw().getByTestId('rc-card').getAttribute('data-state')).toBe('unset');
         expect(bmw().getByTestId('rc-card-open').textContent).toBe('Set running condition →');
         await expectSpine('condition unset', 'i1', 'tag1', 'individual', {
@@ -232,8 +208,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         await settle(350);
         await waitForCharts();
 
-        // 4) trained, set points still empty: NO filled button on Model fit (navigation is never
-        // dressed as an action) — page tab 2 carries the cue: an amber dot + "set points needed"
+        // Trained, set points empty: no filled button on Model fit; page tab 2 carries the cue (amber dot, "set points needed").
         await expectSpine('trained', 'i1', 'tag1', 'individual', {
             primary: 'none', filled: [], pill: 'Trained',
             sentence: null,
@@ -285,8 +260,7 @@ describe('ONE filled button + status said once, through a whole Individual journ
         expect(bmw().queryByTestId('mark-complete-again')).toBeNull();
         expect(diskModel('i1').status).toBe(true);
 
-        // 8) a set point changed on a Complete model (export round 2026-10-20): Incomplete in the
-        // same write — the spine is back to "valid set points", Mark complete is the filled button
+        // Changing a set point on a Complete model makes it Incomplete in the same write; Mark complete is the filled button again.
         await enterSp({ 'sp-upper': '91' });
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         expect(diskModel('i1').status).toBe(false);

@@ -1,34 +1,9 @@
 import { FailureModel, ModelKind, SpecialSensorRecipe } from '../types';
 import { MODEL_KIND_LABEL } from './modelNames';
 
-/**
- * Who still depends on a special sensor — the check that decides whether
- * "Manage Special Sensors" lets you delete it.
- *
- * Deleting a special sensor that something else was built on top of leaves a
- * dangling reference behind: a formula that can no longer resolve `$name`, or
- * a model whose target sensor simply isn't in the data any more. Neither
- * fails loudly, so the rule is to block the delete
- * up front rather than cascade or repair afterwards.
- *
- *   blocked  — another special sensor references it, a Failure Group model
- *              references it in ANY of its sensor-bearing fields (including a
- *              model's own Custom running condition), or the workspace-wide
- *              Running condition filter names it
- *   allowed  — merely plotted on the chart, or unused entirely
- *
- * Plotting is deliberately not a blocker: the sensor is just removed from the
- * chart along with the delete.
- */
+/** Who still depends on a special sensor, deciding whether Manage Special Sensors lets you delete it. Blocked by another special sensor, a model's sensor field (incl. its Custom condition) or the workspace Running condition. */
 
-/** One place a `FailureModel` can name a sensor, and what to call it in the UI.
- *
- *  The workspace-wide running-condition list is not per-model, so it is passed
- *  to `buildSpecialSensorUsage` separately (`runningConditionFilters`); a
- *  model's own Custom running-condition conditions are a field below. Rust
- *  silently DROPS a condition on a sensor that no longer exists, so a deleted
- *  special sensor still named there would make every model train on different
- *  rows without any error. */
+/** One place a `FailureModel` names a sensor, with its UI label (the workspace condition list is passed separately). Rust silently DROPS a condition on a missing sensor: a deleted one still named there would change training rows unseen. */
 const MODEL_SENSOR_FIELDS = [
     { label: 'target sensor', read: (m: FailureModel) => [m.targetSensor] },
     { label: 'predictor', read: (m: FailureModel) => m.predictorSensors ?? [] },
@@ -36,8 +11,7 @@ const MODEL_SENSOR_FIELDS = [
     { label: 'Y sensor', read: (m: FailureModel) => [m.ySensor] },
     { label: 'criteria sensor', read: (m: FailureModel) => [m.criteriaSensor] },
     { label: 'scatter X sensor', read: (m: FailureModel) => [m.scatterXSensor] },
-    // Kept even when the model is currently in 'workspace' mode: the list is
-    // persisted and comes back the moment the user switches to Custom.
+    // Kept even in 'workspace' mode: the list is persisted and returns when the user switches to Custom.
     { label: 'custom running condition', read: (m: FailureModel) => (m.customRunningConditionFilters ?? []).map(f => f.sensor) },
 ] as const;
 
@@ -64,29 +38,7 @@ export interface EditLockSource {
     runningCondition: boolean;
 }
 
-/**
- * Whether a special sensor may still be edited.
- *
- * A special sensor used by a model is LOCKED --
- * its values and its name are frozen, because a Trained / Complete model that
- * was built from it goes stale (and the saved results / health-score input
- * become wrong) if either changes underneath it. Prevention first; the
- * detection behind it is `specialSensorSignature.ts`.
- *
- * Locked when ANY of:
- *   - a model names it (any field `MODEL_SENSOR_FIELDS` lists, incl. a model's
- *     own Custom running condition),
- *   - the workspace Running condition names it (a changed sensor changes which
- *     rows EVERY model trains on),
- *   - transitively: a special sensor built on it (directly, or through other
- *     special sensors) is itself used by a model / the Running condition --
- *     changing this one changes that one's values.
- * A sensor that is merely built on by an UNUSED special sensor is not locked
- * (editing it already recomputes everything downstream).
- *
- * `unknown` means the models / references could not be read fresh: everything
- * is then treated as locked, because "nothing uses it" would be a guess.
- */
+/** Whether a special sensor may still be edited; locked when a model or the workspace Running condition names it, or a special sensor built on it is itself used (one built on only by an UNUSED one is not). `unknown` locks everything. */
 export interface EditLock {
     locked: boolean;
     unknown: boolean;
@@ -115,24 +67,10 @@ export interface SpecialSensorUsage {
     editLock: EditLock;
 }
 
-/** Tag comparison is case-insensitive everywhere else in the app (see the
- *  `byTag` maps in Dashboard's `add-sensor-selection` handler), so it is here
- *  too — otherwise `Temp Diff` and `temp diff` would count as two sensors and
- *  a dependency could hide in the gap between them. */
+/** Tags compare trimmed and case-insensitively, as elsewhere; otherwise `Temp Diff` and `temp diff` would hide a dependency. */
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/**
- * Sensors that a recipe is built from.
- *
- * For an operation recipe the inputs are stored directly. For a formula they
- * have to be parsed out of the expression, which is Rust's job: the
- * `extract_formula_refs` command reuses the same parser the evaluator uses.
- * Pass its result in as `formulaRefs`, keyed by the recipe's tag.
- *
- * Do NOT substitute `formula.includes(tag)` for that call — with sensors named
- * `test` and `test extend`, a formula referencing only the second one reports
- * a dependency on the first, and `test` becomes permanently undeletable.
- */
+/** Sensors a recipe reads: operations store them; formulas use `extract_formula_refs` output as `formulaRefs`, keyed by tag. Never `formula.includes(tag)`: with `test` and `test extend`, a formula using only the second would depend on `test`. */
 function recipeInputs(
     recipe: SpecialSensorRecipe,
     formulaRefs: Map<string, string[]>,
@@ -141,15 +79,7 @@ function recipeInputs(
     return formulaRefs.get(key(recipe.tag)) ?? [];
 }
 
-/**
- * Work out, for every special sensor, what still depends on it.
- *
- * `formulaRefs` maps a formula recipe's tag to the sensors its expression
- * references (from `extract_formula_refs`). A tag missing from the map is
- * treated as referencing nothing — so a failed or not-yet-finished lookup
- * under-reports dependencies rather than inventing them. Callers must
- * therefore not offer deletion until the lookup has actually returned.
- */
+/** For every special sensor, what still depends on it. A tag missing from `formulaRefs` references nothing, so a pending lookup under-reports: offer no deletion until it returns. */
 export function buildSpecialSensorUsage(args: {
     recipes: SpecialSensorRecipe[];
     formulaRefs: Map<string, string[]>;
@@ -159,9 +89,7 @@ export function buildSpecialSensorUsage(args: {
     runningConditionFilters?: Array<{ sensor: string }>;
     /** Sensors currently plotted on the chart. */
     selectedSensors: string[];
-    /** False when `models` / `runningConditionFilters` / `formulaRefs` are not
-     *  known fresh: every sensor's `editLock` is then locked + unknown.
-     *  Default true. */
+    /** False when `models`/`runningConditionFilters`/`formulaRefs` aren't known fresh: every `editLock` is then locked + unknown. Default true. */
     failureKnown?: boolean;
 }): Map<string, SpecialSensorUsage> {
     const { recipes, formulaRefs, models, selectedSensors, runningConditionFilters } = args;
@@ -180,8 +108,7 @@ export function buildSpecialSensorUsage(args: {
         });
     }
 
-    // special -> special. Only references BETWEEN special sensors matter: a
-    // recipe naming a raw CSV column is not a dependency anyone can delete.
+    // special -> special. Only references BETWEEN special sensors matter; a raw CSV column isn't a deletable dependency.
     for (const recipe of recipes) {
         for (const input of recipeInputs(recipe, formulaRefs)) {
             const target = usage.get(key(input));
@@ -231,9 +158,8 @@ export function buildSpecialSensorUsage(args: {
             && !entry.runningCondition;
     }
 
-    // Edit lock. Direct uses first (model references grouped per model), then
-    // the transitive part: walk everything built on a sensor, collecting the
-    // downstream sensors that are used themselves.
+    // Edit lock: direct uses first (model references grouped per model),
+    // then the transitive part: walk everything built on a sensor, collecting downstream sensors that are used.
     const modelById = new Map(models.map(m => [m.id, m]));
     const directOf = (entry: SpecialSensorUsage): EditLockSource => {
         const byModel = new Map<string, LockedModelUse>();
@@ -283,8 +209,7 @@ function isUsed(src: EditLockSource): boolean {
     return src.models.length > 0 || src.runningCondition;
 }
 
-/** How a message prints a sensor: description first, then tag. A caller with
- *  sensor metadata passes `tag => sensorPlainLabel(lookup(tag))`. */
+/** How a message prints a sensor (description first, then tag), e.g. `tag => sensorPlainLabel(lookup(tag))`. */
 export type SensorLabelOf = (tag: string) => string;
 
 /** The kind names of the lock sentence — the app-wide ones ("Relation model"). */
@@ -318,11 +243,7 @@ function describeSource(src: EditLockSource): string {
     return parts.join(' and ');
 }
 
-/**
- * The plain-language reason a sensor's name / formula / sources are locked --
- * shown in Manage and used as the refusal message of a refused edit.
- * Empty string when the sensor is not locked.
- */
+/** Plain-language reason a sensor's name/formula/sources are locked (Manage list, edit refusal); '' when not locked. */
 export function describeEditLock(lock: EditLock, labelOf: SensorLabelOf = tag => tag): string {
     if (!lock.locked) return '';
     if (lock.unknown) {
@@ -346,23 +267,7 @@ export function describeEditLock(lock: EditLock, labelOf: SensorLabelOf = tag =>
     return sentences.join(' ');
 }
 
-/**
- * Special sensors that have NO column in the Rust session right now, split the
- * same way the reopen replay (`replaySpecialSensorRecipes`) splits them:
- *
- *   failed  -- its own recipe could not be computed (a source column is gone,
- *              or a formula Rust refuses, such as
- *              `round($A, 2)`). Only fixing THIS recipe brings it back.
- *   skipped -- built on a special sensor that has no column itself. Its own
- *              recipe may be fine; it comes back when the one it reads is
- *              fixed (an edit recomputes everything downstream).
- *
- * Decided from what the session actually holds (`get_all_sensors`), not from a
- * list handed over at open time: it stays right after a fix in this window,
- * across a window reopen, and never needs the replay result to travel between
- * windows. `formulaRefs` is Rust's `extract_formula_refs`, keyed like
- * `buildSpecialSensorUsage`'s. Tags are compared trimmed and case-insensitively.
- */
+/** Special sensors with no Rust session column: `failed` = own recipe can't be computed (fix THIS recipe), `skipped` = built on one with no column (returns when that is fixed). Decided from `get_all_sensors`. */
 export interface UnrestoredSpecialSensors {
     failed: string[];
     skipped: string[];
@@ -395,24 +300,7 @@ export function usageFor(
     return usage.get(key(tag));
 }
 
-/**
- * Everything that has to be recomputed after `tag`'s recipe changes, in the
- * order it must be recomputed in.
- *
- * Editing a special sensor is not a local change: a sensor built on top of it
- * was computed from its OLD values and is stale the moment it is saved. So the
- * edit has to be followed by replaying the whole downstream chain — not just
- * the direct dependents, since those have dependents of their own.
- *
- * The result is drawn from `recipes` in array order. That is only a valid
- * build order when the stored list is one -- which an older workspace's list
- * may not be (`[C=$B*10, B=${A}+1, A=...]`: C would be
- * recomputed from B's OLD values). Pass `inputsOf` (what each recipe reads) and
- * the result is put in dependency order (`orderRecipesByDependency`) before it
- * is returned, whatever order the list is stored in.
- *
- * `tag` itself is not included; the caller recomputes it first.
- */
+/** Everything to recompute after `tag`'s recipe changes: the whole downstream chain, not just direct dependents; `tag` excluded. Follows `recipes` array order, possibly not a valid build order in old workspaces; pass `inputsOf` to sort it. */
 export function dependentsToRecompute(
     recipes: SpecialSensorRecipe[],
     usage: Map<string, SpecialSensorUsage>,
@@ -433,18 +321,7 @@ export function dependentsToRecompute(
     return inputsOf ? orderRecipesByDependency(downstream, inputsOf) : downstream;
 }
 
-/**
- * Which of `nextInputs` would make `tag` depend on itself.
- *
- * An edit can introduce a cycle that creating never could: `B = $A + 1` is
- * fine, but then editing A to read `${B} * 2` closes the loop. Nothing in the
- * app would catch that later — the recipes would simply replay in order on the
- * next workspace open, each reading whatever stale column happened to be
- * there — so it has to be refused at the point of editing.
- *
- * Returns the offending input names (empty when the edit is safe), so the UI
- * can name them rather than just saying no.
- */
+/** Which of `nextInputs` would make `tag` depend on itself; returns the offending names (empty = safe). An edit can close a loop creating never could (`B = $A + 1`, then A edited to `${B} * 2`), so it's refused at edit time. */
 export function cycleConflicts(
     recipes: SpecialSensorRecipe[],
     usage: Map<string, SpecialSensorUsage>,
@@ -462,25 +339,7 @@ export function cycleConflicts(
     });
 }
 
-/**
- * Put recipes in an order where every recipe comes AFTER the special sensors
- * it is built from, changing nothing that is already in a valid order.
- *
- * The workspace-reopen replay runs recipes in array order, so the array must
- * always be a valid build order. Creating a sensor keeps it (the new recipe
- * lands last and only reads sensors that already exist), but EDITING can break
- * it: pointing an early sensor at one created later (`A` was `$raw * 2`, now
- * `$C + 1` with `C` further down the list) is allowed -- both columns exist in
- * the live session -- yet on the next open `A` would replay before `C` exists.
- *
- * Stable: repeatedly takes the first not-yet-placed recipe whose special-sensor
- * inputs are all placed. Inputs naming raw columns are ignored. A cycle (which
- * `cycleConflicts` refuses before it can be saved) falls back to the original
- * relative order for whatever is left, rather than dropping recipes.
- *
- * `inputsOf` answers what a recipe reads -- for formulas that is Rust's
- * `extract_formula_refs`, for operations its `sourceSensors`.
- */
+/** Orders recipes so each comes after the special sensors it reads; stable, changes nothing already valid, raw columns ignored. Editing can break the reopen replay (A reads later-created C); a cycle (see `cycleConflicts`) keeps the original order. */
 export function orderRecipesByDependency(
     recipes: SpecialSensorRecipe[],
     inputsOf: (recipe: SpecialSensorRecipe) => string[],
@@ -508,12 +367,7 @@ export function orderRecipesByDependency(
     return ordered;
 }
 
-/**
- * Re-sequence `recipes` to follow `order` (a list of tags). Tags missing from
- * `order` keep their relative order after the listed ones; tags in `order`
- * that match no recipe are ignored. Used by the Dashboard to apply the order
- * the Add Sensor window worked out after an edit.
- */
+/** Re-sequences `recipes` by `order` (tags): unlisted ones follow in their order, unknown tags are ignored. */
 export function reorderRecipesByTags(
     recipes: SpecialSensorRecipe[],
     order: string[] | undefined,

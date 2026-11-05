@@ -1,9 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act } from '@testing-library/react';
 
-// `main.tsx` renders at import time and picks its root component from the `?window=`
-// URL param. Each window route is mounted here for real (stand-ins for the three
-// components), including the lazy chunks of the two sub-window routes.
+// `main.tsx` renders at import time and picks its root from the `?window=` param; each route is mounted with stand-ins (lazy chunks included).
 vi.mock('../App', () => ({ default: () => <div data-testid="route-main" /> }));
 vi.mock('../components/windows/AddSensorWindow', () => ({ default: () => <div data-testid="route-add-sensor" /> }));
 vi.mock('../components/windows/BuildModelWindow', () => ({ default: () => <div data-testid="route-build-model" /> }));

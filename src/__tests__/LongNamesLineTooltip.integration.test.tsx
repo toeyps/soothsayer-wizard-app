@@ -2,11 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 import * as echarts from 'echarts';
 
-/*
- * The line tooltip now lives under `body` so the card cannot clip it (long names, rule 4). LineChart's own tests read
- * the option; ECharts' behaviour with that option is what decides whether the box can be left behind on the screen. So
- * here the REAL ECharts runs the option LineChart builds, in jsdom's SVG mode.
- */
+/* Line tooltip lives under body so the card can't clip it; runs real ECharts (SVG mode) on LineChart's option. */
 const captured: any[] = [];
 vi.mock('../components/charts/ResponsiveECharts', () => ({
     default: (props: any) => {

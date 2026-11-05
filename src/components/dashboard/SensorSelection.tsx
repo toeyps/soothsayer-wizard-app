@@ -18,22 +18,13 @@ interface SensorSelectionProps {
     sensors: string[];
     selectedSensors: string[];
     onSensorChange: (sensors: string[]) => void;
-    /** When set, selecting a NEW sensor once selectedSensors.length has
-     *  already reached this count is a no-op — used to hard-block picking a
-     *  5th sensor while Pair Plot is active (WebGL context exhaustion): the
-     *  click is blocked rather than silently redirecting away from the chart
-     *  afterward. Deselecting is never blocked. */
+    /** Hard cap on selected sensors (Pair Plot allows 4: WebGL contexts); selecting past it is a no-op, deselecting is never blocked. */
     maxSelectable?: number;
     sensorMetadata: SensorMetadata[] | null;
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     getGroupColor: (groupNo: number) => string;
-    /** Toggles a specific (sensor, group, kind) membership on/off — creates
-     *  or reuses a model of that kind for this sensor (a sensor can carry
-     *  more than one model kind at once, e.g. both Individual and
-     *  Relationship, and more than one group). One control does both add and
-     *  remove, no separate confirm step — clicking an already-member kind
-     *  removes it, clicking an absent one adds it. */
+    /** Toggles one (sensor, group, kind) membership: creates or reuses that kind's model; clicking a member kind removes it. */
     onToggleSensorGroupKind: (tag: string, groupNo: number, kind: ModelKind) => void;
     onCreateGroupForSensor: (tag: string, name: string) => void;
     onRenameGroup: (groupNo: number, name: string) => void;
@@ -41,9 +32,7 @@ interface SensorSelectionProps {
     /** Which alarm setpoint lines are toggled on, per sensor tag. */
     alarmLinesEnabled: Record<string, AlarmLevel[]>;
     onToggleAlarmLine: (tag: string, level: AlarmLevel) => void;
-    /** "Assign sensors →" on a Failure Groups card: the group being filled. A
-     *  bar names it, component counts read "assigned / total" for it, and the
-     *  assignment sheet pins it first. `null`/omitted = the ordinary Sensor tab. */
+    /** Group being filled by 'Assign sensors' (bar, 'assigned / total' counts, pinned in the sheet); `null`/omitted = ordinary Sensor tab. */
     assignGroupNo?: number | null;
     /** The bar's Done — the Dashboard goes back to the Failure Groups tab. */
     onAssignDone?: () => void;
@@ -51,12 +40,7 @@ interface SensorSelectionProps {
 
 const UNCATEGORIZED = 'Uncategorized';
 
-// Which sensor a model represents is `modelSensorKey` (Individual/
-// Relationship key off targetSensor; Clustering off xSensor, which the
-// single-sensor toggle flow seeds as X — see Dashboard.tsx's
-// makeDefaultModelForKind), normalised the same way Dashboard's own toggle
-// matches it, so the chips here and the assignment sheet never disagree about
-// whether a sensor belongs to a group.
+// A model's sensor is `modelSensorKey` (Individual/Relationship: targetSensor; Clustering: xSensor), normalised like Dashboard's toggle so chips and the sheet agree on membership.
 
 /** Key for one (group, kind) membership inside the index below. */
 const membershipKey = (groupNo: number, kind: ModelKind) => `${groupNo}:${kind}`;
@@ -99,43 +83,27 @@ export default function SensorSelection({
     onAssignDone,
 }: SensorSelectionProps) {
     const [searchTerm, setSearchTerm] = useState('');
-    // Component groups the user has manually expanded. Everything starts
-    // collapsed — browsing means opening a component to see its sensors,
-    // not scanning a flat 133-row list.
+    // Manually expanded components; all start collapsed.
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
-    // Which sensor the Failure Group Assignment sheet (FailureGroupAssignSheet)
-    // is open for — `null` = closed. A full-height sheet docked to the left
-    // edge of the Sensors panel; it is NOT dismissed by scrolling the list or
-    // clicking inside the panel, only by the triggers listed above
-    // `closeSheet` below. A sensor can belong to more than one group (and
-    // kind), so the sheet is a matrix of toggles, not a single-select
-    // assignment.
+    // Sensor the Failure Group Assignment sheet is open for (`null` = closed); stays open on scroll or panel clicks.
     const [fgSheetFor, setFgSheetFor] = useState<string | null>(null);
-    // Which sensor's alarm-setpoint checkbox list is open. Closed by default
-    // for every sensor — the icon only appears when the sensor actually HAS
-    // a setpoint (see `hasAlarmSetpoints` below), and clicking it is the only
-    // way to reveal the checkboxes. Checking a sensor into the chart does
-    // NOT auto-open this — the user explicitly asked for click-only.
+    // Sensor whose alarm-setpoint list is open; click-only, and the icon shows only if the sensor has a setpoint.
     const [alarmPanelFor, setAlarmPanelFor] = useState<string | null>(null);
-    // Viewport-relative rect of the 🔔 button that opened the alarm-setpoints
-    // popover — captured once, when it opens (see AnchoredPopover's own
-    // docstring for why this isn't tracked live).
+    // Rect of the bell button that opened the popover, captured once on open (see AnchoredPopover).
     const [alarmPanelAnchor, setAlarmPanelAnchor] = useState<PopoverAnchorRect | null>(null);
     // Latest-DOM handles the sheet needs: the Sensors panel it docks to, the
     // scrolling list, and the row it points at.
     const rootRef = useRef<HTMLDivElement>(null);
     const listRef = useRef<HTMLDivElement>(null);
     const rowEls = useRef(new Map<string, HTMLElement>());
-    // Each row's Failure groups button, so closing the sheet from the keyboard
-    // (Esc / ✕ / Done) can hand focus back to the button that opened it.
+    // Each row's Failure groups button, so closing the sheet by keyboard can return focus to it.
     const fgButtonEls = useRef(new Map<string, HTMLButtonElement>());
     // The group an "Assign sensors" run is filling; gone (bar hides) if it was
     // deleted meanwhile.
     const assignGroup = assignGroupNo !== null && assignGroupNo !== 0
         ? fgGroups.find(g => g.no === assignGroupNo) ?? null
         : null;
-    // A sensor the list should scroll to once its row has rendered (set by the
-    // sheet's ‹ › buttons, which may have just expanded its component).
+    // Sensor to scroll to once its row renders (the sheet's ‹ › may have just expanded its component).
     const [scrollToSensor, setScrollToSensor] = useState<string | null>(null);
     const windowedOffsetOf = useRef<((sensor: string) => number) | null>(null);
 
@@ -151,8 +119,7 @@ export default function SensorSelection({
     };
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
-    // Labels (rows + the assignment sheet header) read this panel's own metadata, layered on the
-    // window's provider so special-sensor badges still come through.
+    // Labels read this panel's metadata layered on the window's provider, so special-sensor badges still show.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const getMetadata = (sensor: string) => sensorMetaMap.get(normalizeSensorTag(sensor));
 
@@ -171,10 +138,7 @@ export default function SensorSelection({
         [sensors, searchTerm, sensorMetadata]
     );
 
-    // Sensors grouped by component, sorted alphabetically by component name
-    // and, within each group, by sensor label. Sensors without a mapped
-    // component (or no mapping loaded at all) fall into "Uncategorized"
-    // rather than disappearing.
+    // Group by component, sorted by component then sensor label; unmapped sensors go to 'Uncategorized' rather than disappearing.
     const groupByComponent = (list: string[]): [string, string[]][] => {
         const groups = new Map<string, string[]>();
         for (const s of list) {
@@ -189,9 +153,7 @@ export default function SensorSelection({
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [filteredSensors, sensorMetadata]
     );
-    // EVERY sensor in on-screen order, ignoring the search box — the order the
-    // assignment sheet's ‹ › buttons walk (they go across all sensors, expanding
-    // collapsed components and clearing the search on the way).
+    // Every sensor in on-screen order, ignoring search: the order the sheet's ‹ › walk (they expand components and clear search).
     const allSensorsInOrder = useMemo(
         () => groupByComponent(sensors).flatMap(([, list]) => list),
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -207,30 +169,14 @@ export default function SensorSelection({
         });
     };
 
-    // While actively searching, force every matching group open — the user
-    // is looking for a specific sensor, not browsing by system, so nothing
-    // should hide behind a collapsed header. Manual expand/collapse state
-    // still applies once the search box is cleared.
+    // While searching, force matching groups open so nothing hides behind a collapsed header; manual state applies again when cleared.
     const isComponentExpanded = (comp: string) =>
         searchTerm !== '' || expandedComponents.has(comp);
 
     const isFilterActive = searchTerm !== '';
 
-    // Which sensor tags are actually rendered right now — a component that's
-    // collapsed, or a search that doesn't match, both remove a sensor's row from
-    // the DOM without the sensor itself ever being deselected. `fgSheetFor` /
-    // `alarmPanelFor` (and the alarm popover's captured anchor rect) are state
-    // local to THIS component, not tied to the row's lifecycle, so without
-    // this effect collapsing then re-expanding the group (or filtering the row
-    // out then clearing the search) would remount the popover at the stale rect
-    // captured before the row disappeared. One shared effect, keyed on the
-    // actual visible row set, closes whichever panel's row just left it —
-    // covers the collapse/expand path, the filter-out/clear-search path, and a
-    // sensor that disappears from `sensors` altogether (a deleted special
-    // sensor). The assignment sheet follows the same rule: with its row gone
-    // there is nothing for its arrow to point at, so it closes (its own ‹ ›
-    // buttons expand the target's component in the SAME update, so they never
-    // trip it).
+    // Close the sheet/alarm popover when its row leaves the visible set (collapsed, filtered, gone): they would remount at a stale rect.
+    // The sheet's ‹ › expand the target in the same update, so they don't trip it.
     const visibleSensorSet = useMemo(() => {
         const visible = new Set<string>();
         for (const [component, compSensors] of groupedSensors) {
@@ -251,10 +197,7 @@ export default function SensorSelection({
         }
     }, [visibleSensorSet, fgSheetFor, alarmPanelFor]);
 
-    // Membership index: sensor tag (lower-cased) -> set of "<groupNo>:<kind>".
-    // Built once per `fgModels` change, so each row's lookups are O(1) instead
-    // of a scan of `fgModels` for every (group, kind) pair of every rendered
-    // row on every render (every keystroke in the search box).
+    // Membership index: lower-cased tag -> set of '<groupNo>:<kind>', rebuilt per `fgModels` change so row lookups are O(1).
     const membershipIndex = useMemo(() => {
         const index = new Map<string, Set<string>>();
         for (const m of fgModels) {
@@ -271,19 +214,13 @@ export default function SensorSelection({
         setSearchTerm('');
     };
 
-    // Typing in the search box re-filters the list under an open panel. The
-    // alarm popover (positioned from a one-time captured rect) would float over
-    // the wrong spot, so — like AnchoredPopover's own scroll/resize rule — it
-    // closes. The assignment sheet closes on a keystroke too ("search changes"
-    // is one of its dismissals); clearing the search through its ‹ › buttons is
-    // a programmatic change, not typing, so it keeps it open.
+    // Typing re-filters the list, so close the alarm popover and the sheet (their rect is fixed at open). ‹ › clearing search keeps them.
     const handleSearchChange = (value: string) => {
         setSearchTerm(value);
         if (fgSheetFor) setFgSheetFor(null);
         if (alarmPanelFor) { setAlarmPanelFor(null); setAlarmPanelAnchor(null); }
     };
 
-    // ── Failure Group Assignment sheet ───────────────────────────────────────
     const getHostEl = useCallback(
         () => (rootRef.current?.closest('.widget-section') as HTMLElement | null) ?? rootRef.current,
         [],
@@ -305,8 +242,7 @@ export default function SensorSelection({
         if (!fgSheetFor) return;
         const next = allSensorsInOrder[allSensorsInOrder.indexOf(fgSheetFor) + direction];
         if (!next) return;
-        // The target may sit in a collapsed component or be filtered out by the
-        // search — expand/clear on demand so its row exists to be highlighted.
+        // Target may be in a collapsed component or filtered out: expand/clear so its row exists.
         const comp = getMetadata(next)?.component || UNCATEGORIZED;
         setExpandedComponents(prev => (prev.has(comp) ? prev : new Set(prev).add(comp)));
         setSearchTerm('');
@@ -316,8 +252,7 @@ export default function SensorSelection({
 
     const sheetIndex = fgSheetFor ? allSensorsInOrder.indexOf(fgSheetFor) : -1;
 
-    // "Assign sensors →" moves keyboard focus to the bar's Done (the FG card
-    // that had it is gone), so the run starts somewhere visible, not on <body>.
+    // Move focus to the bar's Done when 'Assign sensors' starts (the FG card that had it is gone).
     const assignDoneRef = useRef<HTMLButtonElement>(null);
     const assignGroupNoShown = assignGroup?.no ?? null;
     useEffect(() => {
@@ -330,9 +265,7 @@ export default function SensorSelection({
         if (opts?.returnFocus && tag) fgButtonEls.current.get(tag)?.focus();
     };
 
-    // Assign mode: per component, how many of its sensors already have a model
-    // in the group being filled ("assigned / total" on the component header).
-    // Only built while a run is active, from the membership index above.
+    // Assign mode: per component, sensors already in the group being filled ('assigned / total'); built only during a run.
     const assignedInGroup = useMemo(() => {
         if (!assignGroup) return null;
         const assigned = new Set<string>();
@@ -351,26 +284,16 @@ export default function SensorSelection({
         const ownMemberships = membershipIndex.get(normalizeSensorTag(sensor));
         const isMemberOfKind = (groupNo: number, kind: ModelKind) =>
             ownMemberships?.has(membershipKey(groupNo, kind)) ?? false;
-        // Which (group, kind) pairs this sensor belongs to, in group order —
-        // a sensor can carry more than one model kind per group (e.g. both an
-        // Individual and a Relationship model), so membership is per kind,
-        // not just per group. Includes group 0 ("Not in Group"), which a
-        // sensor can be toggled into exactly like any real group (see
-        // Dashboard.tsx's toggleSensorGroupKind).
+        // (group, kind) pairs the sensor belongs to, in group order; membership is per kind. Includes group 0 ('Not in Group').
         const memberEntries: { group: FailureGroup; kind: ModelKind }[] = fgGroups.flatMap(g =>
             ALL_KINDS.filter(kind => isMemberOfKind(g.no, kind)).map(kind => ({ group: g, kind }))
         );
         const sheetOpen = fgSheetFor === sensor;
-        // The bell only appears at all when the sensor has at least one
-        // setpoint value — independent of whether it's currently checked
-        // into the chart, so it's browsable before deciding to plot. The
-        // checkbox list itself only opens on click; checking the sensor's
-        // own box does NOT auto-reveal it.
+        // Bell shows only if the sensor has a setpoint, whether or not it is plotted; the list opens on click only.
         const hasAlarms = hasAlarmSetpoints(meta);
         const alarmOpen = alarmPanelFor === sensor;
         const isSelected = selectedSensors.includes(sensor);
-        // Not selected AND the cap is reached — the click is a no-op, so the
-        // row reads as disabled instead of inviting a click that does nothing.
+        // Cap reached and not selected: the click is a no-op, so show the row as disabled.
         const blockedByCap = !isSelected && atSelectionCap;
         return (
             <div
@@ -396,8 +319,7 @@ export default function SensorSelection({
                             onChange={() => handleSensorToggle(sensor)}
                             onClick={(e) => e.stopPropagation()}
                         />
-                        {/* The stacked SensorLabel — description + unit chip,
-                            tag on line 2, full name in the title when it truncates. */}
+                        {/* Stacked SensorLabel: description + unit, tag on line 2; full name in the title when truncated. */}
                         <label htmlFor={`sensor-${sensor}`} onClick={(e) => e.stopPropagation()} className="sensor-row-label">
                             <SensorLabel tag={sensor} info={sensorLookup(sensor)} wrap="always" />
                         </label>
@@ -454,9 +376,7 @@ export default function SensorSelection({
                                     background: 'var(--fg-tint)', color: 'var(--fg-dot)',
                                 }}
                             >
-                                {/* The kind badge leads the chip. Reuses
-                                    `.model-kind-icon--*`, the class Build
-                                    Model's own model rows use. */}
+                                {/* Kind badge leads the chip; reuses `.model-kind-icon--*` from Build Model's rows. */}
                                 <span
                                     className={`model-kind-icon model-kind-icon--${kind}`}
                                     style={{ width: '16px', height: '16px', borderRadius: '4px', fontSize: '0.62rem', flexShrink: 0 }}
@@ -518,11 +438,8 @@ export default function SensorSelection({
         );
     };
 
-    // ── The list's lines ─────────────────────────────────────────────────────
-    // Rule 2 at row level: consecutive rows whose names share a start get that start ONCE on a muted line and
-    // the rows drop it, only while one of those rows is really cut at the panel's current width. `commonPrefix`
-    // has the short-name guard, so a run of short names never gets a line (nor any measuring attribute).
-    // Every name is the DISPLAYED name, so a tag-only sensor joins its run like any other.
+    // Consecutive rows sharing a name start get that start once on a muted line, only while a row is really cut; `commonPrefix` guards short names.
+    // Names are the displayed names, so tag-only sensors join runs too.
     const allItems = useMemo<ListItem[]>(() => {
         const nameOf = (t: string) => displayedName(sensorLookup(t));
         const out: ListItem[] = [];
@@ -540,8 +457,7 @@ export default function SensorSelection({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [groupedSensors, expandedComponents, searchTerm, sensorLookup]);
     const hasRuns = useMemo(() => allItems.some(it => it.k === 'prefix'), [allItems]);
-    // Search hits are marked only in a project that has long names (a match may sit in a cut-off head); a project
-    // of short names keeps today's plain rows.
+    // Search hits are marked only when the project has long names (a match may sit in a cut-off head).
     const hasLongNames = useMemo(
         () => sensors.some(t => displayedName(sensorLookup(t)).length > NAME_TAIL_MAX),
         [sensors, sensorLookup],
@@ -576,15 +492,12 @@ export default function SensorSelection({
         }
         : null;
 
-    // After the sheet's ‹ › moves to a sensor whose component was collapsed (or
-    // that is scrolled out of the list), bring that row into view once it has
-    // rendered. The sheet re-measures its arrow on the resulting scroll event.
+    // After ‹ › moves to a sensor in a collapsed component or out of view, scroll its row into view once rendered.
     useEffect(() => {
         if (!scrollToSensor) return;
         const row = rowEls.current.get(scrollToSensor);
         if (!row) {
-            // Not rendered yet: a windowed row is not in the DOM until it is in view, so scroll to its place.
-            // Runs again when visibleSensorSet or the window changes.
+            // Windowed row not in the DOM yet: scroll to its place; runs again when visibleSensorSet or the window changes.
             const at = windowedOffsetOf.current ? windowedOffsetOf.current(scrollToSensor) : -1;
             if (at >= 0 && listRef.current) listRef.current.scrollTop = Math.max(0, at - 60);
             return;
@@ -595,12 +508,7 @@ export default function SensorSelection({
 
     const renderHeader = (component: string, compSensors: string[]) => {
         const expanded = isComponentExpanded(component);
-        // "selected / total" (e.g. "2 / 8") once at least one
-        // sensor in this component is on the chart — matching
-        // the approved prototype's own counter exactly, which
-        // hides the "0 / " prefix rather than showing it
-        // (a bare total reads the same as "nothing selected
-        // yet" without needing the extra "0 /" noise).
+        // Show 'selected / total' (e.g. '2 / 8') only once a sensor in this component is plotted; no '0 / ' prefix.
         const selectedInGroup = compSensors.filter(s => selectedSensors.includes(s)).length;
         // Assign mode: "assigned / total" for the group being filled
         // (always with the prefix, 0 included — that number IS the task).

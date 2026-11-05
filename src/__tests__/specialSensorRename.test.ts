@@ -71,10 +71,6 @@ describe('renameTagInRecord', () => {
 
 describe('renameTagInModels', () => {
     it('renames every one of the six sensor-bearing fields', () => {
-        // Was seven, including `pmSensorFilters` -- that field
-        // moved off FailureModel entirely to the workspace-wide
-        // `runningConditionFilters` (see the describe block below for its
-        // own rename helper).
         const model = makeModel({
             targetSensor: 'OLD',
             predictorSensors: ['OLD', 'OTHER'],
@@ -112,8 +108,7 @@ describe('renameTagInModels', () => {
         expect(renamed.targetSensor).toBe('NEW');
     });
 
-    // A rename also rewrites `customRunningConditionFilters` — each model's
-    // own per-condition sensor (the per-model Workspace/Custom override).
+    // A rename also rewrites `customRunningConditionFilters`, each model's own condition sensors.
     it('renames a matching sensor inside customRunningConditionFilters, case-insensitively, and leaves other conditions alone', () => {
         const model = makeModel({
             runningConditionMode: 'custom',
@@ -227,7 +222,6 @@ describe('renameTagInRecipes', () => {
     });
 });
 
-// ── (second pass) ────────────────────────────────────────────────
 describe('removeTagsFromFilters', () => {
     const f = (id: string, sensor: string) => ({ id, sensor, operation: 'greater_than' as const, value1: '1', value2: '' });
 

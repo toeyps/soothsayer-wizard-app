@@ -3,19 +3,7 @@ import type { TrainingScopeFilter } from '../types/health';
 import { effectiveRunningCondition, isCompleteCondition, type RunningConditionFg } from './runningCondition';
 import { toFilterRanges } from './timePeriods';
 
-/**
- * Wire shape the preview/train commands (`compute_sensor_stats`,
- * `preview_relationship_model`, `compute_clustering_preview`,
- * `compute_health_preview`) expect for `filter` —
- * `{timestamp_ranges, value_filters, combine}`, or `null` for "no filter at all".
- *
- * The Workbench's Train and the health-score requests build the
- * training scope through this ONE function — a request that used a different
- * scope than the Train it belongs to would score the wrong rows. Rows the
- * query would ignore (no sensor, missing value, sensor not
- * in `headers`) are dropped, "No condition" sends no value filters, an
- * open-both-ends period means "no time limit", and invalid periods are dropped.
- */
+/** Wire shape of `filter` for the preview/train commands: `{timestamp_ranges, value_filters, combine}`, or `null` for none. Train and health score must build the scope through this one function, or they score different rows. Dropped: rows with no sensor, missing value or sensor not in `headers`, and invalid periods; all data sends no value filters; an open-both-ends period means no time limit. */
 export function buildPreviewFilterPayload(
     eff: { filters: WorkspaceSensorFilter[]; combine: 'and' | 'or'; allData: boolean; periods: TimePeriod[] },
     headers: string[] | null,
@@ -35,9 +23,7 @@ export function buildPreviewFilterPayload(
     return { timestamp_ranges: filterRanges, value_filters: valueFilters, combine: eff.combine };
 }
 
-/** The training scope of a model: its EFFECTIVE running condition (workspace
- *  default or its own Custom one) as a command `filter`. Pass the DRAFT-merged
- *  model when the UI is previewing unsaved edits. */
+/** A model's training scope: its effective running condition as a command `filter`; pass the draft-merged model when previewing unsaved edits. */
 export function trainingScopeFilter(
     model: FailureModel,
     fg: RunningConditionFg,

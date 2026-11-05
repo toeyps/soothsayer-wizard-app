@@ -100,10 +100,8 @@ describe('replaySpecialSensorRecipes', () => {
     });
 });
 
-// Rust now REFUSES a formula with an unknown name/function (it
-// used to accept it and silently produce an all-empty sensor). A workspace
-// saved before that can hold such a recipe; on reopen it must fail like any
-// other broken recipe -- with Rust's reason -- not break the load.
+// A recipe with an unknown name/function from an older save must fail on reopen like any broken recipe,
+// with Rust's reason, and not break the load.
 describe('replaySpecialSensorRecipes: a formula Rust now refuses (against the fake Rust gate)', () => {
     const raw = () => ({ headers: ['timestamp', 'A', 'B'], columns: [[1, 2, 3], [4, 5, 6]] });
 
@@ -131,8 +129,7 @@ describe('replaySpecialSensorRecipes: a formula Rust now refuses (against the fa
     });
 });
 
-// The fake session's formula gate must keep matching lib.rs `compile_formula`
-// for the cases frontend tests rely on (the Rust unit tests pin the originals).
+// The fake formula gate must keep matching lib.rs `compile_formula` for the cases frontend tests rely on.
 describe('fake Rust formula gate mirrors lib.rs messages', () => {
     const cases: [string, string | null][] = [
         ['$A * pi', "Formula error: unknown name 'pi'. Write pi() for π."],

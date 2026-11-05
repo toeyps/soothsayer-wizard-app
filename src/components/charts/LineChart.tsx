@@ -10,22 +10,14 @@ import type { LineTaggedPoint } from '../../types';
 import { firstFreeColorIndex, sortTagsByTime } from './TaggedPointList';
 import { TagTableSlot, tagCell, type TagCompareRow } from './TagCompareTable';
 
-/** Parses one `xData` entry to epoch ms, or `null` for a missing/unparseable
- *  timestamp — a time-axis series point needs an explicit x value per point
- *  (unlike a category axis, which takes its x position from a shared
- *  `xAxis.data` array), so every series-building site needs this. */
+/** Epoch ms of an `xData` entry, or `null` if missing/unparseable; a time-axis point needs its own x. */
 function toMs(raw: string | null): number | null {
     if (raw == null) return null;
     const t = new Date(raw).getTime();
     return isNaN(t) ? null : t;
 }
 
-/** Index into `xData` whose parsed time is closest to `targetMs` — used to
- *  snap an arbitrary timestamp (a highlight boundary, a click resolved to a
- *  raw axis value) to an actual plotted data point, e.g. for markArea
- *  boundaries or Tag Point placement. Linear scan is fine here: xData is
- *  capped at a few thousand points (LINE_MAX_POINTS backend-side) and this
- *  only runs per highlight/click, not per render frame. */
+/** Index in `xData` nearest `targetMs`; linear scan is fine (few thousand points, only per click). */
 function nearestXIndex(xData: (string | null)[], targetMs: number): number {
     let best = 0;
     let bestDiff = Infinity;
@@ -39,9 +31,7 @@ function nearestXIndex(xData: (string | null)[], targetMs: number): number {
     return best;
 }
 
-/** Index of the entry of `xMs` closest to `targetMs`. Runs on every mousemove (the tooltip), so
- *  it is a binary search when the times are complete and ascending — what the chart feed is —
- *  and a plain scan over the already-parsed numbers otherwise. -1 when nothing is usable. */
+/** Index of the `xMs` entry nearest `targetMs`: binary search if complete and ascending, else scan. -1 if none usable. */
 export function nearestMsIndex(xMs: (number | null)[], sorted: boolean, targetMs: number): number {
     if (xMs.length === 0 || !isFinite(targetMs)) return -1;
     if (sorted) {
@@ -65,17 +55,7 @@ export function nearestMsIndex(xMs: (number | null)[], sorted: boolean, targetMs
     return best;
 }
 
-// Exported so callers (e.g. the "Selected Sensor" color-swatch picker) can
-// show/default to the same palette a sensor would get without an override.
-//
-// Ordered so every PREFIX stays maximally distinguishable, not just the full
-// set: the first 3 (blue/emerald/rose) are a primary-color triad for the
-// common case of a few selected sensors, and each later hue is a new one not
-// yet used. The near-duplicate-hue entries (teal vs emerald/cyan, indigo vs
-// blue/violet, pink vs rose) are pushed to the tail so they only appear once
-// 9+ sensors are selected simultaneously — an already-crowded chart where
-// some hue closeness beats the alternative of wrapping back to a color
-// already in use (`% LINE_CHART_COLORS.length` in Dashboard.tsx).
+// Order keeps every prefix distinguishable; near-duplicate hues sit at the tail (used from 9+ sensors).
 export const LINE_CHART_COLORS = [
     "#3b82f6", // blue
     "#10b981", // emerald
@@ -91,19 +71,7 @@ export const LINE_CHART_COLORS = [
     "#ec4899", // pink (near rose)
 ];
 
-/**
- * Deterministic default color for a sensor, keyed by its tag rather than its
- * position in whatever array happens to be rendering it. Also exported so
- * the "Selected Sensor" tab's color swatch always shows the same default the
- * chart itself would use.
- *
- * An index (`sensors[index % colors.length]`) would disagree between
- * callers: the chart only ever sees the currently-VISIBLE subset
- * (`displayHeaders`), while the Selected Sensor tab iterates the full
- * selection — hiding one sensor would shift every later sensor's index in
- * the chart but not in the tab. Hashing the tag itself removes the shared
- * "index" both sides would otherwise need to agree on.
- */
+/** Default colour keyed by tag, not index, so the chart and the Selected Sensor tab agree when sensors are hidden. */
 export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHART_COLORS): string {
     let hash = 0;
     for (let i = 0; i < sensor.length; i++) {
@@ -112,8 +80,6 @@ export function defaultSensorColor(sensor: string, palette: string[] = LINE_CHAR
     return palette[Math.abs(hash) % palette.length];
 }
 
-/** Tag-point box fonts: the stacks the installed app really renders with (DESIGN_SYSTEM §3.2 —
- *  the CSP blocks the web fonts, so Windows draws Segoe UI / Consolas). */
 
 function LineChart({
     data, columnar, sensors, headers, markLines, hideYSplitLine, sensorColors, sensorAxisRange,
@@ -125,30 +91,16 @@ function LineChart({
     const wrapperRef = useRef<HTMLDivElement>(null);
     const [containerH, setContainerH] = useState<number>(0);
 
-    // Label + unit lookup for the hover tooltip and the tag-point boxes — covers both mapping-CSV
-    // sensors and runtime "special" (calculated) sensors, since Dashboard.tsx merges both into the
-    // same `sensorMetadata` array before it reaches here (description first).
+    // Label and unit lookup for the tooltip and tag boxes; covers mapping-CSV and special sensors.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
-    // Tag Point — pin 2+ points on the chart to compare their values.
-    // Seeded from the persisted prop on mount, same reasoning as
-    // scatterAxisPins/criteriaSensor elsewhere in this codebase: Chart.tsx
-    // fully unmounts LineChart when chartType leaves 'line', so without this
-    // every tag would vanish the moment the user looked at Scatter/Pair Plot
-    // and came back.
+    // Seeded from the persisted prop: Chart.tsx unmounts LineChart when chartType leaves 'line'.
     const [taggedPoints, setTaggedPoints] = useState<LineTaggedPoint[]>(() => persistedTaggedPoints ?? []);
     const [tagMode, setTagMode] = useState(false);
     const [chartInstance, setChartInstance] = useState<any>(null);
     const handleChartReady = useCallback((instance: any) => setChartInstance(instance), []);
 
-    // Horizontal Zoom — replaces the always-visible slider (dataZoom
-    // 'slider' type, removed below) with an explicit tool: pick "Horizontal
-    // zoom" from the menu, then drag across the chart to zoom into that
-    // x-range; "Zoom out" resets back to the full view. `zoomMenuOpen` is
-    // just the dropdown's own visibility; `zoomSelectMode` is the actual
-    // "next drag zooms" tool state, off again the instant one drag
-    // completes (one-shot, not a persistent mode) so it doesn't linger and
-    // surprise a later plain click/hover.
+    // `zoomSelectMode` is one-shot: the next drag zooms, then it turns off.
     const [zoomMenuOpen, setZoomMenuOpen] = useState(false);
     const [zoomSelectMode, setZoomSelectMode] = useState(false);
     // Drag-in-progress visual feedback (pixel-space, relative to the
@@ -156,10 +108,7 @@ function LineChart({
     const [dragPixels, setDragPixels] = useState<[number, number] | null>(null);
     const zoomMenuRef = useRef<HTMLDivElement>(null);
 
-    // Horizontal zoom and Tag Point both interpret a plain click/drag on the
-    // canvas, so only one may be active at a time — entering one turns the
-    // other off rather than leaving both listening and fighting over the
-    // same gesture.
+    // Zoom and Tag Point both read canvas clicks/drags, so entering one turns the other off.
     const enterZoomSelectMode = useCallback(() => {
         setTagMode(false);
         setZoomSelectMode(true);
@@ -170,8 +119,7 @@ function LineChart({
         setTagMode(m => !m);
     }, []);
 
-    // Closes the zoom dropdown on an outside click — standard menu
-    // behaviour; without it the menu only closes by picking an item.
+    // Closes the zoom dropdown on an outside click.
     useEffect(() => {
         if (!zoomMenuOpen) return;
         const onDocClick = (e: MouseEvent) => {
@@ -187,8 +135,7 @@ function LineChart({
         onLineTaggedPointsChange?.(taggedPoints);
     }, [taggedPoints, onLineTaggedPointsChange]);
 
-    // Tell the parent how many points are tagged (the "Tagged points" tab shows the count and
-    // opens when one is added); 0 again when this chart goes away.
+    // Reports the tagged-point count to the parent; 0 when this chart unmounts.
     const tagCountRef = useRef(taggedPoints.length);
     const onTagCountChangeRef = useRef(onTagCountChange);
     onTagCountChangeRef.current = onTagCountChange;
@@ -199,18 +146,13 @@ function LineChart({
     }, [taggedPoints.length]);
     useEffect(() => () => { onTagCountChangeRef.current?.(0, false); }, []);
 
-    // xData is needed both by the option builder below and by the click
-    // handler (to resolve a clicked pixel back to a timestamp) — computed
-    // once here so neither has to duplicate or re-derive it.
+    // Shared by the option builder and the click handler (pixel to timestamp).
     const xData = useMemo(
         () => (columnar ? columnar.timestamps : data.map(d => d.timestamp)),
         [columnar, data],
     );
 
-    // Identifies "the data this chart currently represents" (not xData's array identity, which
-    // changes on every refetch): a new span goes back to the full view, anything else keeps the
-    // user's zoom. Every rebuilt option replaces the chart (notMerge), which also re-creates the
-    // dataZoom component at 0-100, so `option` has to carry the window itself.
+    // Identifies the data shown: a new span resets to full view, else the zoom is kept (rebuilt options reset dataZoom to 0-100).
     const rangeId = xData.length > 0 ? `${xData[0]}|${xData[xData.length - 1]}|${xData.length}` : 'empty';
     const prevRangeIdRef = useRef(rangeId);
     const rangeChanged = rangeId !== prevRangeIdRef.current;
@@ -232,10 +174,7 @@ function LineChart({
         return () => chartInstance.off?.('datazoom', onDataZoom);
     }, [chartInstance]);
 
-    // Refs so the zr click listener (attached once per chart instance, see
-    // below) always reads the CURRENT tagMode/xData instead of whatever was
-    // in scope when the listener was attached — avoids re-attaching the
-    // listener on every keystroke-unrelated render.
+    // Refs so the once-attached zr click listener reads the current tagMode/xData.
     const tagModeRef = useRef(tagMode);
     useEffect(() => { tagModeRef.current = tagMode; }, [tagMode]);
     const xDataRef = useRef(xData);
@@ -243,21 +182,7 @@ function LineChart({
     const zoomSelectModeRef = useRef(zoomSelectMode);
     useEffect(() => { zoomSelectModeRef.current = zoomSelectMode; }, [zoomSelectMode]);
 
-    // Click-to-tag: attached at the zrender (canvas) level, not via
-    // ResponsiveECharts' onEvents, because the large-data rendering profile
-    // sets `silent: true` on the line series to skip per-pixel hit-testing
-    // (see isLargeData below) — an ECharts-level series click would simply
-    // never fire on exactly the data this feature is most useful for. A
-    // zrender click fires for any click on the canvas regardless of what's
-    // under it; convertFromPixel resolves it back to the nearest x-axis
-    // index ourselves, the same way containPixel/convertFromPixel are
-    // documented to be used together for this exact "click anywhere on the
-    // chart" pattern.
-    //
-    // Clicking an already-tagged point removes it (toggle), instead of a
-    // separate "click the badge" gesture — a badge is a tiny, precise
-    // target to hit inside a markPoint's rendered symbol, while re-clicking
-    // the same spot on the chart is exactly as easy as tagging it was.
+    // On zrender, not ECharts events: large data is `silent`, so series clicks never fire. Clicking a tagged point removes it.
     useEffect(() => {
         if (!chartInstance) return;
         const zr = chartInstance.getZr?.();
@@ -268,20 +193,7 @@ function LineChart({
             if (xd.length === 0) return;
             const pixel = [event.offsetX, event.offsetY];
             if (!chartInstance.containPixel({ gridIndex: 0 }, pixel)) return;
-            // `{ seriesIndex: 0 }` — NOT `{ xAxisIndex: 0 }`, which returns
-            // NaN on this chart regardless of axis type (confirmed against
-            // the real installed echarts package when the axis was still
-            // 'category'; switching to a 'time' axis and trying
-            // `{ xAxisIndex: 0 }` again broke Tag Point clicks entirely —
-            // confirmed by the user clicking the real app, since this app
-            // can't be opened in a browser preview to check live).
-            // `convertFromPixel({ seriesIndex: 0 }, pixel)` resolves through
-            // the series' own coordinate system instead and reliably
-            // returns `[xValue, yValue]` in the axis's native units —
-            // a category INDEX under the old category axis, and now the
-            // actual ms TIMESTAMP under the time axis. Only the
-            // interpretation of that first element changed; the finder
-            // itself did not need to.
+            // Use `{ seriesIndex: 0 }`; `{ xAxisIndex: 0 }` returns NaN here. Gives the axis value (ms).
             const converted = chartInstance.convertFromPixel({ seriesIndex: 0 }, pixel);
             const targetMs = Array.isArray(converted) ? converted[0] : converted;
             if (targetMs == null || !isFinite(targetMs)) return;
@@ -308,14 +220,7 @@ function LineChart({
         return () => { zr.off('click', handleZrClick); };
     }, [chartInstance]);
 
-    // Horizontal Zoom — drag left/right on the canvas to select an x-range,
-    // release to zoom into it. Same zrender-level (not ECharts series-level)
-    // approach as the Tag Point click handler above, for the same reason:
-    // `silent: isLargeData` skips ECharts' own hit-testing on big datasets,
-    // and a drag needs to work regardless of series count/size anyway.
-    // `dataZoom[0]` ('inside') is set `disabled` while this mode is active
-    // (see the option below) so its own native drag-to-pan doesn't fight
-    // this handler for the same mousedown/mousemove stream.
+    // Drag to select an x-range, release to zoom. On zrender because large data is `silent`.
     useEffect(() => {
         if (!chartInstance) return;
         const zr = chartInstance.getZr?.();
@@ -339,15 +244,9 @@ function LineChart({
             const endPixel = event.offsetX;
             dragStartPixel = null;
             setDragPixels(null);
-            // A drag under ~4px reads as an accidental click, not an
-            // intentional range — ignore it rather than zoom to a
-            // near-zero-width window.
+            // Ignore drags under 4px: accidental click.
             if (Math.abs(endPixel - startPixel) < 4) return;
-            // Same `{ seriesIndex: 0 }` finder as the Tag Point handler
-            // above, for the same reason (`{ xAxisIndex: 0 }` returns NaN
-            // on this chart regardless of axis type) — resolves through the
-            // series' own coordinate system to get each pixel's real ms
-            // value.
+            // Finder is `{ seriesIndex: 0 }`: `{ xAxisIndex: 0 }` returns NaN here.
             const p1 = chartInstance.convertFromPixel({ seriesIndex: 0 }, [startPixel, event.offsetY]);
             const p2 = chartInstance.convertFromPixel({ seriesIndex: 0 }, [endPixel, event.offsetY]);
             const v1 = Array.isArray(p1) ? p1[0] : p1;
@@ -358,8 +257,7 @@ function LineChart({
                 startValue: Math.min(v1, v2),
                 endValue: Math.max(v1, v2),
             });
-            // One-shot: back to the normal pointer after a single drag,
-            // rather than staying in "next drag zooms" mode indefinitely.
+            // One-shot: back to the normal pointer after a single drag.
             setZoomSelectMode(false);
         };
 
@@ -373,21 +271,12 @@ function LineChart({
         };
     }, [chartInstance]);
 
-    // Removes ONE tag (the × on its column head in the table under the chart) — the rest keep
-    // their colours; badges renumber by position, same as the markers.
-    // Focus target when the last tag's × is pressed (the list unmounts).
+    // Removes one tag; the others keep their colours. Focus target when the last tag is removed (list unmounts).
     const tagButtonRef = useRef<HTMLButtonElement>(null);
     const removeTag = useCallback((id: string) => {
         setTaggedPoints(prev => prev.filter(t => t.id !== id));
     }, []);
-    // Each row's label is resolved the SAME way as the marker callout below:
-    // snap the stored timestamp to the nearest point currently in `xData` and
-    // show THAT point's time. After a refetch (new aggregation / Time Range)
-    // the stored timestamp may no longer be a plotted point, and the marker
-    // moves to the nearest one — the list must name the same instant, not the
-    // stale stored one. Falls back to the stored text when there is nothing
-    // to snap to (no data, or an unparseable timestamp).
-    // The table's columns run in TIME order, not in the order the points were tagged.
+    // Labels snap to the nearest plotted point like the marker (a refetch may drop the stored timestamp); falls back to the stored text.
     const tagsByTime = useMemo(() => sortTagsByTime(taggedPoints, tag => new Date(tag.timestamp).getTime()), [taggedPoints]);
     const tagListItems = useMemo(() => tagsByTime.map((tag, order) => {
         const tagMs = new Date(tag.timestamp).getTime();
@@ -404,8 +293,7 @@ function LineChart({
         };
     }), [tagsByTime, xData]);
 
-    // The table under the chart: one row per shown sensor, one value per tag — read at the SAME
-    // nearest plotted point as the marker and the column head above.
+    // One row per shown sensor, one value per tag, read at the same nearest point as the marker.
     const tagTableRows = useMemo<TagCompareRow[]>(() => {
         if (tagsByTime.length === 0) return [];
         const idxOf = tagsByTime.map(tag => {
@@ -437,11 +325,7 @@ function LineChart({
     useEffect(() => {
         const el = wrapperRef.current;
         if (!el) return;
-        // Quantize to 8px steps + rAF-coalesce: every containerH change
-        // rebuilds the whole option (and setOption(notMerge) re-inits the
-        // chart), so per-pixel updates while dragging the Split.js divider
-        // meant a full chart teardown per pixel. 8px granularity is invisible
-        // in the layout math but cuts rebuilds ~8×.
+        // Quantize to 8px and rAF-coalesce: each containerH change rebuilds the option, so per-pixel drag would rebuild per pixel.
         let raf: number | null = null;
         const update = () => {
             raf = null;
@@ -459,10 +343,7 @@ function LineChart({
         };
     }, []);
 
-    // ECharts renders to canvas, so it can't read CSS custom properties
-    // directly — these are the literal values the App.css tokens
-    // (`--text-primary`/`--text-secondary`/`--border-strong`/`--pop`)
-    // resolve to, kept in sync by eye rather than at runtime.
+    // Canvas can't read CSS variables; these literals mirror the App.css tokens and must be kept in sync by hand.
     const txtPrimary  = '#ededef';
     const txtSecondary = '#8c8c94';
     const gridLine    = '#2a2a30';
@@ -471,25 +352,11 @@ function LineChart({
     const tooltipBorder = 'rgba(255, 255, 255, 0.12)';
 
     const option = useMemo(() => {
-        // xData is computed once above (shared with the click handler) —
-        // columnar feed (from Rust's `get_chart_data`) is preferred there
-        // too: arrays drop straight into ECharts with no per-row mapping.
         const dataCount = xData.length;
-        // Threshold for the "heavy" rendering profile (no smoothing / no
-        // animation / hairline stroke / LTTB). The columnar dashboard feed is
-        // capped at 4 000 rows backend-side, so the old 10 000 cutoff never
-        // fired there — every refetch replayed a ~1 s entrance animation and
-        // stroked catmull-rom splines across every series, which is exactly
-        // the interaction jank on big datasets. Above ~2 000 points a smooth
-        // spline is visually identical to straight segments anyway (<1 px per
-        // segment), so the pretty profile is reserved for genuinely small data.
+        // Heavy profile (no smoothing/animation, hairline, sampling) above 2000 points; splines look the same as straight segments there.
         const isLargeData = dataCount > 2000;
 
-        // Time highlights ("Highlights" tab's "By time" group) — each
-        // highlight's start/end snaps to the nearest plotted index, and the
-        // band below resolves that index back to its point's own timestamp,
-        // so a band always starts/ends exactly on a drawn point. Kept in the
-        // user's own creation order.
+        // Highlight bounds snap to the nearest plotted index so a band starts and ends on a drawn point; user's creation order.
         const highlightIndexRanges = dataCount > 0
             ? (timeHighlights ?? [])
                 .filter(h => h.enabled)
@@ -507,16 +374,7 @@ function LineChart({
                 .filter((v): v is NonNullable<typeof v> => v !== null)
             : [];
 
-        // Always a tinted background band (a workspace saved with
-        // `highlightLineDisplay: 'line'` draws bands too). A distinct
-        // ECharts mechanism from the horizontal markLine used for alarm
-        // setpoints above/below. Attached to the first series only:
-        // markArea renders across the shared grid regardless of which
-        // series owns it, so adding it to every series would just draw the
-        // same bands N times over.
-        // Time axis: `markArea.data[*].xAxis` takes an actual axis value
-        // (ms), not a category index — `r.startIdx`/`r.endIdx` are
-        // resolved back to that point's own timestamp via `xData`.
+        // Bands are markArea on the first series only (it spans the shared grid; more series would repeat it). Time axis takes ms values.
         const highlightAreas = highlightIndexRanges.map(r => [
             {
                 xAxis: toMs(xData[r.startIdx]),
@@ -534,7 +392,6 @@ function LineChart({
             { xAxis: toMs(xData[r.endIdx]) },
         ]);
 
-        // ── Dynamic horizontal padding ────────────────────────────
         const AXIS_OFFSET = 60;
         const AXIS_BASE_PAD = 40;
         const leftCount = Math.ceil(sensors.length / 2);
@@ -542,18 +399,12 @@ function LineChart({
         const gridLeft = AXIS_BASE_PAD + Math.max(0, leftCount - 1) * AXIS_OFFSET;
         const gridRight = AXIS_BASE_PAD + Math.max(0, rightCount - 1) * AXIS_OFFSET;
 
-        // ── Dynamic vertical layout (pixel values, clamped to container) ──
-        // Ideal full-size reservations. No slider reservation: there is no
-        // dataZoom 'slider' component — explicit zooming is the toolbox's
-        // Horizontal Zoom tool (see the toolbox JSX and its own
-        // dataZoom/mouse-drag handling above).
+        // Vertical reservations in px; no slider, zoom is the toolbox tool.
         const X_AXIS_LABEL_H = 24;
         const GAP_ABOVE_XAXIS = 6;
         const idealBottom = X_AXIS_LABEL_H + GAP_ABOVE_XAXIS;
 
-        // Clamp bottom reservation to at most 45% of the container so the
-        // plotting area is never squeezed to zero (or negative) when the
-        // panel is small.
+        // Cap the bottom reservation at 45% of the container so the plot never collapses.
         const h = containerH > 0 ? containerH : 400;
         const maxBottom = Math.max(60, Math.floor(h * 0.45));
         const scale = Math.min(1, maxBottom / idealBottom);
@@ -564,16 +415,7 @@ function LineChart({
         const gridBottom = xAxisLabelH + gapXAxis;
         const gridTop = Math.max(20, Math.round(30 * scale));
 
-        // `scale: true` only auto-fits the Y axis to each series' own data
-        // points — it does NOT account for markLine reference values (this is
-        // an ECharts limitation, not a bug in how we call it: markLine data
-        // lives outside the axis's own extent calculation). A checked alarm
-        // setpoint far outside the sensor's actual data range (e.g. a "high"
-        // setpoint of 90 when the trace only ever reaches 80) would silently
-        // draw the line off-screen with no visible sign it exists. Only
-        // step in when a markLine value actually falls outside the data's
-        // own range — untouched sensors, and markLines already comfortably
-        // inside the trace, keep ECharts' own auto-fit exactly as before.
+        // `scale: true` ignores markLine values, so an alarm setpoint outside the data range would draw off-screen; widen only then.
         const seriesMinMax = (sensor: string): { min: number; max: number } | null => {
             const sensorIdx = headers.indexOf(sensor);
             if (sensorIdx < 0) return null;
@@ -587,19 +429,7 @@ function LineChart({
             return Number.isFinite(min) && Number.isFinite(max) ? { min, max } : null;
         };
 
-        // Tag Point markers — one per tagged point, attached to the first
-        // series only (same "only the first series carries it" convention
-        // as markArea above, for the same reason: this draws across the
-        // shared grid regardless of which series owns it, so attaching it
-        // to every series would just draw it N times over). Each entry's
-        // `coord` anchors a dot in the tag's colour to series[0]'s own value
-        // at that index, and a dashed line of the same colour marks the
-        // instant across every sensor. No number in the dot (it could not be
-        // read at that size — user decision 2026-10-12): the colour is what
-        // ties a dot to its column of the table.
-        // The VALUES are not drawn here: they are listed in the table under
-        // the chart (`TagCompareTable`) — a box per tag on the chart covered
-        // the next tag's box as soon as two tags were close.
+        // Tag markers on the first series only (spans the shared grid): a dot and dashed line in the tag colour; values are in the table.
         const valuesFor = (sensor: string): (number | null)[] => {
             const sensorIdx = headers.indexOf(sensor);
             return columnar ? (columnar.series[sensorIdx] ?? []) : data.map(d => d.values[sensorIdx] ?? null);
@@ -611,9 +441,7 @@ function LineChart({
                     if (isNaN(tagMs)) return null;
                     const idx = nearestXIndex(xData, tagMs);
                     const anchorValue = sensors.length > 0 ? valuesFor(sensors[0])[idx] ?? null : null;
-                    // series[0] missing at this exact index (e.g. a NaN row) —
-                    // nothing to anchor the marker to; skip rather than plot
-                    // at a fabricated y value.
+                    // Skip when series[0] has no value here; don't plot at a made-up y.
                     if (anchorValue == null) return null;
                     return {
                         coord: [toMs(xData[idx]), anchorValue],
@@ -664,10 +492,7 @@ function LineChart({
                             type: m.lineStyle ?? 'solid',
                             width: m.width ?? 1,
                         },
-                        // Per-entry override merges with the shared
-                        // `markLine.label` above — without this every
-                        // label in the group would render in the same
-                        // `txtPrimary` regardless of that line's own color.
+                        // Per-entry label colour; otherwise every label would use `txtPrimary`.
                         label: { color: m.color ?? txtPrimary },
                     })),
                 }
@@ -696,40 +521,21 @@ function LineChart({
                 // Hairline strokes for dense data: cheaper to rasterize
                 // and the trace reads better when segments are sub-pixel.
                 lineStyle: { width: isLargeData ? 0.8 : 2 },
-                // The axis-trigger tooltip doesn't need the polylines to
-                // be mouse-interactive, but ECharts still hit-tests every
-                // vertex-dense line on each mousemove and runs emphasis
-                // state transitions on hover. Cut both for heavy data —
-                // markLine hover/labels (small-data screens) keep working.
+                // On large data skip hit-testing and hover states; markLines stay hoverable on small data.
                 silent: isLargeData,
-                // No hover emphasis at any data size (user decision 2026-10-11): the dot on
-                // the hovered point is not worth a repaint of the series on every move.
+                // No hover emphasis at any size: repainting the series on every move is not worth the dot.
                 emphasis: { disabled: true },
                 // Hovering a legend entry otherwise re-renders the linked
                 // series into its highlight state — pure cost, low value.
                 legendHoverLink: false,
-                // Belt-and-suspenders for the row-based path: when a
-                // caller still feeds raw points past the threshold, let
-                // ECharts downsample instead of rasterizing every vertex.
-                // 'minmax', NOT 'lttb' (2026-10-30 bug report): ECharts 6.1's
-                // lttbDownSample mixes up zoom-window and full-series indexes
-                // once a null is in the series, so a zoomed chart drew lines
-                // jumping back months. 'minmax' keeps time order and spikes
-                // (same idea as Rust's own min/max decimation).
+                // `minmax`, not `lttb`: ECharts 6.1 lttb mixes zoom-window and full-series indexes once a null is present. Keeps time order and spikes.
                 ...(isLargeData ? { sampling: 'minmax' as const } : {}),
                 ...(markLine ? { markLine } : {}),
-                // Only the first series carries markArea — see
-                // highlightAreas' own comment above for why attaching it
-                // to every series would be redundant.
+                // Only the first series carries markArea; see highlightAreas.
                 ...(index === 0 && highlightAreas.length > 0
                     ? { markArea: { silent: true, data: highlightAreas } }
                     : {}),
-                // Tag Point markers — same "first series only" convention.
-                // `silent: true`: clicks are handled entirely by the
-                // zrender-level handler above (click the same spot again to
-                // untag), not by markPoint's own hit-testing — keeping it
-                // silent avoids ECharts layering its own hover/tooltip
-                // behaviour on top of that.
+                // `silent`: clicks are handled by the zrender handler above; avoids ECharts hover/tooltip on top.
                 ...(index === 0 && taggedMarkPointData.length > 0
                     ? {
                         markPoint: {
@@ -745,10 +551,7 @@ function LineChart({
             };
         });
 
-        // What the tooltip reads: every shown sensor's own values, looked up at the hovered
-        // time. ECharts' `params` only lists the series that still have a point at exactly
-        // that time, and ECharts' `sampling` keeps a different subset of points per series —
-        // so with several sensors the tooltip used to show one or two rows and drop the rest.
+        // Tooltip reads every shown sensor's value at the hovered time: `params` omits series without a point at exactly that time.
         const xMs = xData.map(toMs);
         const xSorted = xMs.every((t, i) => t != null && (i === 0 || t >= (xMs[i - 1] as number)));
         const tipSeries = sensors.map(sensor => {
@@ -763,42 +566,26 @@ function LineChart({
         return {
             backgroundColor: 'transparent',
             textStyle: { fontFamily: 'Inter, system-ui, sans-serif' },
-            // The crosshair lives on its OWN canvas layer (zlevel 1), and a hover never asks the
-            // series to "emphasise" the hovered point. Without both, every mousemove repainted
-            // the whole main canvas — every series re-stroked — and one dense, fast-swinging
-            // trace (a 4 000-point zig-zag) costs hundreds of ms to rasterise, so the tooltip
-            // fell far behind the cursor as soon as such a sensor was on the chart. Now a move
-            // redraws only the crosshair line. This holds for small data too (user decision
-            // 2026-10-11): the hovered-point dot is gone at every size.
+            // Crosshair on its own canvas layer (zlevel 1), no hover emphasis: otherwise each mousemove repaints every series.
             axisPointer: { zlevel: 1, triggerEmphasis: false },
             tooltip: {
                 trigger: 'axis',
                 backgroundColor: tooltipBg,
                 borderColor: tooltipBorder,
                 textStyle: { color: txtPrimary },
-                // Kill the pointer-chasing animations: by default the tooltip
-                // box eases toward the cursor and the axis crosshair animates
-                // per mousemove, keeping a redraw loop alive the whole time
-                // the user hovers the chart.
+                // Disable tooltip and crosshair animation so no redraw loop runs while hovering.
                 transitionDuration: 0,
                 axisPointer: { animation: false },
-                // Tooltip is display-only here — not letting the pointer
-                // enter it skips the enter/leave tracking ECharts otherwise
-                // does on every move near the box.
+                // Not enterable: skips ECharts' enter/leave tracking.
                 enterable: false,
                 hideDelay: 0,
-                // A long box must not lose its top to the card: `confine` keeps it inside the chart, and from `body`
-                // the card cannot clip one taller than the chart. Only a box that ran past the chart moves.
+                // `confine` keeps a tall box inside the chart; from `body` the card can't clip it. Only a box past the chart moves.
                 confine: true,
                 appendTo: () => document.body,
                 formatter: (params: any) => {
                     if (!params || (Array.isArray(params) && params.length === 0)) return '';
                     const pList = Array.isArray(params) ? params : [params];
-                    // `axisValue` (the raw underlying value, ms for a time
-                    // axis) rather than `axisValueLabel` — the label is
-                    // ECharts' own smart-time-formatted display string for a
-                    // time axis (e.g. "10:32"), not something `new Date()`
-                    // can parse back.
+                    // Use `axisValue` (raw ms); `axisValueLabel` is a display string `new Date()` can't parse.
                     const dateStr = formatDateTime(new Date(pList[0].axisValue));
                     let content = `<div class="tt-head">${dateStr}</div>`;
                     const maxItems = 10;
@@ -807,16 +594,10 @@ function LineChart({
                     const ends = tooltipDistinctEnds(shown.map(t => sensorLookup(t.sensor)));
                     shown.forEach(({ sensor, color, values }) => {
                         const rawValue = at >= 0 ? values[at] : null;
-                        // Aggregated values (Avg etc.) are raw floating-point
-                        // divisions with no rounding applied upstream — fix
-                        // the tooltip display to 3 decimals (with thousands
-                        // separators) regardless of sensor or aggregation method.
-                        // A sensor with no value at that time keeps its row, as "—".
+                        // Aggregated values are unrounded, so show 3 decimals with separators. A sensor with no value keeps its row as '—'.
                         const hasValue = typeof rawValue === 'number' && !isNaN(rawValue);
                         const displayValue = hasValue ? fmtNum(rawValue, true) : '—';
-                        // Inline label left (description then tag), value + unit
-                        // right in the series colour. Unit from master data —
-                        // absent unit → omitted.
+                        // Label left, value + unit right in the series colour; unit comes from master data, omitted if absent.
                         const info = sensorLookup(sensor);
                         content += sensorInlineHtml(info, color, `${displayValue}${hasValue && info.unit ? ` ${info.unit}` : ''}`, ends.get(info.tag));
                     });
@@ -830,49 +611,23 @@ function LineChart({
                 bottom: gridBottom,
                 containLabel: false,
             },
-            // Entrance/update transitions only for small data — and even then
-            // fast ones. The dashboard refetches on every (debounced) filter
-            // edit, so a slow default 1 s animation replays constantly.
+            // Animate only small data, and fast: refetches on every debounced filter edit would replay a slow default.
             animation: !isLargeData,
             animationDuration: 250,
             animationDurationUpdate: 150,
-            // Just the invisible 'inside' component — no 'slider' (the
-            // always-visible bottom bar); the toolbox's Horizontal Zoom tool
-            // below covers explicit zooming. 'inside' gives scroll-wheel zoom
-            // and drag-to-pan on the chart itself.
+            // Invisible 'inside' dataZoom only: wheel zoom and drag-to-pan; explicit zoom is the toolbox tool.
             dataZoom: [
                 {
                     type: 'inside', xAxisIndex: [0], filterMode: 'filter',
-                    // Deliberately NOT `disabled: zoomSelectMode`: `disabled`
-                    // takes effect the instant it's set on the chart's
-                    // *currently active* option — i.e. for the whole drag,
-                    // since React doesn't re-render mid-gesture — and a
-                    // `dispatchAction({type: 'dataZoom', ...})` fired at
-                    // mouseup while its target component is still disabled is
-                    // silently a no-op. Left enabled throughout instead;
-                    // 'inside''s own native drag-to-pan can run alongside the
-                    // custom drag handler during the gesture, but the mouseup
-                    // handler's own explicit startValue/endValue dispatch
-                    // always sets the final, definitive view afterward.
-                    // Back to the full view when `rangeId` changed; otherwise the user's window.
+                    // Not `disabled: zoomSelectMode`: the mouseup `dispatchAction` is a silent no-op while its target is disabled.
+                    // Full view when `rangeId` changed, else the user's window.
                     ...(rangeChanged ? { start: 0, end: 100 } : (zoomWindowRef.current ?? {})),
                 },
             ],
             xAxis: {
-                // 'time' — not 'category'. A category axis spaces every
-                // plotted point EQUALLY regardless of the real gap between
-                // their timestamps (a 10-minute gap and a 10-hour gap would
-                // render at the same pixel width); a time axis positions
-                // each point proportionally to its real elapsed time.
-                // `axisLabel`'s `val` is a numeric ms timestamp.
+                // 'time' axis, not 'category': spaces points by real elapsed time.
                 type: 'time',
-                // `hideOverlap`: a time axis places a label at every week step AND at every
-                // month start, and the two series of ticks often land a day or two apart
-                // ("2026/04/29" on top of "2026/05/01") — the colliding label is dropped
-                // instead of being printed over its neighbour.
-                // `formatAxisTick` — the one tick label of every time axis in the app: the date
-                // alone on a midnight tick, date + time on a finer one, so ticks inside one day
-                // (zoomed in) no longer all read the same date.
+                // `hideOverlap` drops colliding labels (week and month ticks land close). `formatAxisTick` is the shared time-axis label.
                 axisLabel: { formatter: formatAxisTick, color: txtSecondary, hideOverlap: true },
                 axisLine: { lineStyle: { color: gridLine } }
             },
@@ -888,9 +643,7 @@ function LineChart({
                     const naturalMax = dataRange?.max ?? Math.max(...sensorMarkYs);
                     const neededMin = Math.min(naturalMin, ...sensorMarkYs);
                     const neededMax = Math.max(naturalMax, ...sensorMarkYs);
-                    // Only step in when a setpoint actually falls outside the
-                    // trace's own range — otherwise leave scale:true's normal
-                    // auto-fit alone.
+                    // Widen only when a setpoint falls outside the trace range.
                     if (neededMin < naturalMin || neededMax > naturalMax) {
                         const span = (neededMax - neededMin) || 1;
                         const pad = span * 0.08;
@@ -900,33 +653,14 @@ function LineChart({
                 }
                 return {
                     type: 'value',
-                    // No axis `name` — the sensor label already lives in the
-                    // legend below the chart; showing it a second time above
-                    // the axis was redundant clutter.
-                    // `scale: true` lets ECharts auto-fit the Y range to the
-                    // actual data instead of forcing the axis to include 0.
-                    // Time-series with a non-zero baseline (e.g. a sensor
-                    // that hovers around 50–80) reads much better this way,
-                    // and the ±1σ / ±3σ markLines stay close to the trace.
-                    // A user-pinned min/max (sensorAxisRange) overrides this on
-                    // whichever side is actually set — `scale: true` stays on
-                    // as the baseline so a pinned-min-only (or max-only) sensor
-                    // still auto-fits its other side instead of defaulting to
-                    // "always include zero". `autoMin`/`autoMax` additionally
-                    // widen that baseline (see `seriesMinMax` above) whenever
-                    // an active markLine would otherwise land off-screen.
+                    // No axis name (legend has it). `scale: true` auto-fits Y; a pinned min/max overrides that side; autoMin/autoMax keep markLines visible.
                     scale: true,
                     ...(autoMin !== undefined ? { min: autoMin } : {}),
                     ...(autoMax !== undefined ? { max: autoMax } : {}),
                     position: index % 2 === 0 ? 'left' : 'right',
                     offset: Math.floor(index / 2) * 60,
                     axisLine: { show: true, lineStyle: { color: color } },
-                    // Explicit min/max (autoMin/autoMax above) are raw floats
-                    // padded off the data range, not "nice" round numbers —
-                    // ECharts labels them at full precision by default (e.g.
-                    // 7.687984495640254) unless told otherwise. Round to at
-                    // most 3 decimals and drop trailing zeros so a boundary
-                    // that happens to be round (e.g. 6) still shows as "6".
+                    // Round labels to at most 3 decimals; padded min/max would otherwise print at full float precision.
                     axisLabel: { color: color, formatter: (val: number) => `${Number(val.toFixed(3))}` },
                     splitLine: { show: !hideYSplitLine && index === 0, lineStyle: { color: gridLine, type: 'dashed', opacity: 0.3 } }
                 };
@@ -938,9 +672,7 @@ function LineChart({
     return (
         <div className="chart-with-tags">
         <div ref={wrapperRef} className="chart-with-tags-plot" style={{ width: '100%', minHeight: 0, position: 'relative' }}>
-            {/* lazyUpdate batches consecutive setOption calls into one frame
-                (resize + data changes coalesce instead of each triggering
-                its own full notMerge re-init). */}
+            {/* lazyUpdate coalesces consecutive setOption calls into one frame. */}
             <ResponsiveECharts option={option} lazyUpdate style={{ minHeight: '200px' }} onChartReady={handleChartReady} />
             <div className="line-chart-toolbox">
                 <div ref={zoomMenuRef} style={{ position: 'relative' }}>
@@ -1004,11 +736,7 @@ function LineChart({
                         : 'Click the chart to tag a point — its values are listed in the Tagged points tab'}
                 </div>
             )}
-            {/* Live feedback for an in-progress Horizontal Zoom drag — a
-                plain overlay div, not an ECharts markArea: markArea lives in
-                `option`, so redrawing it on every mousemove would rebuild
-                the whole chart option mid-drag instead of just repainting a
-                lightweight DOM rectangle. */}
+            {/* Drag feedback is a DOM overlay, not markArea: markArea would rebuild the option on every mousemove. */}
             {dragPixels && (
                 <div style={{
                     position: 'absolute', top: 0, bottom: 0,

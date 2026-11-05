@@ -21,19 +21,7 @@ import {
 import { classifyTrainPlan, noRowsTrainError, preflightReason } from '../utils/trainQueue';
 import { mk } from './helpers/failureModelFixture';
 
-/*
- * "No data to train on" is stopped at the UI ("stop a train that has
- * no data and warn at once when a period is chosen beyond the data, NOT take
- * away results that already exist"):
- *   B1 — a period against the loaded data's time range (pure, from the dataset
- *        bounds): entirely outside = invalid when it is NEW / CHANGED in a
- *        draft, only a WARNING when it is exactly as it was saved; partly
- *        outside = a quiet note; Train is blocked only when NO train period is
- *        inside the data;
- *   B2 / B3 — a SETTLED count of zero running rows in the train periods.
- * These are the pure rules; the rows / footers / window behaviour are tested in
- * RunningConditionDataGuards.test.tsx and BuildModelWindow.test.tsx.
- */
+/* Pure rules to stop "no data to train on": B1 a period vs the loaded data range (outside = invalid when new/changed in a draft, warning only as saved; partly outside = quiet note; Train blocked only when no train period is inside); B2/B3 a settled zero running-row count. Rows / footers / window behaviour: RunningConditionDataGuards.test.tsx and BuildModelWindow.test.tsx. */
 
 // The user's own example: the data covers 2025-01 … 2025-12.
 const DATA = { min: '2025-01-01 00:00:00', max: '2025-12-31 23:59:00' };
@@ -112,7 +100,7 @@ describe('periodDataFit / validatePeriods against the loaded data', () => {
         expect(status[2].dataNote).toBe('Only the part inside the data is used (data ends 2025/12/31)');
         expect(firstInvalidTestPeriodNumber(tests, DATA)).toBe(2);
         expect(testPeriodsError(tests, DATA)).toBe('S2 is outside the data (2025/01/01 00:00 – 2025/12/31 23:59).');
-        // without bounds: the old rule
+        // without bounds: nothing is flagged
         expect(testPeriodsError(tests)).toBeNull();
     });
 
@@ -340,9 +328,6 @@ describe('getBuildBlock with the data guards (the PERSISTED state)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// A model that HAS results but no row in the loaded data: the words
-// ---------------------------------------------------------------------------
 
 describe('"No data for this model in the loaded file" — the texts of a trained / Complete model with no row in the data', () => {
     it('the title and the tooltip suffix', () => {
@@ -372,9 +357,6 @@ describe('"No data for this model in the loaded file" — the texts of a trained
     });
 });
 
-// ---------------------------------------------------------------------------
-// The zero-rows rule reads the counts the panels already ask for
-// ---------------------------------------------------------------------------
 
 const pc = (start: string | null, end: string | null, rows: number, running: number, index = 1): PeriodCount =>
     ({ index, start, end, valid: true, invalid_reason: null, rows_in_period: rows, running_rows: running, running_days: running / 288 });
@@ -419,7 +401,7 @@ describe('countedNoTrainRows — only a SETTLED count of zero', () => {
     it('the caption carries the same answer (`noRows`), and never for a stale / unconfigured count', () => {
         const cap = (st: PeriodCountsState, configured = true) => runningConditionCaption({ trainPeriods: [INSIDE], scoringPeriods: [], bounds: DATA, counts: st, configured });
         expect(cap(state('ok', ZERO)).noRows).toBe(true);
-        // …as a verdict only: the caption never prints the count ("0 of 10,000 rows (0%) …" is gone).
+        // …as a verdict only: the caption never prints the count.
         expect(cap(state('ok', ZERO)).text).not.toMatch(/rows|%|10,000/);
         expect(cap(state('loading', ZERO)).noRows).toBe(false);
         expect(cap(state('ok', ZERO), false).noRows).toBe(false); // the condition is not set: the count is not read

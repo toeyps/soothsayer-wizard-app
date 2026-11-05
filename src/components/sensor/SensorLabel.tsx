@@ -13,23 +13,9 @@ import {
 
 export { SensorNamesContext, SensorSearchContext, SensorSetContext, SensorSetDropContext, SensorSetExtraContext };
 
-/**
- * The ONE sensor label (DESIGN_SYSTEM §4 "Sensor label — ONE standard"):
- * description first, tag second, in two variants of one component.
- *  - `SensorLabel` (Stacked): lists, cards, headers — line 1 description + unit chip, line 2 tag.
- *  - `SensorInline` (Inline): picker triggers/rows, chips, condition rows, chart subtitles,
- *    tooltips — description then tag on one line, no brackets.
- * No description → the tag alone, in mono, on line 1 (never a "no description" placeholder,
- * never the tag twice). Every label carries `title` = "DESCRIPTION · TAG · UNIT · Component".
- *
- * Long names (§4 "Long sensor names"): every rule works on the displayed name and is a measured no-op for a
- * name that fits. A name is printed as one plain text node until it has been MEASURED as cut, so a name that
- * fits has exactly the markup it would have without these rules. A name of at most 28 characters outside a
- * cut set does not even run the measuring hooks.
- */
+/** The one sensor label: description first, tag second; `SensorLabel` is stacked, `SensorInline` is one line. */
 
-/** Supplies sensor metadata to every label / picker below it. Nested providers inherit what
- *  they are not given (own metadata wins per tag; `special` badges are inherited unless given). */
+/** Supplies sensor metadata to labels and pickers below; nested providers inherit what they lack. */
 export function SensorMetaProvider({ metadata, special, children }: {
     metadata?: SensorMetadata[] | null;
     special?: Pick<SpecialSensorRecipe, 'tag' | 'kind'>[] | null;
@@ -39,16 +25,7 @@ export function SensorMetaProvider({ metadata, special, children }: {
     return <SensorMetaContext.Provider value={lookup}>{children}</SensorMetaContext.Provider>;
 }
 
-/**
- * Wraps a set whose rows are all sensors (a list, a chip row, a picker group). Rule 3 runs on every label inside;
- * the start they share is worked out once and, only while a row is measured as cut, every label prints it muted,
- * or drops it when `drop` is set (print it once with `SetPrefixLine`).
- *  - `tags`: the set, resolved through the provider to displayed names. Tags from `SensorSetExtraContext` count too.
- *  - `names`: the displayed names directly, instead of `tags`.
- *  - `candidate`: overrides the shared start (a family inside the set).
- *  - `roomOf`: when the set sits in something that shrinks to its content, the ancestor whose width decides that a
- *    shortened set has room again (`useCutRuns`).
- */
+/** Wraps sensor rows; their shared start is computed once and printed muted (or dropped with `drop`) while a row is cut. */
 export function SensorSetProvider({ tags, names: givenNames, candidate, drop, roomOf, children }: {
     tags?: readonly string[];
     names?: readonly string[];
@@ -95,8 +72,7 @@ export function SetPrefixLine({ className, testid = 'set-prefix' }: { className:
 
 const NBSP = '\u00a0';
 
-/** A wrapping row: a separator stays at the end of line 1, never starts line 2 ("… SegmentNo 14 -" / "max"). Same
- *  length as the name, so a search hit still lands on the right characters. */
+/** A wrapping row keeps a separator at the end of line 1; same length as the name so search hits still line up. */
 const keepSeparatorOnLine = (text: string) => text.replace(/ (?=[-–—·|/] )/g, NBSP);
 
 function marked(text: string, q: string): ReactNode {
@@ -159,8 +135,7 @@ function LongName({ text, names, prefix, className, wrap, stack, grow, q, measur
     const [wideRef, wideK] = useWideTail(forms, active && !wrap && !two && forms.length > 1);
     const shown = withWiderTail(sp, starts, wideK);
     const pre = shown.pre ?? '';
-    // A wrapping row wraps a cut name even with no head to split off (its end is over 28 characters); one with no
-    // spaces has no word break to wrap at and end-cuts.
+    // A wrapping row wraps a cut name even with no head to split off; a name with no spaces has no break and end-cuts.
     const wrapsWhole = !!wrap && active && !shown.head && /\s/.test(text);
     const form = grow && active ? 'wrap' : wrapsWhole ? 'wrap' : !shown.head ? 'plain' : two ? 'two-line' : wrap ? 'wrap' : 'split';
     const fitRef = useNameFit(
@@ -219,13 +194,7 @@ function LongName({ text, names, prefix, className, wrap, stack, grow, q, measur
     );
 }
 
-/**
- * The name text of a label.
- *  - `prefix`: an explicit shared start; '' = none and not part of the surrounding set (a tag).
- *  - `wrap`: a row with room for two lines: a name that does not fit wraps at word breaks.
- *  - `stack`: a stacked row: a kept start + end that do not fit on one line go on two lines.
- *  - `grow`: a row that can grow: a name that does not fit prints whole, wrapped, with no "…".
- */
+/** `prefix` = shared start ('' = none); `wrap`/`stack` allow two lines; `grow` prints the whole name, wrapped, no ellipsis. */
 export function NameText({ text, prefix, className = 'sl-desc', wrap, stack, grow }: {
     text: string;
     prefix?: string;
@@ -259,8 +228,7 @@ function TagText({ tag, grow }: { tag: string; grow?: boolean }) {
     return <NameText text={tag} prefix="" grow={grow && tag.length > NAME_TAIL_MAX} className={tag.length > NAME_TAIL_MAX ? 'sl-tag sl-tag--long' : 'sl-tag'} />;
 }
 
-/** The name in a React tooltip row: a row that wraps or has a `distinct` end prints what the layout decided, as the
- *  ECharts rows do; any other row is a plain inline label. */
+/** React tooltip row name: wrapping or `distinct` rows print the layout result like ECharts rows; others are plain inline. */
 export function TooltipRowName({ info, valueText, distinct }: { info: SensorInfo; valueText?: string; distinct?: string }) {
     const row = layoutTooltipRow({ ...info, valueText, distinct });
     if (!row.wraps && !distinct) return <SensorInline tag={info.tag} info={info} size="sm" />;
@@ -295,9 +263,7 @@ interface LabelProps {
     after?: ReactNode;
     /** An explicit shared start (overrides the surrounding set). */
     prefix?: string;
-    /** Stacked only: when no tag line prints (no description, or rule 3b), a name that does not fit may use
-     *  two lines, its distinguishing end on line 2. A name that fits stays on one line. `'always'`: a list row, the
-     *  same with a tag line under it (rule 3: up to 3 lines) rather than dropping or cutting part of the name. */
+    /** Stacked only: a name with no tag line may wrap to two lines; `'always'` (list row) allows up to 3 lines with the tag. */
     wrap?: boolean | 'always';
 }
 

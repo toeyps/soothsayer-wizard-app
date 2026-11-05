@@ -1,24 +1,4 @@
-/**
- * Special sensors, end to end across windows.
- *
- * Mounts the REAL Dashboard and the REAL Add Special Sensor window (with the
- * real SensorExplorer / Formula editor + Quick build / ManageSpecialSensors
- * and the real DataUploadPage for workspace-reopen
- * replay) side by side in one document, connected by a shared fake Tauri
- * event bus (every payload is structured-cloned, like real IPC), against a
- * fake Rust session that holds real column VALUES and enforces the same rules
- * as lib.rs (see `helpers/fakeRustSession.ts`). Only Tauri, the workspace file
- * store and a few heavy Dashboard children (charts, side panels) are mocked.
- *
- * The invariant every test here checks one way or another:
- *   - every special sensor the UI lists has exactly ONE column in the session,
- *     holding the values its recipe produces from the CURRENT data;
- *   - every column the UI removed is gone from the session;
- *   - every recipe only reads sensors that exist.
- *
- * Tests titled "regression:" pin bugs this file found; a "Note (fix pass)"
- * comment says where the fix changed a premise of the original repro.
- */
+/** Special sensors end to end: each listed sensor has exactly one current session column; removed ones are gone. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, fireEvent, act, cleanup, within } from '@testing-library/react';
 import type { SensorMetadata, WorkspaceState, SpecialSensorRecipe } from '../types';
@@ -26,7 +6,6 @@ import { createFakeRust, rustRefToken, rustScanRefs, type FakeRust } from './hel
 import { mk } from './helpers/failureModelFixture';
 import { showSensorTab } from './helpers/dashboardLanding';
 
-// ── Shared fake Tauri: event bus, workspace disk, dialogs ────────────────
 
 const h = vi.hoisted(() => {
     type Cb = (e: { event: string; payload: unknown }) => void;
@@ -59,8 +38,7 @@ const h = vi.hoisted(() => {
         },
         /** Start queueing (matching) events instead of delivering them. */
         hold(filter?: (event: string) => boolean) { held = []; holdFilter = filter ?? null; },
-        /** Stop holding; deliver the queued events in `order` (indices into the
-         *  queue; default = original order; omitted indices are DROPPED). */
+        /** Release held events in `order` (queue indices; default original order; omitted indices are dropped). */
         release(order?: number[]) {
             const q = held ?? [];
             held = null;
@@ -102,8 +80,7 @@ vi.mock('@tauri-apps/api/webviewWindow', () => ({
         static getByLabel = () => Promise.resolve(null);
     },
 }));
-// The Import page's step-0 illustration is a canvas animation; jsdom has no 2D
-// context (and logs "Not implemented" on every getContext) -- stand in a marker.
+// jsdom has no 2D context; stub the canvas animation.
 vi.mock('../components/upload/MachineMorphCanvas', () => ({ default: () => null }));
 
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -179,7 +156,6 @@ import DataUploadPage from '../components/upload/DataUploadPage';
 import { sensorRef } from '../utils/specialSensorNaming';
 import { getErrors, dismissAllErrors } from '../errorReporter';
 
-// ── Fixtures ────────────────────────────────────────────────────────────
 
 const RAW = {
     headers: ['timestamp', 'TAG1', 'TAG2', 'TAG3', 'TAG4'],
@@ -208,10 +184,7 @@ function baseState(over: Partial<WorkspaceState> = {}): WorkspaceState {
     };
 }
 
-/** What Build Model does when it changes a model: persist the slice to the
- *  workspace file FIRST, then broadcast it (`failure-group-state-changed`).
- *  Every real writer works this way, and the Add Sensor window now re-reads the
- *  file on a broadcast instead of trusting the payload's arrival order. */
+/** Persist the slice first, then broadcast, as every real writer does; the window re-reads the file on broadcast. */
 async function writerPersistsThenBroadcasts(
     models: any[],
     extra: Record<string, unknown> = {},
@@ -229,7 +202,6 @@ async function writerPersistsThenBroadcasts(
 const metaFor = (tag: string, extra: Partial<SensorMetadata> = {}): SensorMetadata =>
     ({ tag, description: `${tag} desc`, unit: 'u', component: 'Special', ...extra });
 
-// ── Async helpers (fake timers throughout) ─────────────────────────────
 
 async function flush(n = 12) {
     for (let i = 0; i < n; i++) await act(async () => { await Promise.resolve(); });
@@ -239,8 +211,7 @@ async function tick(ms: number) {
     await flush();
 }
 
-/** Build the Rust columns a workspace would already have in-session (what the
- *  reopen replay produces) -- straight through the fake, in order. */
+/** Build the session columns a reopened workspace would already have. */
 async function seedSession(recipes: SpecialSensorRecipe[]) {
     for (const r of recipes) {
         if (r.kind === 'formula') await rust.invoke('evaluate_formula', { formula: r.formula, customName: r.tag });
@@ -303,7 +274,6 @@ function lastChartFilter() {
     return rust.chartResponses[rust.chartResponses.length - 1]?.filter;
 }
 
-// Create tab ---------------------------------------------------------------
 
 const createBody = () => win!.container.querySelector('.special-sensor-body') as HTMLElement;
 
@@ -395,7 +365,6 @@ async function createFormula(name: string, formula: string, opts?: Parameters<ty
     await clickAdd();
 }
 
-// Manage tab ---------------------------------------------------------------
 
 async function goManage() {
     await act(async () => { fireEvent.click(W().getByRole('tab', { name: /Manage/ })); });
@@ -451,9 +420,7 @@ async function persistedRecipes(): Promise<SpecialSensorRecipe[]> {
     return h.disk.get(WS)?.specialSensorRecipes ?? [];
 }
 
-/** The core invariant: every recipe the Dashboard holds has exactly one
- *  session column, with the values that recipe yields NOW, and every recipe
- *  input exists. Recomputes each recipe on a scratch copy of the session. */
+/** Each recipe has one session column with current values, and all its inputs exist. */
 async function expectConsistent(recipes: SpecialSensorRecipe[], opts: { allowOrphans?: boolean } = {}) {
     if (!opts.allowOrphans) {
         // Nothing the UI no longer lists may linger as a derived column.
@@ -506,9 +473,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 1. Create
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('1. create -> only the new sensor is plotted, with the new values', () => {
     it('formula: the new tag is merged into the Dashboard\'s CURRENT selection (changed after the window opened), sources are not plotted, and the chart reads the new values', async () => {
@@ -529,8 +493,7 @@ describe('1. create -> only the new sensor is plotted, with the new values', () 
     });
 });
 
-/** Open a workspace that already has these special sensors (their columns
- *  built in the session, as the reopen replay would), plus the window. */
+/** Open a workspace whose special sensors are already built in the session, plus the window. */
 async function openWorkspace(recipes: SpecialSensorRecipe[], over: Partial<WorkspaceState> = {}) {
     await seedSession(recipes);
     await openDashboard(baseState({
@@ -600,9 +563,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['P5']);
     });
 
-    // Guards against: the window's own "on chart" mirror merges without
-    // the Pair Plot cap, so Manage shows the badge for a sensor the Dashboard
-    // refused to plot.
+    // Guards: the window's 'on chart' mirror ignored the Pair Plot cap and showed a badge for an unplotted sensor.
     it('regression: Pair Plot at 4 sensors -> create P5 (not plotted) -> Manage tab still shows P5 as "on chart"', async () => {
         await openDashboard(baseState({ chartType: 'pair', selectedSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'], visibleSensors: ['TAG1', 'TAG2', 'TAG3', 'TAG4'] }));
         await openWindow();
@@ -640,14 +601,7 @@ describe('1b. create via operation, Sum vs Mean with a missing source, Pair Plot
 });
 
 describe('1c. the Create form after a successful Add', () => {
-    // Guards against: AddSensorWindow resets
-    // ITS copy of the form after an Add, but SensorTooling keeps its own
-    // engine/formula-editor state; `setSelectedSensors([])` hands it a new
-    // array, its build result re-memoizes, and it re-submits the old formula
-    // + name to the window -- so right after a SUCCESSFUL add the Name field
-    // turns red with 'A sensor named "Once" already exists', the footer says
-    // "Fix the name before adding." and Add is disabled. Only visible with
-    // the real SensorTooling (AddSensorWindow.test mocks it).
+    // Guards: after a successful Add, SensorTooling re-submitted the old formula and name (name flagged taken, Add disabled).
     it('regression: "Edit as text" -> formula $TAG1 * 3, name Once -> Add (succeeds) -> the form keeps the formula and name and immediately shows "A sensor named Once already exists" + "Fix the name before adding."', async () => {
         await openDashboard(baseState());
         await openWindow();
@@ -662,17 +616,7 @@ describe('1c. the Create form after a successful Add', () => {
         expect(W().queryByText('Fix the name before adding.')).toBeNull();
     });
 
-    // Same root cause: after an Add with no Explorer picks, SensorTooling's
-    // Description/Unit fields still SHOW the previous values while the window
-    // has reset its copies to '' -- the footer then demands "Fill in a
-    // description, a unit" for fields that look filled, and re-typing the
-    // same text does not register (no change event for an identical value).
-    // Note (fix pass): this used to demand that Description/Unit keep showing the
-    // OLD sensor's text ('Same desc' / 'kPa') while Add is enabled. The fix
-    // resets the whole Create form after an Add (the user asked for ALL of it to
-    // be cleared), so the fields are BLANK for the next sensor. The invariant the
-    // original really checks -- what the fields show must agree with what the
-    // footer/Add button believe -- is asserted below, in both directions.
+    // Guards: after Add, Description/Unit looked filled though the window had reset them; footer and fields must agree.
     it('regression: "Edit as text" -> create Once (desc/unit/component filled) -> type a new formula + new name Twice -> the fields and the footer agree: they are blank, the footer says so, and filling them enables Add', async () => {
         await openDashboard(baseState());
         await openWindow();
@@ -699,9 +643,7 @@ describe('1c. the Create form after a successful Add', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Same root cause in buttons mode: SensorTooling never clears
-    // `engine.customName`, so the NEXT sensor's Name field opens with the
-    // previous name, already flagged as taken.
+    // Guards: SensorTooling never cleared `engine.customName`, so the next sensor's Name opened pre-filled and flagged as taken.
     it('regression: pick TAG1+TAG2 -> name First -> Add -> pick TAG3+TAG4 -> the Name field is pre-filled with "First" and flagged "already exists"', async () => {
         await openDashboard(baseState());
         await openWindow();
@@ -716,9 +658,6 @@ describe('1c. the Create form after a successful Add', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 2. Delete -> recreate, Undo, protection
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('2. delete then recreate the same name', () => {
     it.each([
@@ -818,25 +757,19 @@ describe('2b. delete protection', () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         await goManage();
         expect(deleteBtn('A').disabled).toBe(false);
-        // Note (fix pass): a real writer persists BEFORE it broadcasts, and the
-        // window now re-reads the file on a broadcast (arrival order of payloads
-        // is not trustworthy). The original emitted without writing anything.
+        // A real writer persists before broadcasting; the window re-reads the file on a broadcast.
         await writerPersistsThenBroadcasts([mk({ id: 'm1', predictorSensors: ['A'] })]);
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Guards against: the dependency check happens at CLICK time only. The
-    // commit 8 s later drops the column regardless of what started using the
-    // sensor in between.
+    // Guards: the dependency check ran only at click time, so a use added during the 8 s undo window was ignored at commit.
     it('regression: delete A (Manage) -> within the 8 s undo window Build Model makes A a model\'s target -> the delete still commits and drops A\'s column from under the model', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         await deleteSensor('A');
         // (persist-then-broadcast, as a real writer does -- see the helper.)
         await writerPersistsThenBroadcasts([mk({ id: 'm1', targetSensor: 'A' })]);
         await tick(8100);
-        // a model references A, so A must still exist -- the delete was
-        // cancelled at commit time, the sensor is back in the list, and the
-        // user was told why.
+        // The delete is cancelled at commit because a model references A: the sensor is back and the user is told why.
         expect(rust.has('A')).toBe(true);
         expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['A']);
@@ -845,8 +778,7 @@ describe('2b. delete protection', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Same commit-time re-check, for the workspace Running condition (which is
-    // not part of the models list) and for another special sensor built on it.
+    // Commit-time re-check also covers the workspace Running condition and another special sensor built on it.
     it('regression: delete A -> within the undo window the workspace Running condition starts using A -> the delete is cancelled at commit time', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         await deleteSensor('A');
@@ -859,14 +791,7 @@ describe('2b. delete protection', () => {
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['A']);
     });
 
-    // Guards against: the Explorer on the Create tab lists the full `sensors`
-    // list, not `liveSensors`, so a sensor inside its undo window can still be
-    // picked as a SOURCE. Its delete then commits under the new sensor.
-    // Note (fix pass): the original PICKED A in the Explorer while it was inside
-    // its undo window and expected the broken result. The fix is that A is not
-    // offered as a source at all, so the first half of that repro is
-    // impossible; it now asserts A is not offered, that a reference typed in by
-    // hand is refused, and that nothing is left built on a column that is dropped.
+    // Guards: the Create tab Explorer must not offer a sensor inside its undo window; a hand-typed $A is refused.
     it('regression: delete A -> inside the undo window A is not offered as a source on the Create tab, a $A typed by hand is refused, and nothing ends up built on a dropped column', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         await deleteSensor('A');
@@ -887,11 +812,7 @@ describe('2b. delete protection', () => {
         await expectConsistent(recipes);
     });
 
-    // Guards against: delete-protection does
-    // not look at the workspace Running Condition (documented "not wired up"
-    // in specialSensorRename.ts). Before the stale column lingered;
-    // now it is really dropped, and Rust's ResolvedFilter silently DROPS a
-    // condition on an unknown sensor -- so every model trains on different rows.
+    // Guards: delete-protection must cover the workspace Running condition; Rust silently drops a condition on an unknown sensor.
     it('regression (was a known gap): a special sensor used in the workspace Running Condition cannot be deleted -> its column stays and the condition keeps filtering', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')], {
             failureGroupState: {
@@ -904,9 +825,6 @@ describe('2b. delete protection', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 3. Rename
-// ═════════════════════════════════════════════════════════════════════════
 
 /** A, a formula B and an operation C both built on A. */
 const CHAIN = () => [F('A', '$TAG1 * 2'), F('B', '${A} + 1'), SUM('C', ['A', 'TAG3'])];
@@ -965,14 +883,7 @@ describe('3. rename', () => {
         await expectConsistent(recipes);
     });
 
-    // These two used to assert that renaming a sensor a
-    // model uses is CARRIED INTO the model (and that the window protected the
-    // new name from deletion before the Dashboard's broadcast landed). The user
-    // decided instead that a model-used sensor cannot be renamed at all (a
-    // trained model built from it would go stale), so the premise is gone:
-    // the rename is refused and the model keeps the name it was built on. The
-    // Dashboard's rename-into-models code stays as a safety net but is
-    // unreachable from the window; see "9. edit lock" below for the full set.
+    // A sensor used by a model can't be renamed: the rename is refused and the model keeps its sensor name.
     it('a model using the sensor blocks its RENAME: Name is read-only, the model on disk keeps pointing at A, and the window keeps blocking its delete', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')], {
             failureGroupState: { groups: [], models: [mk({ id: 'm1', targetSensor: 'A' })] } as any,
@@ -997,12 +908,7 @@ describe('3. rename', () => {
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Guards against: Dashboard's rename handler re-keys selection, colours,
-    // axes, scatter, highlights and models -- but NOT its own Filter tab.
-    // The condition keeps naming A; the rename drops A's column; Rust's
-    // ResolvedFilter silently drops a condition on an unknown sensor, so the
-    // chart goes from "filtered" to "unfiltered" while the Filter tab still
-    // shows the condition. (Same for a DELETED sensor used in the filter.)
+    // Guards: rename/delete must re-key the Dashboard Filter tab; Rust silently drops a condition on an unknown sensor.
     it('regression: Dashboard Filter tab has "A > 4" -> rename A to A2 -> the filter still names A, whose column is gone, so the chart silently shows every row', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')], {
             selectedSensors: ['A'], visibleSensors: ['A'],
@@ -1069,12 +975,8 @@ describe('3. rename', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 4. Edit with dependents, order, cycles
-// ═════════════════════════════════════════════════════════════════════════
 
-/** Simulate quitting and restarting the app: every window is gone and the
- *  Rust session is empty again; only the workspace files survive. */
+/** Quit and restart: all windows gone and the Rust session empty; only workspace files survive. */
 function restartApp() {
     cleanup();
     dash = null;
@@ -1087,8 +989,7 @@ function restartApp() {
     dismissAllErrors();
 }
 
-/** Reopen the workspace from the Recent list of the REAL DataUploadPage
- *  (load_csv + recipe replay), then hand its result to a fresh Dashboard. */
+/** Reopen from the real Import page's Recent list (load_csv + recipe replay), then hand the result to a fresh Dashboard. */
 async function reopenWorkspace() {
     const onDataReady = vi.fn();
     let up!: ReturnType<typeof render>;
@@ -1121,12 +1022,7 @@ describe('4. editing a sensor others depend on', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Guards against: `dependentsToRecompute` returns the dependents in the
-    // stored ARRAY order, and `recomputeSpecialSensors` runs them in that
-    // order. A workspace saved before today's ordering fix (or any list not
-    // in build order) recomputes C before B, so C is built from B's OLD
-    // values. The same edit also writes a corrected `recipeOrder`, so only the
-    // first edit per such workspace is hit -- but it's silent wrong numbers.
+    // Guards: dependents must recompute in dependency order even when the stored list is not in build order.
     it('regression: workspace saved with recipes in the order [C=$B*10, B=${A}+1, A=$TAG1*2] -> edit A to $TAG1*3 -> C is recomputed BEFORE B and keeps values from the old B', async () => {
         const recipes = [F('C', '$B * 10'), F('B', '${A} + 1'), F('A', '$TAG1 * 2')];
         await seedSession([recipes[2], recipes[1], recipes[0]]); // what the (dependency-ordered) replay built
@@ -1167,10 +1063,7 @@ describe('4. editing a sensor others depend on', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Was a BUG (low -- needs a second save inside the formula-reference lookup's
-    // round trip): the cycle check reads the window's `formulaRefs` map,
-    // which is refreshed ASYNCHRONOUSLY after each save. A second save that
-    // lands before the refresh reasons about the OLD references.
+    // Guards: the cycle check reads `formulaRefs`, refreshed after each save; a quick second save must still catch an A <-> C cycle.
     it('regression: edit A to $C * 2 -> save -> before the extract_formula_refs refresh answers, edit C to $A + 1 -> save: the A <-> C cycle is accepted', async () => {
         await openWorkspace([F('A', '$TAG1 * 2'), F('C', '$TAG3 + 1')]);
         // Hold the background refresh that follows the first save.
@@ -1187,9 +1080,6 @@ describe('4. editing a sensor others depend on', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 5. Workspace reopen replay
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('5. workspace reopen replay (real DataUploadPage -> real Dashboard -> real window)', () => {
     it('a broken recipe + one built on it: dependent skipped, ONE toast naming both, no ghost line, recipes + metadata kept, and fixing the broken one in Manage brings both back', async () => {
@@ -1242,8 +1132,7 @@ describe('5. workspace reopen replay (real DataUploadPage -> real Dashboard -> r
         expect(chartSeriesFor('S')).toEqual([11, 22, null, 44]);
         await expectConsistent(recipes);
 
-        // Back to the Import page and open the same workspace again (same
-        // Rust process: load_csv resets the session, the replay runs again).
+        // Reopen again in the same Rust process: load_csv resets the session and the replay reruns.
         cleanup();
         for (const k of Object.keys(h.listeners)) delete h.listeners[k];
         await reopenWorkspace();
@@ -1262,9 +1151,6 @@ describe('5. workspace reopen replay (real DataUploadPage -> real Dashboard -> r
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 6. Name rules end to end
-// ═════════════════════════════════════════════════════════════════════════
 
 const ODD_NAMES = [
     'Total-Power', 'A/B', 'Eff%', '(x)', 'Sum All', 'a.b', '11PT1214A', '11PT1214A.PV',
@@ -1350,9 +1236,6 @@ describe('6. names: the TS brace rule matches the Rust tokenizer', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 8. Nasty interleavings
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('8. interleavings', () => {
     it('rename A -> B, then delete B inside the undo window: both names are gone from the session and the Dashboard', async () => {
@@ -1402,11 +1285,7 @@ describe('8. interleavings', () => {
         expect((await persistedRecipes()).map(r => r.tag)).toEqual(['Slow']);
     });
 
-    // Note (fix pass): with every mutation serialized, the FIRST one clicked wins.
-    // The original expected the (later) rename to win and the (earlier) create to
-    // be refused -- an artifact of the two overlapping. Now the create finishes
-    // first and the rename is refused inline ("already in use"); either way
-    // nothing is duplicated or overwritten.
+    // Mutations are serialized: the create wins, the rename is refused inline; nothing duplicated or overwritten.
     it('create N is still computing when A is renamed to N in Manage: they run one after the other -- the create (clicked first) wins, the rename is refused inline, nothing is duplicated', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'N' && !a.replace);
@@ -1430,11 +1309,7 @@ describe('8. interleavings', () => {
         await expectConsistent(recipes);
     });
 
-    // Guards against: the
-    // rename's collision check runs BEFORE its recompute, and the Create tab
-    // does not know a rename to that name is in flight. The rename's
-    // `replace: true` recompute then OVERWRITES the freshly created sensor's
-    // column in place, and both recipes end up under one tag.
+    // Guards: Create must know a rename is in flight, or its `replace: true` recompute overwrites the new sensor's column.
     it('regression: rename A -> N is recomputing (slow) -> the Create tab shows that edit (no Add) until it finishes -> then a NEW sensor N is refused as taken: one recipe named N, no overwrite', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'N' && a.replace === true);
@@ -1458,14 +1333,11 @@ describe('8. interleavings', () => {
         await expectConsistent(recipes);
     });
 
-    // Guards against: the window keeps whichever
-    // `failure-group-state-changed` arrived LAST, with no ordering/version.
-    // Two writers (Dashboard echo + Build Model) can deliver out of order.
+    // Guards: the window kept whichever `failure-group-state-changed` arrived last, with no ordering; two writers can deliver out of order.
     it('regression: Build Model\'s "model m1 now uses A" and an older FG broadcast arrive out of order -> the window ends on the older list and lets A be deleted', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         h.hold(e => e === 'failure-group-state-changed');
-        // Dashboard's echo (before Build Model's write), then Build Model's write
-        // (persist, then broadcast) -- delivered in the OPPOSITE order.
+        // Dashboard's echo, then Build Model's write (persist, then broadcast), delivered in the opposite order.
         await h.emit('failure-group-state-changed', { workspaceId: WS, origin: 'dashboard', groups: [], models: [] });
         await writerPersistsThenBroadcasts([mk({ id: 'm1', targetSensor: 'A' })], {}, 'build-model', { broadcast: false });
         await h.emit('failure-group-state-changed', { workspaceId: WS, origin: 'build-model', groups: [], models: [mk({ id: 'm1', targetSensor: 'A' })] });
@@ -1475,13 +1347,7 @@ describe('8. interleavings', () => {
         expect(deleteBtn('A').disabled).toBe(true);
     });
 
-    // Guards against: an edit (no rename) that fails on the 2nd downstream
-    // recompute has ALREADY overwritten the edited sensor (and the 1st
-    // downstream) in place with the NEW formula's values -- there is no
-    // rollback -- while the window and the Dashboard keep the OLD recipe.
-    // The chart shows numbers no recipe produces until the workspace is
-    // reopened. (Same with a rename + formula change: B is left computed from
-    // the new formula while its recipe still reads A.)
+    // Guards: an edit failing on the 2nd downstream recompute must roll back the edited sensor's column; recipes keep the old formula.
     it('regression: A -> B, C; edit A to $TAG1 * 3; recomputing C fails -> A\'s column already holds $TAG1 * 3 while every recipe still says $TAG1 * 2 (Cancel leaves it so)', async () => {
         await openWorkspace(CHAIN());
         rust.failOn('calculate_new_sensor', a => a.config.customName === 'C');
@@ -1507,11 +1373,7 @@ describe('8. interleavings', () => {
         await expectConsistent(recipes);
     });
 
-    // Was a BUG (medium-low, same class as the rename/create race above: Create is
-    // not serialized with an in-flight Manage edit). The edit decides its
-    // downstream set when it STARTS; a sensor created on top of the edited
-    // one while its recompute is still running reads the OLD values and is
-    // never recomputed.
+    // Guards: Create must be serialized with an in-flight edit, or a sensor built on the edited one reads old values.
     it('regression: edit A ($TAG1 * 2 -> $TAG1 * 3) is recomputing (slow) -> Create waits for it (it shows the edit) -> B = $A + 1 built afterwards reads the NEW A (4,7,10,13)', async () => {
         await openWorkspace([F('A', '$TAG1 * 2')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'A' && a.replace === true);
@@ -1532,12 +1394,7 @@ describe('8. interleavings', () => {
         await expectConsistent(await persistedRecipes());
     });
 
-    // Guards against: Delete is
-    // not locked while an edit is recomputing. Deleting a downstream sensor
-    // and letting the undo window expire drops its column; the edit's
-    // `replace: true` recompute of that sensor then APPENDS it again -- an
-    // orphan column no recipe owns, which then blocks the name ("already
-    // exists") until the app restarts.
+    // Guards: Delete must be locked during an edit's recompute, or `replace: true` re-appends the deleted column as an orphan.
     it('regression: edit A (B = ${A} + 1 built on it) -> B\'s recompute is slow -> delete B and let the 8 s undo window expire -> the edit re-creates B\'s column after the delete dropped it (orphan; a new "B" is then refused)', async () => {
         await openWorkspace([F('A', '$TAG1 * 2'), F('B', '${A} + 1')]);
         const g = rust.gate('evaluate_formula', a => a.customName === 'B' && a.replace === true);
@@ -1548,17 +1405,13 @@ describe('8. interleavings', () => {
         await goManage(); // the edit is still applying; Manage stays reachable
         await act(async () => { fireEvent.click(deleteBtn('B')); });
         await tick(8100);
-        // Note (fix pass): the original asserted here that the delete had ALREADY
-        // dropped B's column while the edit was still recomputing -- i.e. that the
-        // two ran at the same time, which is exactly the bug. Now the delete
-        // waits its turn behind the edit: B is still there, untouched.
+        // The delete waits behind the edit: B is still there, untouched.
         expect(rust.has('B')).toBe(true);
         expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
         await act(async () => { g.release(); });
         await flush(30);
         await tick(400);
-        // The edit finished (B recomputed), THEN the queued delete dropped it:
-        // one column fewer, no orphan, and a new "B" is free to be created.
+        // The edit finished first, then the queued delete dropped B: no orphan, name free.
         expect(rust.has('B')).toBe(false);
         const recipes = await persistedRecipes();
         expect(recipes.map(r => r.tag)).toEqual(['A']);
@@ -1566,11 +1419,7 @@ describe('8. interleavings', () => {
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// 9. Edit lock -- a special sensor used by a model cannot be
-//    edited / renamed / deleted; only its description, unit and component can
-//    change. Real Dashboard + real window + fake Rust session.
-// ═════════════════════════════════════════════════════════════════════════
+// Edit lock: a special sensor used by a model can't be edited, renamed or deleted; only description, unit and component change.
 
 describe('9. edit lock: a sensor a model uses', () => {
     const WRITES = ['evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'rename_formula_refs'];

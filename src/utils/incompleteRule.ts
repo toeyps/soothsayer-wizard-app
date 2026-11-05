@@ -8,46 +8,9 @@ import { migratePeriods } from './workspaceMigrations';
 import { demoteModelsForRecipeChange, stampTrainedFormulas } from './specialSensorSignature';
 import { sameHealthSetPoints } from './healthSetPoints';
 
-/**
- * "Incomplete immediately".
- *
- * Changing ANY input that decides what a model is trained on —
- *   training period(s), the running condition in every part (Workspace/Custom
- *   switch, its one "sensor > value" condition, periods — and for a
- *   Workspace-mode model that includes the WORKSPACE running condition),
- *   predictor sensors, the Y / X / criteria sensors, the number of clusters /
- *   criteria ranges, stiffness —
- * sets a Complete model back to Incomplete (`status: false`) IMMEDIATELY, in
- * the same write, without waiting for anything to be re-checked. It keeps its
- * set points, `lastTrainedAt` and `trainedFingerprint`; the mismatch with the
- * current inputs is what then shows it as out of date with a Re-train.
- *
- * The same change also drops a saved `healthVerdict` (it described the old fit).
- *
- * What does NOT trigger it: name, notes, category, status, group membership,
- * `scatterXSensor`, the old export-only `runningStatus` (old files only) — none of them is in
- * `computeTrainFingerprint`. SET POINTS are not either, but changing them takes
- * the third road described on `applyIncompleteRule` (Complete -> Incomplete,
- * still trained, everything else kept).
- * SCORING periods are not in it either; a
- * change of ONLY them takes the second road described on `applyIncompleteRule`
- * (Complete -> Incomplete + `testsChangedAt`, but still trained).
- *
- * This is a pure `(prev, next) => next` step meant to run INSIDE a workspace
- * write (the updater passed to `updateWorkspaceData`), against the state the
- * write read from disk (`prev`) and the state it is about to save (`next`):
- * `updateWorkspaceData` applies it to every write, and the Build Model window's
- * own writers apply it too (idempotent — a second pass sees no change).
- */
+/** A training-input change (periods, running condition incl. the workspace's for Workspace-mode models, predictors, Y/X/criteria sensors, clusters/ranges, stiffness) sets a Complete model to `status: false` in the same write; set points, `lastTrainedAt` and `trainedFingerprint` are kept, `healthVerdict` is dropped. Pure `(prev, next) => next`, run inside a write against disk state; idempotent. Set-point and scoring-only changes take other roads: see `applyIncompleteRule`. */
 
-/**
- * The inputs fingerprint used to DETECT a change between two writes. It is
- * `computeTrainFingerprint` run on a model with the defaults a draft would fill
- * in already applied (a missing stiffness / cluster count / default ranges),
- * so a write that merely materialises those defaults — e.g. saving a new model
- * name from the Workbench, whose draft re-derives them — is not mistaken for a
- * real change. The persisted `trainedFingerprint` is never produced from this.
- */
+/** Fingerprint to detect changes between writes: `computeTrainFingerprint` with draft defaults applied, so materialising defaults is not a change. Never stored. */
 function changeFingerprint(model: FailureModel, fg: Partial<FailureGroupStateSlice>): string {
     // Hand-written / very old records may lack list fields; the fingerprint
     // needs them to be arrays.
@@ -61,26 +24,15 @@ function changeFingerprint(model: FailureModel, fg: Partial<FailureGroupStateSli
     return computeTrainFingerprint(m, fg);
 }
 
-/** The slice as `computeTrainFingerprint` should see it: legacy single time
- *  ranges already turned into periods (the same step the Workbench runs on
- *  open), so the one-time migration write is not read as an edit. */
+/** Slice with legacy time ranges turned into periods, so the one-time migration write isn't read as an edit. */
 function normalizedSlice(state: WorkspaceState): FailureGroupStateSlice | undefined {
     return migratePeriods(state).failureGroupState;
 }
 
-/** The slice shape the two comparisons below read: the models plus whatever
- *  running-condition fields are there (a missing one reads as its default). */
+/** Slice shape the comparisons read; missing running-condition fields read as defaults. */
 type RuleSlice = Partial<FailureGroupStateSlice> & { models: FailureModel[] };
 
-/**
- * THE comparison behind "training inputs changed": ids of the models in
- * `nextFg` whose `changeFingerprint` differs from the same model in `prevFg`
- * (models that only exist on one side are ignored — nothing to compare).
- * Slice-level so that a caller that only PREDICTS a write — the
- * Running-condition settings' "Applying sets N models back to Incomplete"
- * line (`runningConditionImpact`) — runs the very rule the write will run,
- * not a copy of it.
- */
+/** Ids of models in `nextFg` whose `changeFingerprint` differs from `prevFg`; models on one side only are ignored. Slice-level so callers that predict a write run the same rule. */
 export function changedTrainInputIds(prevFg: RuleSlice, nextFg: RuleSlice): string[] {
     const before = new Map(prevFg.models.map(m => [m.id, m]));
     const changed: string[] = [];
@@ -92,12 +44,7 @@ export function changedTrainInputIds(prevFg: RuleSlice, nextFg: RuleSlice): stri
     return changed;
 }
 
-/**
- * THE comparison behind "scoring periods changed": ids of the models in
- * `nextFg` whose EFFECTIVE scoring periods (`testPeriodsKey` — start / end in
- * list order, nothing else) differ from the same model in `prevFg`. Slice-level
- * for the same reason as `changedTrainInputIds`.
- */
+/** Ids of models whose effective scoring periods (`testPeriodsKey`) differ; slice-level like `changedTrainInputIds`. */
 export function changedScoringPeriodIds(prevFg: RuleSlice, nextFg: RuleSlice): string[] {
     const before = new Map(prevFg.models.map(m => [m.id, m]));
     const changed: string[] = [];
@@ -111,13 +58,7 @@ export function changedScoringPeriodIds(prevFg: RuleSlice, nextFg: RuleSlice): s
     return changed;
 }
 
-/**
- * Ids of the models that are Complete on BOTH sides and whose saved set points
- * differ between `prev` and `next` (`sameHealthSetPoints`: the entered numbers,
- * master snapshots ignored). A model that this write itself takes from
- * Incomplete to Complete (Mark complete's write, which stores the set points it
- * validated) is not in it. Models only on one side are ignored.
- */
+/** Ids of models Complete on both sides whose set points differ (master snapshots ignored); a write that completes a model is not included. */
 export function modelsWithChangedSetPoints(prev: WorkspaceState, next: WorkspaceState): string[] {
     const prevFg = prev.failureGroupState;
     const nextFg = next.failureGroupState;
@@ -132,8 +73,7 @@ export function modelsWithChangedSetPoints(prev: WorkspaceState, next: Workspace
     return changed;
 }
 
-/** Ids of the models in `next` whose training inputs differ from `prev`
- *  (models that only exist on one side are ignored — nothing to compare). */
+/** Ids of models in `next` whose training inputs differ from `prev`; one-sided models are ignored. */
 export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceState): string[] {
     const prevFg = normalizedSlice(prev);
     const nextFg = normalizedSlice(next);
@@ -141,14 +81,7 @@ export function modelsWithChangedInputs(prev: WorkspaceState, next: WorkspaceSta
     return changedTrainInputIds(prevFg, nextFg);
 }
 
-/**
- * Ids of the models in `next` whose EFFECTIVE SCORING periods differ from
- * `prev` (workspace list for a Workspace-mode model, `customTestPeriods` for a
- * Custom one). Only each period's start / end counts (`testPeriodsKey`): ids
- * and the legacy `label` / `eventTime` / `fromHighlight` keys of an old
- * workspace file are ignored, so a period that merely loses those
- * keys in a write is not a change. Models only on one side are ignored.
- */
+/** Ids of models whose effective SCORING periods differ (only start/end count); one-sided models are ignored. */
 export function modelsWithChangedTests(prev: WorkspaceState, next: WorkspaceState): string[] {
     const prevFg = prev.failureGroupState;
     const nextFg = next.failureGroupState;
@@ -161,53 +94,11 @@ export interface IncompleteRuleOptions {
     now?: string;
 }
 
-/**
- * `next`, with every Complete model whose training inputs changed between
- * `prev` and `next` set back to `status: false`. Returns `next` itself (same
- * reference) when nothing needs demoting, so callers can cheaply tell.
- *
- * Train periods vs scoring periods:
- *  - a TRAINING-input change (incl. train periods): Incomplete, and the
- *    fingerprint mismatch asks for a re-train; it also
- *    drops any `testsChangedAt` stamp (the train rule wins — the model needs a
- *    re-train, not just Mark complete again);
- *  - a change of ONLY the model's effective SCORING periods (a start or an
- *    end, a period added or removed) keeps it trained (they are not in
- *    `computeTrainFingerprint`, so it stays fresh) but a Complete model goes
- *    back to `status: false` and gets `testsChangedAt` in the SAME write — the
- *    scoring results in its saved files no longer match. Its
- *    `healthVerdict` is kept (the set points still describe the same fit).
- *    Not-Complete models are left alone (nothing to mark again);
- *  - a change of ONLY the saved SET POINTS of a model that is Complete before
- *    AND after the write (`modelsWithChangedSetPoints`) sets it back to
- *    `status: false` in the same write — the Complete it had was for the old
- *    numbers. It stays trained; `healthVerdict` and everything else are kept
- *    (the writer that changed the numbers decides about the verdict). A write
- *    that itself completes the model (status false -> true, Mark complete)
- *    is not affected. Whichever writer changes the numbers, the rule applies.
- * Idempotent: a second pass finds no Complete model to demote.
- *
- * Special-sensor recipes (editing a special sensor's formula makes the models
- * trained on it stale).
- * Two steps run first, in the same write:
- *  1. `stampTrainedFormulas`: a model whose train record this write changes
- *     (a Train) gets `trainedFormulas` -- the signatures of the special
- *     sensors it trains on, from the recipes on disk in this write;
- *  2. `applyRecipeRule`: a model that trains on a special sensor whose recipe
- *     (or the recipe of anything it is built on) differs between `prev` and
- *     `next`, or whose `trainedFormulas` no longer match `next`'s recipes, goes
- *     back to Incomplete AND out of date (`demoteModelsForRecipeChange`: like
- *     a repair -- the fingerprint cannot see a recipe, so it is dropped).
- * A model with no `trainedFormulas` snapshot is only affected
- * by a real recipe change in a write -- never by the upgrade itself.
- */
+/** Returns `next` with every Complete model whose inputs changed set to `status: false` (same reference if none); idempotent. Roads: training input -> Incomplete + stale, drops `testsChangedAt`; scoring-only -> Incomplete + `testsChangedAt`, stays trained; set points only (Complete before and after) -> Incomplete, stays trained; special-sensor recipe change -> Incomplete and stale. */
 export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceState, opts: IncompleteRuleOptions = {}): WorkspaceState {
     const next = applyRecipeRule(prev, stampTrainedFormulas(prev, prevNext));
     const fg = next.failureGroupState;
-    // A model also needs the pass when it only carries a saved set-point verdict:
-    // that verdict describes the OLD fit and is dropped with the change
-    // even though a not-yet-Complete model has no status to demote.
-    // Same for a leftover `testsChangedAt` stamp: a training-input change drops it.
+    // A model carrying only a saved verdict or `testsChangedAt` also needs the pass: a training-input change drops them.
     if (!fg || !Array.isArray(fg.models) || !fg.models.some(m => m.status || m.healthVerdict !== undefined || m.testsChangedAt !== undefined)) return next;
     let changed: Set<string>;
     let testsChanged: Set<string>;
@@ -230,9 +121,7 @@ export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceSta
         if (changed.has(m.id)) {
             if (!m.status && m.healthVerdict === undefined && m.testsChangedAt === undefined) return m;
             demoted = true;
-            // The train rule wins over a "tests only" change: the model now needs a
-            // re-train, so a `testsChangedAt` stamp (from this write or an earlier one)
-            // is dropped — the "Mark complete again" banners must not outlive it.
+            // The train rule wins over a tests-only change: the model needs a re-train, so drop `testsChangedAt`.
             const { healthVerdict: dropped, testsChangedAt: droppedStamp, ...rest } = m;
             void dropped;
             void droppedStamp;
@@ -252,8 +141,7 @@ export function applyIncompleteRule(prev: WorkspaceState, prevNext: WorkspaceSta
     return demoted ? withFailureGroupState(next, { models }) : next;
 }
 
-/** Do two recipe lists differ in CONTENT? (A write that re-built the same list
- *  is a new array, not a change.) Missing lists read as empty. */
+/** Do two recipe lists differ in content (a rebuilt identical list is not a change)? Missing = empty. */
 export function recipesDiffer(
     a: WorkspaceState['specialSensorRecipes'],
     b: WorkspaceState['specialSensorRecipes'],

@@ -8,40 +8,7 @@ import { PeriodCoverageBar } from './RunningConditionParts';
 import { SensorInline } from '../sensor/SensorLabel';
 import { sensorTitle, useSensorLookup } from '../sensor/sensorInfo';
 
-/*
- * Build Model window: the Step-1 running-condition card. Presentation only —
- * the persisted state, the build gate and the settings modal all stay in
- * BuildModelWindow. The "Which time" part is "Train" (required) + a second
- * row for the periods the model is scored on — "Scoring" (S1, S2 …, start →
- * end only, no label and no event time) — and the strip draws train on the
- * top lane, scoring on the bottom lane.
- *
- * Once the running condition is SET the card is ONE line of workspace
- * context — ✓ · Train n periods + span · Scoring n periods · When running: n
- * conditions · Details · Edit. "Details" unfolds the full grid in
- * place — that is where the period strip is; the line itself carries none
- * (user decision 2026-10-11: it is visible on opening anyway). Unset and invalid stay loud cards with their own
- * button, marked "!" (there is no step number).
- *
- * NO count of data rows is shown anywhere on this card (user decision
- * 2026-10-14: the Build Model window never says how many rows are used — no
- * "N rows · x%", no "Counting rows…", no share meter; do not add them back).
- * Rust's `count_period_rows` still runs for the PERSISTED condition, but only
- * the window's gate reads it; the card gets its verdict as `noRows`.
- *
- * Guards against "no data to train on". The card shows the PERSISTED state,
- * so a period outside the loaded data is never "invalid" here — the user did
- * not just pick it (an old workspace, or the data file changed):
- *  - a saved train / scoring period entirely outside the data is an AMBER
- *    warning — "P2 is outside the data (…) — it is not used", "S1 is outside
- *    the data — nothing is scored there" — on the line and on its chip; the
- *    card stays "set" and nothing is blocked;
- *  - truly nothing to train on turns the card red — "Nothing to train on": NO
- *    train period is inside the data, or the settled count holds no running
- *    row (`noRows`). The card only shows it; the window blocks Train (and only
- *    Train — trained models keep their charts).
- * With no train period at all the card says "Add a train period" (amber).
- */
+/* Build Model Step-1 running-condition card; presentation only (state, gate and modal stay in BuildModelWindow). Set = one line (train, scoring, condition, Details, Edit); unset/invalid are loud cards. No data-row counts here; only the window's gate reads `count_period_rows` (as `noRows`). Periods outside the data are amber warnings; red "Nothing to train on" only when no train period is inside the data or `noRows`. */
 
 /** unset = nothing configured yet · invalid = configured but a period is broken · set = good to go. */
 export type RcStepState = 'set' | 'unset' | 'invalid';
@@ -60,12 +27,9 @@ interface RunningConditionCardProps {
     onOpen: () => void;
     /** The PERSISTED workspace scoring periods. */
     testPeriods?: TestPeriod[];
-    /** The count of the persisted condition is settled and its train periods hold
-     *  no running row (`countedNoTrainRows`): the red "nothing to train on" state.
-     *  (The card adds the other case itself: no train period inside the data.) */
+    /** The settled count of the persisted condition has no running row in the train periods: red 'nothing to train on'. The card adds the no-train-period-inside-data case itself. */
     noRows?: boolean;
-    /** Why an OLD project must set the running condition again (the one-time
-     *  conversion found nothing to keep): replaces the Not-set card's text. */
+    /** Why an old project must set the running condition again; replaces the Not-set card's text. */
     why?: ReactNode;
     /** "Use all data": Train and the Health score use every row of the periods. */
     allData?: boolean;
@@ -83,12 +47,7 @@ function noRowsTitle(allOutside: boolean, hasCondition: boolean, bounds: DataBou
         : 'No rows inside the train periods — widen a train period';
 }
 
-/** Train period chips; a broken period is drawn red, a saved one that lies
- *  entirely outside the loaded data amber (a warning — it is simply not used).
- *  No train period at all is an AMBER "add one" chip — training is blocked until
- *  one exists (rule 1), but nothing is wrong yet, it is a step still to do (same
- *  amber as the modal's "Add a train period" Apply hint; red is kept for invalid
- *  input). */
+/** Train chips: broken = red; saved but outside the data = amber (unused); none = amber 'add one' (training is blocked, nothing wrong yet). */
 function PeriodChips({ periods, bounds }: { periods: TimePeriod[]; bounds?: DataBounds | null }) {
     // The SAVED list judged as a whole: outside the data = a warning, never invalid.
     const status = validatePeriods(periods, bounds, periods);
@@ -117,9 +76,7 @@ function PeriodChips({ periods, bounds }: { periods: TimePeriod[]; bounds?: Data
     );
 }
 
-/** Scoring period chips: "S1 · dates" — start → end only (a legacy label /
- *  event time on an old workspace's period is never shown). None yet = an amber
- *  chip (Mark complete needs one, Train does not). */
+/** Scoring chips 'S1 · dates' (start → end only). None = amber chip (Mark complete needs one, Train doesn't). */
 function ScoringChips({ tests, train, bounds }: { tests: TestPeriod[]; train: TimePeriod[]; bounds?: DataBounds | null }) {
     if (tests.length === 0) {
         return <span className="rcc-chip rcc-chip--warn" data-testid="rc-card-test-chip">No scoring period — needed before Mark complete</span>;
@@ -169,9 +126,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
     const lookup = useSensorLookup();
     // Set = one line; "Details" unfolds the full grid (toggling re-renders this card only).
     const [detailsOpen, setDetailsOpen] = useState(false);
-    // "Details" / "Hide details" is ONE control to the keyboard: the two views are
-    // different trees, so the button is a new element after each toggle — the focus
-    // is put back on it (it would otherwise drop to <body> on every toggle).
+    // Details/Hide details is a new element after each toggle; restore focus or it drops to <body>.
     const detailsBtnRef = useRef<HTMLButtonElement>(null);
     const refocusDetails = useRef(false);
     useEffect(() => {
@@ -199,8 +154,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
     }
 
     if (state === 'invalid') {
-        // The same rule the window's gate reads: the plain date faults. (A saved
-        // period outside the loaded data is a warning on its chip, never this state.)
+        // Same rule as the window's gate: only plain date faults; a saved period outside the data is a chip warning, not this state.
         const status = validatePeriods(periods);
         const bad = status.findIndex(s => s.invalid);
         return (
@@ -222,8 +176,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
     const noTrain = periods.length === 0;
     // Saved periods that lie entirely outside the loaded data: amber, never a block.
     const outsideNotes = savedOutsideDataNotes(periods, testPeriods, bounds);
-    // Truly nothing to train on: no train period is inside the data (known from the
-    // dates alone), or the settled count holds no running row.
+    // Nothing to train on: no train period inside the data (known from dates alone), or the settled count has no running row.
     const allOutside = allPeriodsOutsideData(periods, bounds);
     const noRows = noRowsCounted || allOutside;
     const noRowsTip = noRowsTitle(allOutside, complete.length > 0, bounds);
@@ -265,8 +218,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                                 {nCond === 0 ? <span className="rcc-line-warn">Machine running: not set</span> : <>Running when <SensorInline tag={complete[0].sensor} size="sm" /> is above <span className="rcc-rest">{conditionChipParts(complete[0], getDesc, getUnit).rest.replace(/^> /, '')}</span></>}
                             </span>
                         )}
-                    {/* Only the two warnings — never a count of rows. Empty (hidden by
-                        `.rcc-line-item:empty`) when there is nothing to warn about. */}
+                    {/* Only the two warnings, never a row count; empty (hidden by `.rcc-line-item:empty`) otherwise. */}
                     <span className="rcc-line-item" data-testid="rc-card-use" aria-live="polite">
                         {noTrain
                             ? <span className="rcc-line-warn" data-testid="rc-card-no-train">{CARD_NO_TRAIN_TEXT}</span>
@@ -276,8 +228,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                     </span>
                     {outsideLine}
                 </div>
-                {/* The SAME group, same buttons, in the same place in both views: Details / Hide
-                    details, then Edit — so the toggle stays under the pointer. */}
+                {/* Same buttons in the same place in both views, so the toggle stays under the pointer. */}
                 <span className="rcc-acts">
                     <button type="button" ref={detailsBtnRef} className="rcx-btn rcx-btn--sm rcc-line-more" data-testid="rc-card-details" aria-expanded={false} onClick={() => toggleDetails(true)}>
                         Details <ChevronDown size={12} aria-hidden="true" />
@@ -333,9 +284,7 @@ export function RunningConditionCard({ state, periods, filters, headers, getDesc
                     : noRows
                         ? <span className="rcc-use-note rcc-line-bad" role="alert" data-testid="rc-card-no-rows" title={noRowsTip}>{CARD_NO_ROWS_TEXT}</span>
                         : null}
-                {/* Small period strip. PERSISTED periods only —
-                    the settings modal's draft never reaches this card. Hidden while the
-                    dataset bounds are unknown. */}
+                {/* Mini period strip for PERSISTED periods only (not the modal's draft); hidden while dataset bounds are unknown. */}
                 <PeriodCoverageBar periods={periods} bounds={bounds} mini tests={testPeriods} />
             </div>
             <span className="rcc-acts">

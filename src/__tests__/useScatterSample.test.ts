@@ -34,9 +34,7 @@ afterEach(() => {
 
 describe('useScatterSample', () => {
     it('refetches when only `revision` changes, and never sends it to the backend', async () => {
-        // Same reason as useChartData's own revision: a special sensor's
-        // column can be recomputed under the same name, leaving the query
-        // identical but the data behind it different.
+        // A special sensor's column can be recomputed under the same name: the query is identical but the data differs, hence the revision.
         mockInvoke.mockResolvedValue({ headers: ['A', 'B'], rows: [], total: 0, sampled: 0 });
         const { rerender } = renderHook(
             ({ r }: { r: number }) => useScatterSample(filter, 200_000, true, r),
@@ -78,8 +76,7 @@ describe('useScatterSample', () => {
         const { result } = renderHook(() => useScatterSample(filter, 200_000, true));
         await act(async () => { await vi.runAllTimersAsync(); });
 
-        // Locks the IPC key casing — Tauri matches the Rust param `max_points`
-        // verbatim, so a camelCase key here would silently break at runtime.
+        // Locks IPC key casing: Tauri matches Rust param `max_points` verbatim.
         expect(mockInvoke).toHaveBeenCalledWith('get_scatter_sample', {
             filter,
             max_points: 200_000,

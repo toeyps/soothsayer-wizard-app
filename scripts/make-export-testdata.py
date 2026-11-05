@@ -1,5 +1,4 @@
-# Generates the Export results test data used by BMW-355.. and workflow WFJ in docs/testing/MANUAL_TEST_PLAN.md.
-# Usage: python scripts/make-export-testdata.py C:\WizardTestData\EXP   (standard library only; scripts/make-all-testdata.py runs it for you)
+# Generates the Export results test data (BMW-355.., WFJ, WFK). Usage: python scripts/make-export-testdata.py C:\WizardTestData\EXP
 #
 # EXP-data.csv  30 days of one pump set, every 10 minutes (2026-01-01 00:00 -> 2026-01-30 23:50), with
 #               - tags that a file name cannot hold as is: "FLOW A" (space), "TEMP/1" (slash), "CON" (Windows
@@ -10,7 +9,6 @@
 # EXP-tags.csv  tag names: CON has NO component; a description with a comma and quotes; a Thai description.
 # EXPECTED.txt  model keys, file names and values each check needs.
 #
-# Added 2026-10-26 for workflow WFK (the files above are unchanged):
 # EXP-numbers.csv / EXP-numbers-tags.csv  10 days (2026-02-01 00:00 -> 2026-02-10 23:50, every 10 minutes) of
 #               numbers that are easy to break: long decimals, negatives, very small (0.0000123 and 0.0000015),
 #               very large (12345678.9), integers, trailing zeros ("1.50"), values written as 1.5E-05 in the source,
@@ -85,15 +83,12 @@ for tag, kind in [('FLOW A', 'R'), ('TEMP/1', 'I'), ('CON', 'I'), ('VIB.X', 'I')
     exp.append(f'  {tag!r:14} {kind} → {key_tag(tag)}-{kind}1   (a 2nd model of the same tag and kind gets …-{kind}2)')
 exp += ['', 'Sensor names in machine_info.json: name = the DESCRIPTION column; "FLOW A" name = Pump flow, "main" line (JSON escapes the quotes).',
         'CON has no component → the confirm step lists it; it is written under component "Uncategorized".']
-# ---------------------------------------------------------------------------
-# WFK: EXP-numbers.csv — numbers that must come out of the export digit for digit
-# ---------------------------------------------------------------------------
+# ---- WFK: EXP-numbers.csv - numbers that must come out of the export digit for digit
 from decimal import Decimal
 import statistics
 
 def csv_text(x):
-    """How the export writes a number: the shortest form that reads back as the same
-    number, plain decimals (never 1e-05), no trailing zeros, no thousands separators."""
+    """The export's number format: shortest form that reads back the same, plain decimals, no trailing zeros."""
     s = format(Decimal(repr(float(x))), 'f')
     return s.rstrip('0').rstrip('.') if '.' in s else s
 
@@ -251,9 +246,7 @@ ve = list(vlast.values())
 exp += ['', 'EXP-data.csv, VIB.X Individual (WFK-5): KW > 50, train period 2026-01-01 00:00 → 2026-01-20 23:50:',
         f'  rows Train counts and rows in VIB.X-I1.csv (repeated instants merged at import, last copy): {len(ve)} · AVERAGE {sig(statistics.mean(ve))} · STDEV.S {sig(statistics.stdev(ve))}']
 
-# ---------------------------------------------------------------------------
-# WFK: EXP-fleet.csv — a bigger machine for a 37-model project
-# ---------------------------------------------------------------------------
+# ---- WFK: EXP-fleet.csv - a bigger machine for a 37-model project
 rf = random.Random(26)
 COMPS = [('MTR', 'Motor M-1', 'Motor'), ('PMP', 'Pump P-1', 'Pump'), ('GBX', 'Gearbox G-1', 'Gearbox'),
          ('BDE', 'Bearing DE', 'Bearing DE'), ('BND', 'Bearing NDE', 'Bearing NDE'), ('CLG', 'Cooling', 'Cooling')]

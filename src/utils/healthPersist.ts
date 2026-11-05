@@ -8,17 +8,7 @@ import { effectiveRunningCondition, getBuildBlockReason, markCompleteBlockReason
 import { testPeriodsKey } from './timePeriods';
 import { computeTrainFingerprint, isModelTrainedFresh } from './trainFingerprint';
 
-/**
- * The writes of the health-score flow. All go through `updateWorkspaceData`
- * (read-modify-write against
- * what is ON DISK, so a stale in-memory mirror can never revert another
- * window's change) and `withFailureGroupState` (never a hand-built slice), and
- * all broadcast `failure-group-state-changed` — carrying the WHOLE slice, with
- * `workspaceId` and `origin` — so the Dashboard's Failure Groups dots update.
- *
- * The caller (a window) applies the returned state to its own copy; the
- * broadcast is skipped by receivers that sent it (`origin`).
- */
+/** Writes of the health-score flow: all via `updateWorkspaceData` (read-modify-write against disk) and `withFailureGroupState`, and all broadcast `failure-group-state-changed` with the whole slice, `workspaceId` and `origin`. */
 
 export type FailureGroupOrigin = 'dashboard' | 'build-model';
 
@@ -46,17 +36,7 @@ function withoutTestsChanged(m: FailureModel): FailureModel {
     return rest;
 }
 
-/**
- * Save the set points the user typed onto the model — on every explicit Save /
- * blur. Writes `healthSetPoints` (plus dropping a saved `healthVerdict` that
- * described the OLD numbers). Different numbers on a Complete model also set
- * it back to Incomplete (`status: false`) in this same write — not done here
- * but by the incomplete rule `updateWorkspaceData` runs on every write
- * (`applyIncompleteRule`, set-point road), so any writer is covered. Never
- * touches `lastTrainedAt` / `trainedFingerprint`, and (set points are not part
- * of the train fingerprint) never makes a model stale. Returns the new
- * workspace state, or `null` when the project file does not exist.
- */
+/** Save the typed set points onto the model (drops a saved `healthVerdict` that described the old numbers). Different numbers on a Complete model make it Incomplete in the same write, via `applyIncompleteRule`. Never touches `lastTrainedAt`/`trainedFingerprint`. Returns the new state, or null if the project file doesn't exist. */
 export async function commitSetPoints(
     workspaceId: string,
     modelId: string,
@@ -68,9 +48,7 @@ export async function commitSetPoints(
         const before = models.find(m => m.id === modelId)?.healthSetPoints;
         const patched = patchModelHealthSetPoints(models, modelId, setPoints);
         return withFailureGroupState(prev, {
-            // The saved verdict described the OLD numbers; it is recomputed (and written
-            // again by `commitHealthVerdict`) once the preview of the new ones lands.
-            // The same numbers (only a snapshot/bookkeeping change) keep it.
+            // The saved verdict described the old numbers; it is recomputed (`commitHealthVerdict`) once the new preview lands. Same numbers keep it.
             models: sameSetPoints(before, setPoints)
                 ? patched
                 : patched.map(m => (m.id === modelId && m.healthVerdict !== undefined ? withoutVerdict(m) : m)),
@@ -80,15 +58,7 @@ export async function commitSetPoints(
     return next;
 }
 
-/**
- * Persist the validation verdict Rust gave for a model's SAVED set points so the
- * Dashboard's Failure Groups dot can show "Fix set point" / "Set points needed"
- * like the Build Model list. Changes `healthVerdict` ONLY.
- * Writes nothing (and does not broadcast) when the model is gone, already has
- * this verdict, or is not trained-and-fresh on disk any more (a verdict of an
- * old fit must not stick to a new one). Returns the new workspace state when
- * something was written, otherwise `null`.
- */
+/** Persist Rust's verdict for a model's saved set points (feeds the Failure Groups dot); changes `healthVerdict` only. No write or broadcast if the model is gone, has this verdict, or isn't trained-and-fresh on disk. Returns the new state or null. */
 export async function commitHealthVerdict(
     workspaceId: string,
     modelId: string,
@@ -110,34 +80,24 @@ export async function commitHealthVerdict(
     return next;
 }
 
-/** How long a window close waits for a running "Mark complete" (export + save)
- *  before it stays open and tells the user (a Relationship export is ~15 s; a
- *  hung sidecar must not make the window impossible to close). A mutable object
- *  so a test can shorten it. */
+/** How long a window close waits for a running Mark complete (a hung sidecar must not block closing). Mutable so a test can shorten it. */
 export const MARK_COMPLETE_CLOSE_WAIT = { ms: 90_000 };
 
 /** Outcome of `persistModelComplete`. */
 export interface PersistCompleteResult {
     /** The state after the write (`null` when the project file does not exist). */
     next: WorkspaceState | null;
-    /** `null` = the model is now Complete. Otherwise why it was NOT marked
-     *  (the gate's reason, or `NOT_TRAINED_BLOCK_REASON`); nothing changed. */
+    /** null = the model is now Complete; otherwise why it was not (gate reason or `NOT_TRAINED_BLOCK_REASON`); nothing changed. */
     reason: string | null;
 }
 
-/** What `persistModelComplete` needs to know about the moment the user clicked, to
- *  detect changes made DURING the export. */
+/** What `persistModelComplete` needs to know about the moment the user clicked, to detect changes made DURING the check. */
 export interface MarkCompleteRace {
     /** The model's `computeTrainFingerprint` at click time. */
     fingerprint: string;
-    /** The model's SAVED set points at click time (`undefined` = none saved). The
-     *  exported set points may differ from these (typed but not committed): only a
-     *  change of what is on disk AFTER the click counts as an edit during the export. */
+    /** The model's saved set points at click time (undefined = none); only a later change on disk counts as an edit during the check. */
     setPointsBefore: HealthSetPoints | undefined;
-    /** `testPeriodsKey` of the model's EFFECTIVE scoring periods at click time.
-     *  Optional: when given, scoring periods edited during the export (the
-     *  files' `validation` block would describe the old ones) keep the model
-     *  Incomplete (`TESTS_CHANGED_DURING_EXPORT_REASON`). */
+    /** `testPeriodsKey` of the effective scoring periods at click time; edited during the check = the model stays Incomplete (`TESTS_CHANGED_DURING_EXPORT_REASON`). */
     testsKey?: string;
 }
 
@@ -150,32 +110,7 @@ export const SET_POINTS_CHANGED_DURING_EXPORT_REASON =
 export const SETTINGS_CHANGED_DURING_EXPORT_REASON =
     "the model's settings changed while it was being checked — re-train, then mark it complete again.";
 
-/**
- * Mark a model Complete and store the validated set points, in ONE write — call
- * it only after `checkModelForComplete` returned `ok: true`. The gate and the
- * "Trained and still fresh" requirement are re-checked against the model as it
- * is on disk INSIDE the write (the user may have changed something in another
- * window since): a model that is no longer fresh stays Incomplete and `reason`
- * says why — it is not reported complete.
- *
- * Two more races of the check (the validating preview can take seconds) are
- * closed here:
- *  - `race.fingerprint` (the model's `computeTrainFingerprint` at click time):
- *    the model on disk must STILL have it, both as its current fingerprint and as
- *    its `trainedFingerprint`. A model that was re-configured AND re-trained during
- *    the check is "fresh" against its NEW settings but was validated against the
- *    OLD ones — it stays Incomplete (`SETTINGS_CHANGED_DURING_EXPORT_REASON`).
- *  - Set points edited and committed while the check ran (what is on disk now
- *    differs from `race.setPointsBefore`, the saved values at click time, and from
- *    the checked ones): the newer values on disk were never validated, so nothing
- *    is written — the model keeps its status and its newer set points (never
- *    reverted to the checked ones), and `reason` is
- *    `SET_POINTS_CHANGED_DURING_EXPORT_REASON`. Complete is only ever set for
- *    the numbers that were actually validated.
- *
- * Writes NO files and no `healthExport` record (since 2026-10-20 Export results
- * is the only writer of the output folder).
- */
+/** Mark a model Complete and store the validated set points in ONE write; call only after `checkModelForComplete` returned ok. Writes no files. Gate and fresh-train are re-checked against disk inside the write; it stays Incomplete if `race.fingerprint` no longer matches or set points changed on disk during the check. */
 export async function persistModelComplete(
     workspaceId: string,
     modelId: string,

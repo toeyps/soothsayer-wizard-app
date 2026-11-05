@@ -39,3 +39,7 @@ Read the diff, then the surrounding code of each hunk (callers and callees) — 
 - Checked and clean: [checklist items with nothing found]
 - Could not check: …
 ```
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

@@ -1,17 +1,5 @@
-//! 2D ellipse fitting for the single-cluster GMM case.
-//!
-//! For `n_components = 1`, sklearn's `GaussianMixture` reduces to:
-//!   - mean = sample mean
-//!   - covariance = sample covariance matrix (ddof=0 in sklearn's empirical
-//!     covariance — we follow the same convention here)
-//!
-//! The major-/minor-axis lengths and rotation angle are recovered via SVD
-//! of the 2×2 covariance matrix:
-//!   `U, s, Vt = svd(cov)`
-//!   `angle_deg = atan2(U[1,0], U[0,0]).to_degrees()`
-//!   `(major_sd, minor_sd) = (sqrt(s[0]), sqrt(s[1]))`
-//!
-//! See `wizard.py::PreviewModel.clustering` for the reference Python.
+//! 2D ellipse fit for the single-cluster case (one GMM component): sample mean and biased (ddof = 0) covariance, as sklearn's GaussianMixture.
+//! Axis lengths and rotation come from SVD of the 2x2 covariance: `angle_deg = atan2(U[1,0], U[0,0])`, sds = sqrt of the singular values.
 
 use nalgebra::{Matrix2, SVD};
 
@@ -27,8 +15,7 @@ pub struct EllipseFit {
     pub angle_deg: f64,
 }
 
-/// Fit a 2D Gaussian (n_components=1, full covariance) to `(xs, ys)` and
-/// return the ellipse parameters. Inputs must have equal, non-zero length.
+/// Fit a 2D Gaussian (one component, full covariance) to `(xs, ys)`; inputs must be equal-length and non-empty.
 pub fn fit_single_cluster_ellipse(xs: &[f64], ys: &[f64]) -> Result<EllipseFit, String> {
     if xs.is_empty() || ys.is_empty() {
         return Err("fit_single_cluster_ellipse: empty input".into());
@@ -45,11 +32,7 @@ pub fn fit_single_cluster_ellipse(xs: &[f64], ys: &[f64]) -> Result<EllipseFit, 
     let mean_x: f64 = xs.iter().sum::<f64>() / n;
     let mean_y: f64 = ys.iter().sum::<f64>() / n;
 
-    // sklearn empirical covariance uses biased estimator (divide by N), which
-    // matches numpy.cov(..., bias=True). wizard.py relies on
-    // sklearn.mixture.GaussianMixture which internally uses the biased
-    // estimator for the covariance attribute. We follow the same convention
-    // for parity.
+    // Biased covariance (divide by N), matching sklearn's GaussianMixture and numpy.cov(bias=True), for parity.
     let mut sxx = 0.0_f64;
     let mut syy = 0.0_f64;
     let mut sxy = 0.0_f64;
@@ -95,11 +78,10 @@ mod tests {
         );
     }
 
-    /// Build an axis-aligned cloud: x ~ var=4, y ~ var=1, mean (10, 20).
-    /// Covariance is diagonal → SVD U should be ±I → angle ≈ 0.
+    /// Axis-aligned cloud, mean (10, 20): the covariance is diagonal, so SVD U is ±I and the angle is about 0.
     #[test]
     fn axis_aligned_gaussian_angle_zero() {
-        // 5 symmetric points: spread of ±2 on x and ±1 on y, mean (10, 20).
+        // 6 symmetric points: spread of ±2 on x and ±1 on y, mean (10, 20).
         let xs = [12.0, 8.0, 12.0, 8.0, 10.0, 10.0];
         let ys = [21.0, 19.0, 19.0, 21.0, 20.0, 20.0];
         let fit = fit_single_cluster_ellipse(&xs, &ys).unwrap();
@@ -122,18 +104,17 @@ mod tests {
     /// Eigenvectors should be (1,1)/√2 and (-1,1)/√2 → angle = ±45°.
     #[test]
     fn rotated_45_gaussian_angle_45() {
-        // 4-point cloud along the y=x axis with small perpendicular spread.
+        // 4-point cloud exactly on the y = x axis (no perpendicular spread).
         let xs = [1.0, -1.0, 2.0, -2.0];
         let ys = [1.0, -1.0, 2.0, -2.0];
         let fit = fit_single_cluster_ellipse(&xs, &ys).unwrap();
         approx(fit.x_center, 0.0, EPS);
         approx(fit.y_center, 0.0, EPS);
         // var_x = var_y = 10/4 = 2.5; cov = 10/4 = 2.5 → eigenvalues 5 and 0.
-        // major_sd = sqrt(5), minor_sd = 0.
+        // x_sd = sqrt(5), y_sd = 0.
         approx(fit.x_sd, 5.0_f64.sqrt(), EPS);
         approx(fit.y_sd, 0.0, EPS);
-        // Angle: principal axis along (1,1)/√2 → atan2(1/√2, 1/√2) = 45°
-        // (or -135° if U flips sign — accept |angle| close to 45 mod 180).
+        // Principal axis along (1,1)/√2 gives 45° (or -135° if U flips sign): accept |angle| near 45 mod 180.
         let a_mod = (fit.angle_deg.rem_euclid(180.0) - 45.0).abs();
         assert!(a_mod < 1e-6, "angle_deg = {}", fit.angle_deg);
     }

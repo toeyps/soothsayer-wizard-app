@@ -1,10 +1,4 @@
-/*
- * Export results — the wire types of `plan_workspace_export`,
- * `export_workspace_results`, `cancel_workspace_export`, `reveal_export_folder`
- * and the `workspace-export-progress` event (Rust: `workspace_export.rs`).
- * snake_case keys, exactly as Rust (de)serializes them. Spec:
- * `docs/specs/WIZARD_OUTPUT_SPEC.md` v1.0; contract fixed 2026-10-20.
- */
+/* Wire types of the export commands and `workspace-export-progress` (Rust: `workspace_export.rs`); snake_case keys as Rust. Spec: `docs/specs/WIZARD_OUTPUT_SPEC.md`. */
 
 import type { ModelCategory, ModelKind } from '../types';
 import type { HealthSetPointsWire, TrainingScopeFilter } from './health';

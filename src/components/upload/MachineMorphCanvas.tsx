@@ -44,22 +44,7 @@ import {
 } from './machineOrbit';
 import { DotRenderer } from './machineDots';
 
-/**
- * Animated machine illustration for the Import "Get started" page (hero) and
- * the setup rail (mini). A cloud of 6,000 edge-weighted dots (mini: 2,400)
- * re-forms into six different machines, drawn through one pixel buffer per
- * frame (`machineDots.ts`); hero also shows two simulated sensor read-outs per
- * machine, can be turned like a 3D model (drag to orbit, double-click to
- * reset — `machineOrbit.ts`), and lets the user step to another machine with
- * the ‹ › buttons or the dots. Canvas 2D only, no dependencies.
- *
- * Reduced motion: no auto-spin, no machine cycle, no glide — one still frame
- * (the trending sensor already "● ABNORMAL"), redrawn only while the user drags,
- * picks another machine (it switches at once, no dissolve), or when the canvas
- * is resized / moved to a screen with another pixel ratio.
- * The loop pauses while the document is hidden. The mini variant never takes
- * pointer input.
- */
+/** Animated machine illustration (Import hero, setup rail mini): dots re-form into six machines (`machineDots.ts`). Hero has read-outs, drag-to-orbit and machine stepping; mini takes no pointer input. Reduced motion: one still frame, redrawn on drag, machine change or resize. The loop pauses while hidden. */
 
 export interface MachineMorphCanvasProps {
   /** `hero` = full panel with labels + bottom bar + orbit drag (default); `mini` = small, faint, no text, no drag. */
@@ -207,9 +192,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       const A = shapes[idx];
       const hs = hist[idx];
       if (histIdx !== idx) {
-        // Fresh baseline each time a machine forms, so a previous cycle's
-        // drifted value does not flash a stale ABNORMAL. The reduced-motion
-        // still frame instead shows the drift already happened.
+        // Fresh baseline when a machine forms so earlier drift doesn't flash a stale ABNORMAL; reduced motion shows the drift already happened.
         histIdx = idx;
         A.sensors.forEach((s, k) => {
           hs[k] = still ? stillHistory(s) : initialHistory(s);
@@ -255,7 +238,6 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(lx, ly);
         ctx.stroke();
-        // card
         ctx.fillStyle = LABEL_BG;
         ctx.strokeStyle = alert ? 'rgba(255,190,80,0.6)' : 'rgba(255,255,255,0.12)';
         ctx.beginPath();
@@ -281,7 +263,6 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
         ctx.fillStyle = INK_MUTED;
         ctx.font = `500 11px ${FONT_SANS}`;
         ctx.fillText(s.unit, b.x + 15 + vw, b.y + 47);
-        // sparkline
         const sx = b.x + SPARK_X;
         const sy = b.y + 28;
         const sh = 22;
@@ -388,7 +369,6 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       }
     };
 
-    /* ---------------- ‹ › buttons and dots (hero only) ---------------- */
     /** The machine the cloud is showing, or already dissolving into. */
     const heading = () => (clock.t >= HOLD_SECONDS ? nextIdx() : clock.idx);
     /** The machine the name chip shows (the nearer end of a dissolve). */
@@ -415,7 +395,6 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
     const stepBy = (delta: number) => goTo((target !== null && clock.t >= HOLD_SECONDS ? target : shown()) + delta);
     if (!mini) navRef.current = { go: goTo, step: stepBy };
 
-    /* ---------------- orbit drag (hero only) ---------------- */
     let drag: DragState | null = null;
     let dragPointer: number | null = null;
     /** True when `setPointerCapture` took: then losing capture means the drag is over. */
@@ -427,11 +406,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
         /* already released */
       }
     };
-    /**
-     * End the active drag (idempotent). `lost` = the release never reached us
-     * (capture taken away, e.g. Alt+Tab with the button held): end without a
-     * glide, since the pointer's last speed is stale.
-     */
+    /** End the active drag (idempotent). `lost` = the release never arrived (capture taken away): end without a glide. */
     const finishDrag = (lost: boolean) => {
       if (!drag || dragPointer === null) return;
       const id = dragPointer;
@@ -446,8 +421,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
     const onPointerDown = (e: PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       if (drag && dragPointer !== null) {
-        // A press from the pointer we think is still held, or while our capture
-        // is gone, means its release was lost: drop that stale drag first.
+        // A press from the pointer we think is held, or after capture is gone, means its release was lost: drop that stale drag first.
         const stale = e.pointerId === dragPointer || (captured && !canvas.hasPointerCapture?.(dragPointer));
         if (!stale) return; // one pointer turns the view; no pinch / zoom
         finishDrag(true);
@@ -496,9 +470,7 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
       canvas.addEventListener('dblclick', onDoubleClick);
     }
 
-    /* ------- reduced motion: refit the still frame on a pixel-ratio change ------- */
-    // (The animated loop checks devicePixelRatio every frame; the still frame has
-    // no loop, and a ResizeObserver does not fire when only the ratio changes.)
+    // The animated loop checks devicePixelRatio each frame; the still frame has no loop and ResizeObserver misses ratio-only changes.
     let dprMq: MediaQueryList | null = null;
     const onDprChange = () => {
       watchDpr();

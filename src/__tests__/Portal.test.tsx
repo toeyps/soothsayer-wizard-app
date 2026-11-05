@@ -4,11 +4,7 @@ import Portal from '../components/Portal';
 
 afterEach(() => {
     cleanup();
-    // Portal's shared container is appended straight to `document.body` and
-    // outlives the component that created it (by design -- see Portal.tsx),
-    // so each test must remove it itself or a later test's assertions about
-    // "is there exactly one container" would see a stale one from a
-    // previous test.
+    // Portal's shared container outlives its component; each test removes it so 'exactly one container' checks stay clean.
     document.getElementById('wizard-portal-root')?.remove();
 });
 
@@ -56,16 +52,12 @@ describe('Portal', () => {
         unmount();
 
         expect(document.querySelector('[data-testid="c"]')).toBeNull();
-        // The shared container itself is not torn down just because one
-        // consumer unmounted -- other Portal-using components may still be
-        // relying on it.
+        // The shared container stays when one consumer unmounts; others may use it.
         expect(document.getElementById('wizard-portal-root')).not.toBeNull();
     });
 
     it('renders nothing (no portal root, no children) before the container is ready and on an empty children render', () => {
-        // Rendering with no children still produces a container once mounted
-        // (effects always run), but should not throw and should leave the
-        // call site empty.
+        // No children still creates the container once mounted, without throwing.
         const { container } = render(<Portal>{null}</Portal>);
         expect(container.firstChild).toBeNull();
         expect(document.getElementById('wizard-portal-root')).not.toBeNull();

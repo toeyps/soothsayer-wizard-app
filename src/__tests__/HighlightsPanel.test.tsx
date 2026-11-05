@@ -14,8 +14,7 @@ import HighlightsPanel from '../components/dashboard/HighlightsPanel';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
 import { findPickerRow, openPickerSurface, pickSingle, rowTag } from './helpers/sensorPicker';
 
-// Colours are picked with the shared ColourPicker (the swatch is
-// the button; a palette pick applies immediately). Its own behaviour is in ColourPicker.test.tsx.
+// Colours use the shared ColourPicker (the swatch is the button; a palette pick applies at once).
 const swatch = (name: RegExp | string) => screen.getByRole('button', { name });
 const paletteSwatch = (hex: string) => document.querySelector(`.cp-pop .cp-sw[data-colour="${hex}"]`) as HTMLElement;
 const colourPopoverOpen = () => document.querySelector('.cp-pop') !== null;
@@ -35,9 +34,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof HighlightsPane
         onToggleValueHighlightRange: vi.fn(),
         onRemoveValueHighlightRange: vi.fn(),
         onRecolorValueHighlightRange: vi.fn(),
-        // Default to Scatter so the group applies (no compat banner) --
-        // matches every existing test's assumption. The banner tests below
-        // override this explicitly.
+        // Default to Scatter so the group applies (no compat banner); banner tests override it.
         chartType: 'scatter' as const,
         ...overrides,
     };
@@ -84,7 +81,6 @@ describe('HighlightsPanel', () => {
             expect((screen.getByLabelText('2025-03-10') as HTMLButtonElement).disabled).toBe(false);
         });
 
-        // One date format in the whole app (2026-10-12): the chip used to read "3/14 21:25 → 3/15 08:00".
         it('a highlight chip shows its range in the one date format: full date + time on both sides, 24 h, no seconds', () => {
             const hl = (id: string, start: string, end: string): TimeHighlight => ({ id, start, end, label: id, color: '#ff0000', enabled: true });
             render(<HighlightsPanel {...makeProps({ timeHighlights: [
@@ -151,19 +147,7 @@ describe('HighlightsPanel', () => {
             expect(onRecolorTimeHighlight).toHaveBeenCalledWith('h1', '#8b5cf6');
         });
 
-        // Visual refresh: this popover now renders through
-        // `AnchoredPopover`/`Portal` (escapes this panel's own scrolling,
-        // same reasoning as every other popover in the visual-refresh
-        // spec) instead of expanding inline, flexbox-aligned, below the
-        // swatch. `AnchoredPopover` is left-aligned to its anchor by
-        // default (no `width` prop passed here) — i.e. its `left` lines up
-        // with the swatch's own left edge, preserving the original
-        // regression fix's intent ("left-aligned, under the swatch", not
-        // right-aligned and disconnected from a left-side swatch).
-        // `AnchoredPopover.test.tsx` covers the positioning arithmetic
-        // itself in detail; this just pins that HighlightsPanel calls it
-        // the left-aligned way, not the right-aligned (`width`-bearing) way
-        // SensorSelection/Dashboard use for their right-side icon buttons.
+        // The popover renders through `AnchoredPopover`/`Portal`, left-aligned to its anchor (no `width` prop); positioning is tested in AnchoredPopover.test.tsx.
         it('opens the ColorPlatePicker left-aligned, under the swatch button that triggers it (regression: it opened right-aligned, disconnected from the left-side swatch)', () => {
             const timeHighlights: TimeHighlight[] = [
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },
@@ -173,9 +157,7 @@ describe('HighlightsPanel', () => {
             fireEvent.click(swatch('Highlight colour: Startup'));
             const popover = document.querySelector('.cp-pop')!.closest('.sensor-popover') as HTMLElement;
             expect(popover).toBeTruthy();
-            // Left-aligned to the (zeroed, in jsdom) anchor rect's own left
-            // edge — NOT right-aligned-and-clamped (which `width`-bearing
-            // popovers compute as `max(8, right - width)`, e.g. "8px").
+            // Left-aligned to the anchor's left edge (0 in jsdom), not right-aligned and clamped.
             expect(popover.style.left).toBe('0px');
         });
 
@@ -297,19 +279,7 @@ describe('HighlightsPanel', () => {
             expect(screen.getByText(/Not shown on/).textContent).toContain('Pair Plot');
         });
 
-        // jsdom does not implement the HTML spec's "a form control is
-        // disabled if an ancestor <fieldset disabled> exists" cascade --
-        // confirmed by reading jsdom's own HTMLFieldSetElement/
-        // HTMLInputElement source, which contains no such check. Real
-        // browsers (including the WebView2/Chromium this app actually
-        // ships on) implement this correctly per spec, so production
-        // behaviour is fine -- but a descendant `<input>.disabled` check
-        // would read `false` here regardless of whether the component is
-        // correct, making it a false-negative-proof, not a real one. These
-        // tests instead assert on the `disabled` property of the
-        // `<fieldset>` element itself, which jsdom DOES reflect correctly
-        // (plain attribute reflection, not cascading) -- that's the actual
-        // piece of logic this component is responsible for.
+        // jsdom doesn't cascade `<fieldset disabled>` to inputs, so assert on the fieldset's own `disabled`.
         it('the fieldset is disabled when the chart on screen is Pair Plot', () => {
             render(<HighlightsPanel {...makeProps({ chartType: 'pair' })} />);
             const fieldset = document.querySelector('fieldset');
@@ -357,11 +327,7 @@ describe('HighlightsPanel', () => {
             expect(screen.queryByDisplayValue('Startup')).toBeNull();
         });
 
-        // The "By time" column never becomes disabled on a Line <-> Scatter
-        // switch (only Pair Plot disables it), but Scatter inserts/removes
-        // its own inline note above the chip list, shifting the swatch's
-        // on-screen position. So the open popover / rename draft is cleared
-        // on ANY chartType change, not only when the column becomes disabled.
+        // Scatter shifts the swatch (a note appears/disappears), so the open popover/rename draft is cleared on ANY chartType change.
         it('closes an already-open colour picker on a Line -> Scatter switch too, even though the column never becomes disabled', () => {
             const timeHighlights: TimeHighlight[] = [
                 { id: 'h1', start: '2026-01-01T00:00', end: '2026-01-01T01:00', label: 'Startup', color: '#ff0000', enabled: true },

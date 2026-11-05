@@ -1,19 +1,7 @@
 import { expect } from 'vitest';
 import { act, fireEvent, screen, waitFor, type BoundFunctions, type queries } from '@testing-library/react';
 
-/**
- * Drives the Build Model Workbench's Health score page from an integration
- * test: since 3b-2 a model is completed ONLY there
- * ("Mark complete" no longer exists on the Model fit page), so every test that
- * used to click the old footer button goes through these.
- *
- * `q` is the query scope (the default `screen`, or a `within(container)` when two
- * windows are mounted side by side).
- *
- * The mocked `invoke` of the test must answer `compute_health_preview` with
- * `makeSetPointAwarePreview` for the flow to complete (Mark complete writes no
- * files since 2026-10-20 — it only validates).
- */
+/** Drives the Health score page from integration tests; a model is completed only there. `q` is the query scope (screen or within(container)). The test's mocked invoke must answer compute_health_preview with makeSetPointAwarePreview. */
 
 type Q = BoundFunctions<typeof queries>;
 
@@ -27,13 +15,10 @@ const VALID_INPUTS: Record<string, Record<string, string>> = {
     clustering: { 'sp-outer_sd': '5' },
 };
 
-/** Page tab ② "Health score" — the door to the page. It is CLOSED (aria-disabled, still
- *  focusable, its reason in place of the caption) until the model is trained and fresh
- *  (and the gate passes), exactly when the old footer "Mark complete" could be enabled. */
+/** Page tab 2 'Health score': aria-disabled (still focusable, reason shown) until the model is trained, fresh and passes the gate. */
 export const healthPageTab = (q: Q = screen) => q.getByTestId('page-tab-health') as HTMLButtonElement;
 
-/** True while the Health score page cannot be opened. Page tab ② is the ONLY door: the
- *  header's "Next: Health score →" was removed (2026-10-14) — asserted here on every call. */
+/** True while the Health score page can't be opened; tab 2 is the only door (asserts there is no 'Next: Health score' button). */
 export const healthPageClosed = (q: Q = screen): boolean => {
     const closed = healthPageTab(q).getAttribute('aria-disabled') === 'true';
     expect(q.queryByTestId('next-health-score'), 'no "Next: Health score" button in any state').toBeNull();

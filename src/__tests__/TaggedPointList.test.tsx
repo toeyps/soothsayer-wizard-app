@@ -41,8 +41,7 @@ describe('TaggedPointList (per-tag remove, shared by Line and Scatter)', () => {
     });
 });
 
-/** Owns the list state like LineChart/ScatterChart do (the list itself is
- *  presentation only), plus a stand-in for the toolbox's Tag button. */
+/** Owns the list state like LineChart/ScatterChart, plus a stand-in for the toolbox's Tag button. */
 function Harness({ initial }: { initial: TaggedPointListItem[] }) {
     const [list, setList] = useState(initial);
     const tagButtonRef = useRef<HTMLButtonElement>(null);
@@ -71,8 +70,7 @@ describe('TaggedPointList keyboard focus after a remove (the focused row unmount
         btn.focus();
         fireEvent.click(btn);
         expect(screen.queryByRole('button', { name: /B$/ })).toBeNull();
-        // Row C survives the re-render (keyed by id), so it keeps focus. (This
-        // harness doesn't renumber badges — the charts do that themselves.)
+        // Row C survives the re-render (keyed by id) and keeps focus; this harness doesn't renumber badges.
         expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove tag ③ C' }));
     });
 

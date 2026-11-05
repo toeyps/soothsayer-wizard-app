@@ -19,14 +19,7 @@ import {
 } from '../components/upload/machineShapes';
 import { DotRenderer } from '../components/upload/machineDots';
 
-/*
- * Welcome machine art — every machine's rotor train turns (SPEC
- * docs/design/handoff/welcome-machine-rotation/README.md, approved 2026-10-12).
- *
- * A point's `group` = colour (`group & 3`) + PART_STEP × part (`group >> 2`): part 0 is
- * fixed, part k ≥ 1 moves with `shape.parts[k − 1]`. The renderer poses every part once
- * per frame (`poseParts`) and applies that matrix to the part's points before the A→B blend.
- */
+/* Welcome machine art: every machine's rotor train turns. A point's `group` = colour (`group & 3`) + PART_STEP × part (`group >> 2`): part 0 is fixed, part k ≥ 1 moves with `shape.parts[k − 1]`. The renderer poses parts once per frame (`poseParts`) and applies the matrix before the A→B blend. */
 
 const partOf = (g: number) => g >> 2;
 const colourOf = (g: number) => g & 3;
@@ -163,8 +156,7 @@ describe('machine shapes: moving parts', () => {
   });
 
   it('part centres follow the fit: every turning part\'s own dots stay on circles around its (fitted) axis', () => {
-    // If a centre were left in raw space, the dots of the part would not sit around it:
-    // the mean of a rotor's dots, off its axis, must be far smaller than the rotor's radius.
+    // A centre left in raw space puts the dots off it: the mean of a rotor's dots off its axis must be far smaller than the radius.
     for (const sh of shapes) {
       sh.parts.forEach((p, idx) => {
         if (p.kind !== 'turn') return;
@@ -195,7 +187,7 @@ describe('machine shapes: moving parts', () => {
       [[-1.136364, 1.327273, 0.106133], [-0.181818, 0.263636, 0.106133]],
     ];
     shapes.forEach((sh, i) => {
-      expect(sh.sensors).toHaveLength(2); // more callouts were tried and rejected by the user
+      expect(sh.sensors).toHaveLength(2); // two callouts per machine
       sh.sensors.forEach((s, k) => s.p.forEach((val, j) => expect(Math.abs(val - SHIPPED[i][k][j]), `${sh.name} sensor ${k}`).toBeLessThan(1e-5)));
     });
   });

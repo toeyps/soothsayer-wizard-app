@@ -234,8 +234,7 @@ describe('ExportModal — the checklist', () => {
         expect(t).toContain('Machine is running when');
         expect(t).toContain('Generator power');
         expect(t).toContain('is above 1000 kW');
-        // ONE sub-line: it is always the running condition itself (2026-10-26) — no
-        // "first above" / "export only" variants any more.
+        // One sub-line: always the running condition itself.
         expect(t).toContain('From the running condition — the same line used for training.');
         expect(t).not.toMatch(/its one “above” condition|used by the export only|check it/);
     });

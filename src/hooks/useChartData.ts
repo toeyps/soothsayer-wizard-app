@@ -13,15 +13,7 @@ export interface ChartDataQuery {
     sampling: ChartSamplingMethod;
     operation: SensorOperationConfig | null;
     maxPoints: number;
-    /**
-     * Bumped when the data behind an unchanged query has changed underneath
-     * it — today, when a special sensor's recipe is edited and its column is
-     * recomputed in the Rust session. Nothing about the query itself moves in
-     * that case, so without this the chart would keep showing values computed
-     * from the old recipe until something else happened to change.
-     *
-     * It is part of the cache key only; it is never sent to the backend.
-     */
+    /** Bumped when the data behind an unchanged query changed (a special sensor's recipe edit). Part of the cache key only, never sent. */
     revision?: number;
 }
 
@@ -37,17 +29,7 @@ export interface UseChartDataResult {
  *  don't queue several full-dataset passes back-to-back. */
 const DEBOUNCE_MS = 250;
 
-/**
- * Fetch the bounded columnar chart view for the dashboard line chart.
- *
- * The heavy pipeline (dashboard filter → operation transform → hourly
- * aggregation → min/max decimation) runs Rust-side; this hook only ever
- * holds O(maxPoints) values, so selecting millions of rows never
- * duplicates the dataset into the JS heap or blocks the main thread.
- *
- * Debounced and race-guarded like `useScatterSample`: a stale in-flight
- * response can never overwrite a newer one.
- */
+/** Fetches the bounded columnar chart view; filter, transform, aggregation and decimation run Rust-side. Debounced and race-guarded like `useScatterSample`. */
 export function useChartData(query: ChartDataQuery | null): UseChartDataResult {
     const [state, setState] = useState<UseChartDataResult>({
         view: null,
@@ -93,11 +75,7 @@ export function useChartData(query: ChartDataQuery | null): UseChartDataResult {
 
         return () => {
             clearTimeout(timer);
-            // Invalidate the in-flight request so its late resolve is ignored.
-            // exhaustive-deps warns about reading a ref in cleanup because that
-            // advice is written for refs holding DOM nodes; this one is a
-            // monotonic race-guard counter and the cleanup MUST see its live
-            // value — copying it into a local would defeat the whole guard.
+            // Invalidates the in-flight request so a late resolve is ignored; must read the live counter, not a local copy.
             // eslint-disable-next-line react-hooks/exhaustive-deps
             fetchIdRef.current++;
         };

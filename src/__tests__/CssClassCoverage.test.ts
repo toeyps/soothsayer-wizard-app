@@ -1,26 +1,5 @@
 // @vitest-environment node
-/**
- * CSS class coverage guard.
- *
- * jsdom never loads `src/App.css`, so no component test can notice that a
- * class the UI still renders has lost its CSS rule. This
- * file is the static guard that keeps a deletion of "unreferenced" rules (or a typo in a new
- * className) from silently un-styling something.
- *
- * What it checks, all statically over the non-test source in `src/`:
- *  1. Every class token with one of the project's styled prefixes that appears
- *     in a string literal (className strings, template-literal static parts,
- *     ternary branches, helpers in .ts files) has at least one rule in App.css
- *     — except an explicit allow-list of known unstyled hook classes.
- *  2. Every dynamically composed class (`prefix-${x}`) has a CSS family
- *     (some defined class starts with that prefix), and for the finite enums
- *     the code composes from, every member is styled.
- *  3. The classes on the deleted list are referenced nowhere in source.
- *  4. Every `animation` in App.css names a defined @keyframes, and every
- *     `var(--x)` without a fallback names a defined custom property.
- *
- * Keep it fast: plain string scanning, no TS parser.
- */
+/** CSS class coverage guard: jsdom never loads `src/App.css`, so a class that lost its rule goes unnoticed. String scans over non-test `src/`: classes have rules, dynamic `prefix-${x}` families are styled, deleted classes are unreferenced, every `animation` names a defined @keyframes and `var(--x)` without fallback a defined property. */
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
 import { readFileSync, readdirSync } from 'node:fs';
@@ -49,11 +28,7 @@ const STYLED_PREFIXES = [
     'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows
 ];
 
-/**
- * Known class tokens that are rendered but intentionally have no rule of their
- * own (structural hooks / default look of a modifier family). Adding to this
- * list should be a conscious decision — say why.
- */
+/** Class tokens rendered with no rule on purpose (structural hooks / default look of a modifier family). Say why when adding. */
 const ALLOW_UNSTYLED = new Set<string>([
     'fg-panel-widget',                 // FailureGroupsPanel root; layout is inline style, never had a rule
     'scatter-regl-axes',               // inline-styled SVG overlay (ScatterChart)
@@ -102,14 +77,12 @@ const DELETED_IN_PHASE4 = [
     'f4-rolist', 'f4-roline', 'f4-roline--sans', 'f4-roline-d', 'f4-dot--faint', 'bmw-result-stats',
 ] as const;
 
-/** Deleted with the Workbench footer bar (detail pages v2, phase 4b): the status pill and
- *  the sticky footer — the header holds the buttons, a notice line the sentence. */
+/** Deleted with the Workbench footer bar: the status pill and sticky footer. */
 const DELETED_WITH_THE_FOOTER_BAR = [
     'model-status-pill', 'model-status-pill--complete', 'model-status-pill--trained', 'model-status-pill--incomplete',
     'f4-foot', 'wbx-foot',
 ] as const;
 
-// ── helpers ──────────────────────────────────────────────────────────────
 function definedClasses(css: string): Set<string> {
     const out = new Set<string>();
     for (const block of css.split('}')) {
@@ -256,9 +229,7 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         expect([...new Set(missing)]).toEqual([]);
     });
 
-    // Layout rules no component test can see (jsdom lays nothing out).
-    // Real-app report 2026-10-14: with 6 steps the cards of "Compare predictors" were squeezed
-    // into the window's height and every chart ran over the card below it.
+    // Layout rules jsdom cannot see: Compare predictors cards must not be squeezed into the window height, and charts must not overrun the card below.
     it('Compare predictors: a row is as tall as its cards need (the body scrolls), a card never shrinks, and the chart fills its own box', () => {
         expect(CSS).toMatch(/\.pm-submodels-body \{[^}]*grid-auto-rows: max-content;[^}]*\}/);
         const card = /\.pm-submodel-card \{([^}]*)\}/.exec(CSS)![1].replace(/\/\*[\s\S]*?\*\//g, '');
@@ -268,8 +239,6 @@ describe('CSS class coverage (static — jsdom cannot see App.css)', () => {
         expect(CSS).toMatch(/\.pm-submodel-predictors \{[^}]*flex-wrap: wrap;[^}]*\}/);
     });
 
-    // Real-app report 2026-10-14 ("ทำไมสีมันไม่เหมือนกัน"): hovering the left half of Train sensor
-    // lit only that half.
     it('Train sensor split button: pointing at either half lights BOTH halves (one control, one colour)', () => {
         expect(CSS).toMatch(/\.tq-split:has\(\.rcx-btn:hover:not\(:disabled\)\) \.rcx-btn:not\(\.rcx-btn--pri\):not\(:disabled\) \{ border-color: var\(--accent-color\); \}/);
         expect(CSS).toMatch(/\.tq-split:has\(\.rcx-btn--pri:hover:not\(:disabled\)\) \.rcx-btn--pri:not\(:disabled\) \{ background: var\(--accent-hi\); \}/);

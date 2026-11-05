@@ -1,22 +1,8 @@
-/**
- * Reading a model's status and the notice line of the Build Model Workbench in tests.
- *
- * Workbench detail pages v2 (phase 4b) removed the footer bar and its status pill
- * ("Complete" / "Trained" / "Incomplete"). The status is said in words on the kind
- * tab (`tab-words-<modelId>`), and ONE notice line (`wb-notice`) appears at the bottom
- * of the pane only while there is something to fix or wait for.
- *
- * `openTabStatus` reads the OPEN kind tab's words and names the same three states the
- * pill used to, so a test that asked "is this model Complete / Trained / Incomplete?"
- * still asks exactly that — of the words the user now sees.
- */
+/** Reads a model's status and the notice line of the Build Model Workbench in tests. Status is in words on the kind tab (`tab-words-<modelId>`); one notice line (`wb-notice`) shows only while there is something to fix or wait for. */
 
 export type WorkbenchStatus = 'Complete' | 'Trained' | 'Incomplete';
 
-/** "Complete …" -> Complete · "Trained …", "Set points needed …", "Fix set point …" (a
- *  trained, up-to-date model that is not Complete yet) -> Trained · anything else
- *  ("Not trained yet", "Re-train needed", "Training failed", "Fit no longer in memory",
- *  a gate badge such as "Needs condition") -> Incomplete. */
+/** 'Complete …' -> Complete; 'Trained …', 'Set points needed …', 'Fix set point …' -> Trained; anything else -> Incomplete. */
 export const statusFromTabWords = (words: string): WorkbenchStatus =>
     /^Complete( ·|$)/.test(words) ? 'Complete'
         : /^(Trained|Set points needed|Fix set point)( ·|$)/.test(words) ? 'Trained'

@@ -16,53 +16,7 @@ import {
 } from '../../utils/timePeriods';
 import { isCompleteDateInput, overlapDays, settleDateInput } from './periodDisplay';
 
-/*
- * The TRAIN periods list of the Running-condition settings — the workspace
- * modal and a Custom model's own panel use the same rows (spec:
- * docs/design/handoff/workbench-redesign/README.md §5).
- *
- * Semantics: at least one train period is required to train (an empty list
- * does not mean "no time limit" — `getBuildBlock`); a row is kept if it falls in
- * ANY period. A blank start is only allowed on the first period ("Start of
- * data"), a blank end only on the last ("End of data"). Overlap between two
- * train periods is a quiet note with a "Merge into one" fix, NOT a block; a
- * reversed / unparseable period is invalid and blocks Apply / Save.
- *
- * One quiet line per period:
- *
- *   P1  [start] → [end]  81 d · 69 d running  [bin]
- *
- * "81 d" is the calendar span (from the dates); "69 d running" is Rust's
- * per-period count (`usePeriodCounts`, handed in as `counts`) — while a new
- * count is on its way the previous number stays, dimmed. An invalid period gets
- * a thin red left edge, a red date field on the side that is wrong and ONE
- * reason line ("P2 ends before it starts — pick an end after 2026/05/11 00:00").
- *
- * Against the loaded data (`bounds` + `savedPeriods`): a period that
- * is NEW or was CHANGED here and lies ENTIRELY outside the data's time range is
- * invalid like a reversed one — both date fields red and "P1 is outside the
- * data (2025/01/01 00:00 – 2025/12/31 23:50)". One that is exactly as it was SAVED
- * (`savedPeriods`: an old workspace, or the data file changed since) only gets
- * an amber warning — "P2 is outside the data (…) — it is not used" — and blocks
- * nothing. One that is only partly inside gets a quiet amber note ("Only the
- * part inside the data is used (data ends 2025/12/31)"). A period whose settled
- * count holds no running row while the others do gets "no running rows in P2"
- * (amber).
- *
- * Typing a date: a date goes to the parent ON
- * CHANGE as soon as the field reports a complete one (`isCompleteDateInput`),
- * so the timeline, the counts and the modal's impact line follow the edit
- * BEFORE Apply can be pressed. What a change never does:
- *  - commit `''` — a `datetime-local` reports `''` while a segment is missing
- *    or was just cleared; the half-typed field keeps its own text locally and
- *    the parent keeps the last complete date (`onPendingChange` names the row);
- *  - re-order the rows — the list goes up in the order it is shown, so the row
- *    being typed in never moves and the focus never jumps. Sorting happens on
- *    blur / Enter and on the discrete actions (add, remove, merge, open).
- * On blur / Enter a bound that was SET is never left empty by typing: the last
- * committed date comes back (`settleDateInput`). Opening a bound is only the
- * explicit ✕ ("Start of data" / "End of data").
- */
+/* TRAIN periods list of the running-condition settings. At least one is required; a row is kept if in ANY period. Blank start only on the first, blank end only on the last. A NEW or CHANGED period entirely outside the data is invalid; one unchanged from `savedPeriods` only warns. A date goes up only when complete (`isCompleteDateInput`); rows sort on blur/Enter and discrete actions; on blur a set bound reverts to its last date (`settleDateInput`). */
 
 export interface PeriodBounds {
     min: string | null;
@@ -94,9 +48,7 @@ interface DateFieldProps {
     ariaLabel: string;
     side: 'start' | 'end';
     value: string;
-    /** The COMMITTED value is blank -> show the open-ended box. Driven by the
-     *  committed value, not the draft: an unfinished datetime-local reports ''
-     *  while typing and must not swap the input away mid-edit. */
+    /** True when the COMMITTED value is blank (shows the open-ended box); the draft is '' mid-edit. */
     committedBlank: boolean;
     min?: string;
     max?: string;
@@ -154,13 +106,9 @@ interface TimePeriodsEditorProps {
     /** Drawn directly under the period rows, above the Add button (the amber
      *  train-period / highlight overlap line). */
     afterRows?: ReactNode;
-    /** The row whose date is still being typed ("P1"), or null once every field
-     *  holds what the parent has. Called when that changes, and with null on
-     *  unmount. */
+    /** Row whose date is still being typed ('P1'), or null when every field matches the parent; also null on unmount. */
     onPendingChange?: (name: string | null) => void;
-    /** The list as it is SAVED (the persisted workspace periods / the model's own
-     *  saved ones). A period unchanged from it that lies outside the data only
-     *  warns; omitted = every period is new (outside the data = invalid). */
+    /** The SAVED list: an unchanged period outside the data only warns; omitted = all periods are new (outside = invalid). */
     savedPeriods?: PeriodBaseline;
 }
 
@@ -168,9 +116,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
     const [draft, setDraft] = useState<TimePeriod[]>(periods);
     const [flashId, setFlashId] = useState<string | null>(null);
     const propsKey = JSON.stringify(periods);
-    // The list this editor last handed up. When exactly that comes back as props
-    // the local draft is already right — and it may hold a half-typed field the
-    // parent never got, which a reset would wipe.
+    // The list last handed up; when it comes back the draft is already right (a reset would wipe a half-typed field).
     const emittedKey = useRef<string | null>(null);
     useEffect(() => {
         const own = emittedKey.current === propsKey;
@@ -198,8 +144,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
         if (flash) setFlashId(flash);
         emit(sorted);
     };
-    /** `list` with every field as it settles (`settleDateInput`): a bound that was
-     *  set and is empty / half-typed in the field goes back to its committed date. */
+    /** `list` with each field settled: a set bound that is empty/half-typed returns to its committed date. */
     const settled = (list: TimePeriod[]): TimePeriod[] => list.map(p => {
         const saved = savedById.get(p.id);
         if (!saved) return p;
@@ -207,9 +152,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
         const end = settleDateInput(p.end, saved.end);
         return start === p.start && end === p.end ? p : { ...p, start, end };
     });
-    /** A date field changed. The field always shows what is typed; the parent gets
-     *  the list — in the order on screen — only once the date is complete, and
-     *  never a half-typed value of another field. */
+    /** The field shows what is typed; the parent gets the list only once the date is complete. */
     const typeDate = (i: number, which: 'start' | 'end', v: string) => {
         const next = draft.map((x, j) => (j === i ? { ...x, [which]: v } : x));
         setDraft(next);
@@ -235,11 +178,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
     useEffect(() => { onPendingRef.current?.(pendingName); }, [pendingName]);
     useEffect(() => () => { onPendingRef.current?.(null); }, []);
 
-    // The list as it is JUDGED on screen (validity, day counts, overlap, the Add
-    // default): a field that is still being typed counts as the date the parent
-    // has. A half-typed date (or a year on its way: "0002-…") must not flash "P1
-    // ends before it starts" or blank the row's days — the field itself always
-    // shows what is typed.
+    // Judged on screen: a half-typed field counts as the parent's date, so it doesn't flash an error or blank the days.
     const judged = draft.map(p => {
         const saved = savedById.get(p.id);
         if (!saved) return p;
@@ -254,8 +193,7 @@ export default function TimePeriodsEditor({ periods, onChange, bounds, counts = 
     const maxAttr = toInputValue(bounds?.max);
     const boundsForCover = minAttr && maxAttr ? { min: minAttr, max: maxAttr } : null;
     const rows = trainRowModels(judged, boundsForCover, counts, statuses.map(s => s.invalid));
-    // "no running rows in P2" is only a ROW's note while the other periods have
-    // rows; when none has, the one red line under the timeline says it.
+    // 'no running rows in P2' is a row note only while other periods have rows; otherwise the red line under the timeline says it.
     const unionHasRows = (counts.train?.union.running_rows ?? 0) > 0;
 
     const next = judged.length === 0 ? firstDefaultPeriod(bounds) : nextDefaultPeriod(judged, maxAttr ?? null);

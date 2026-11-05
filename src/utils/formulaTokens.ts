@@ -1,31 +1,4 @@
-/**
- * Tokenizer of the special-sensor formula text
- * -- the TypeScript twin of Rust's `scan_sensor_refs` (`src-tauri/src/lib.rs`)
- * plus `formula_diagnostics::tokenize`, so a sensor name, a number or a bracket
- * never splits differently here than in the gate that decides.
- *
- * It powers DISPLAY and EDITING only: the painted mirror behind the textarea
- * (sensor chips, depth-coloured brackets, the matching pair, the error range),
- * the Sensors row, the autocomplete context and the cheap front-end check
- * (`formulaCheck.ts`). Whether a formula is valid is still Rust's call.
- *
- * Positions are `[start, end)` in UTF-16 code units of the text -- the same
- * unit as a JS string index, a textarea selection and Rust's issue `range`.
- * One pass, O(n) per keystroke; it never throws.
- *
- * Grammar (exactly as Rust scans it):
- *   - `${Anything Up To The First Brace}` -- an empty `${}` or an unclosed `${`
- *     names nothing (its characters then tokenize as `bad`, like Rust);
- *   - `$Name` -- starts with a Unicode letter/digit or `_`, then runs while
- *     the characters are letters/digits, `_` or `.` (`$11PT1214A.PV` is ONE
- *     sensor; `$Total-Power` is `Total` minus something; `$อุณหภูมิ` is one);
- *   - numbers: digits and `.`, an optional exponent (`2.5e-3`), else one SI
- *     suffix (`5k`, `2m`);
- *   - words: ASCII letters/digits/`_` (functions, `pi`/`e`, or typos);
- *   - operators `+ - * / % ^ !` and `< <= > >= == != && ||`;
- *   - brackets `( ) [ ]` (fasteval treats `[ ]` like `( )`), separators `,` `;`;
- *   - anything else is one `bad` character (a lone `=`, `&`, `|`, `$`, `{`, …).
- */
+/** Twin of Rust's `scan_sensor_refs` (lib.rs) + `formula_diagnostics::tokenize`, so names, numbers and brackets never split differently than in the gate. DISPLAY/EDITING only; validity is Rust's call. Positions are `[start, end)` in UTF-16 units; one pass, never throws. Grammar as Rust scans it: `${...}` up to the first `}` (empty/unclosed names nothing, tokens as `bad`); `$Name` starts with a letter/digit/`_` then letters/digits/`_`/`.` (`$11PT1214A.PV` is one sensor, `$Total-Power` is `Total` minus something); numbers with optional exponent or one SI suffix; ASCII words; operators; `( ) [ ]` (fasteval treats `[ ]` like `( )`); anything else is one `bad` char. */
 
 export type FormulaTokenKind = 'sensor' | 'number' | 'word' | 'op' | 'open' | 'close' | 'comma' | 'bad';
 
@@ -43,8 +16,7 @@ export interface FormulaToken {
     /** `open` / `close`: nesting depth, 0 = outermost. A `close` with no
      *  opener has depth -1. */
     depth?: number;
-    /** `open` / `close`: index (in the token array) of the matching bracket,
-     *  -1 when there is none (unclosed / unmatched / wrong kind `( ]`). */
+    /** `open`/`close`: token index of the matching bracket, -1 when none (unclosed, unmatched, wrong kind `( ]`). */
     pair?: number;
     /** `word`: directly followed (whitespace aside) by `(` or `[` -- a call. */
     call?: boolean;
@@ -58,8 +30,7 @@ export interface FormulaSensorRef {
     braced: boolean;
 }
 
-// Rust's `char::is_alphanumeric` = Unicode Alphabetic || Numeric (see
-// `specialSensorNaming.ts` for why it is `\p{Alphabetic}`, not `\p{L}`).
+// Rust's `char::is_alphanumeric` = Unicode Alphabetic || Numeric (`\p{Alphabetic}`, not `\p{L}`: see `specialSensorNaming.ts`).
 const ALNUM = /^[\p{Alphabetic}\p{N}]$/u;
 const WS = /^\s$/u;
 const SI_SUFFIX = new Set(['k', 'K', 'M', 'G', 'T', 'm', 'u', 'µ', 'n', 'p']);
@@ -211,11 +182,7 @@ function annotate(toks: FormulaToken[]): void {
     }
 }
 
-/**
- * The bracket pair the caret or selection sits on (for Unwrap and the pair
- * highlight): a selection exactly covering `( … )`, or a caret right before or
- * right after either bracket of a pair. Returns token indices `[open, close]`.
- */
+/** Bracket pair the caret/selection sits on (Unwrap, pair highlight): a selection exactly covering `( … )`, or a caret right next to either bracket. Returns token indices `[open, close]`. */
 export function bracketPairAt(tokens: FormulaToken[], selStart: number, selEnd: number): [number, number] | null {
     const paired = (k: number) => {
         const t = tokens[k];
@@ -234,8 +201,7 @@ export function bracketPairAt(tokens: FormulaToken[], selStart: number, selEnd: 
     return tokens[k].kind === 'open' ? [k, other] : [other, k];
 }
 
-/** Distinct referenced sensors, in order of first appearance, each with the
- *  range of its FIRST occurrence (the Sensors row; click selects it). */
+/** Distinct referenced sensors in order of first appearance, each with the range of its FIRST occurrence. */
 export function referencedSensors(tokens: FormulaToken[]): Array<{ name: string; start: number; end: number }> {
     const seen = new Set<string>();
     const out: Array<{ name: string; start: number; end: number }> = [];
@@ -247,8 +213,7 @@ export function referencedSensors(tokens: FormulaToken[]): Array<{ name: string;
     return out;
 }
 
-/** Does the formula have an operator OUTSIDE every bracket (so it needs
- *  `( … )` before it can be dropped into another formula as one operand)? */
+/** Does the formula have an operator OUTSIDE every bracket (so it needs `( … )` to be one operand of another formula)? */
 export function hasTopLevelOperator(text: string, tokens: FormulaToken[] = tokenizeFormula(text)): boolean {
     let depth = 0;
     for (const t of tokens) {
@@ -259,11 +224,7 @@ export function hasTopLevelOperator(text: string, tokens: FormulaToken[] = token
     return false;
 }
 
-/**
- * Is `text` (trimmed) ONE operand that can be multiplied without brackets --
- * Rust's `is_formula_atom`: a single sensor reference, a plain number / name,
- * or `name(…)` / `(…)` whose bracket closes at the very end.
- */
+/** Is trimmed `text` one operand safe to multiply without brackets (Rust's `is_formula_atom`): a sensor reference, plain number/name, or `name(…)`/`(…)` whose bracket closes at the very end. */
 export function isFormulaAtom(text: string): boolean {
     const { chars } = codePoints(text);
     const spans = scanRefSpans(chars);
@@ -300,8 +261,7 @@ function refMask(len: number, spans: Array<{ start: number; end: number }>): boo
     return m;
 }
 
-/** One spreadsheet-order `round(x, n)` call (Rust's `ExcelRoundCall`), in
- *  UTF-16 offsets: the whole call `[start, end)` and its two arguments. */
+/** A spreadsheet-order `round(x, n)` call (Rust's `ExcelRoundCall`) as UTF-16 offsets: the whole call `[start, end)` and its two arguments. */
 export interface ExcelRoundCall {
     start: number;
     end: number;
@@ -309,12 +269,7 @@ export interface ExcelRoundCall {
     n: [number, number];
 }
 
-/**
- * Every `round(<expr with a sensor>, <expr without one>)` call, in order of
- * its `round` keyword -- the twin of Rust's `excel_round_calls`, which decides
- * both the `round_excel` refusal and the legacy conversion. Accepts fasteval's
- * `round[ … ]` and `;` spellings; text inside a reference is a name, not a call.
- */
+/** Every `round(<expr with a sensor>, <expr without one>)` call in order of its `round` keyword; twin of Rust's `excel_round_calls`, which decides the `round_excel` refusal and the conversion. Accepts `round[ … ]` and `;`; text inside a reference is a name, not a call. */
 export function excelRoundCalls(text: string): ExcelRoundCall[] {
     const { chars, off } = codePoints(text);
     const spans = scanRefSpans(chars);

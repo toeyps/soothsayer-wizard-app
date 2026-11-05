@@ -2,15 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * Long sensor names, across zones: what each worker's own tests cannot see.
- *  (1) a tag-name file with blank descriptions, through the import's own metadata building, into the Sensor panel, the
- *      picker and the tooltip rows (the only way left to get a tag-only project, now that the file is required);
- *  (2) a windowed list with a search and a selection together: what is picked is the real sensor, whichever row was on
- *      screen, and it stays picked when the search goes;
- *  (3) the real Build Model window with the real picker: the model's target counts in the predictor chips' set.
- * Everything is real except the Tauri boundary. jsdom has no layout: `stubNamesCut` says how long names measure.
- */
+/* Long sensor names across zones; only Tauri is stubbed. jsdom has no layout: `stubNamesCut` sets name widths. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,

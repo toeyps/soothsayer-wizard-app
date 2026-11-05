@@ -6,36 +6,10 @@ import { validatePeriods, validateTestPeriods, type PeriodBaseline } from './tim
 import { isBelowRecommendedTrainDays, RECOMMENDED_TRAIN_DAYS, trainDaysWarning } from './trainTestValidation';
 import { parseLocal } from './workbenchDate';
 
-/*
- * Per-period running-row counts for the Running-condition settings: the
- * binding of the Rust command `count_period_rows`, the
- * request builders, and the pure builders of what the modal prints from the
- * answer — the one caption under the timeline
- *
- *   117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended
- *
- * and one quiet line per period row ("P1 · 81 d · 69 d running").
- *
- * The counts are read as DAYS of running time and as the "nothing to train on"
- * verdict only. NO number of data rows is ever printed (user decision
- * 2026-10-14: the Build Model window never says how many rows are used — do not
- * add a "N of M rows (x%)" sentence, a "Counting rows…" text or a percentage back).
- *
- * The React side (debounce, stale-answer guard, the two calls) is
- * `usePeriodCounts` in `src/hooks/usePeriodCounts.ts`.
- */
+/* Per-period running-row counts for the Running-condition settings: the `count_period_rows` binding, request and display builders. Show days of running time and the 'nothing to train on' verdict only; never print a row count. */
 
-// ---------------------------------------------------------------------------
-// The command
-// ---------------------------------------------------------------------------
 
-/**
- * `count_period_rows`: for each period the dataset rows inside it and how many
- * of them pass the running condition, plus the union over the call's valid
- * periods. `condition` null = no condition (every row in a period is running).
- * `expectedGeneration` pins the dataset this window was opened on — another
- * dataset answers `STALE_SESSION: …`.
- */
+/** Counts rows per period and for their union; `condition` null = every row runs, `expectedGeneration` pins the dataset. */
 export function countPeriodRows(
     periods: PeriodCountArg[],
     condition: PeriodCountCondition | null,
@@ -45,17 +19,10 @@ export function countPeriodRows(
     return invoke<PeriodCounts>('count_period_rows', { periods, filter: condition, expected_generation: expectedGeneration ?? null });
 }
 
-/** What the count takes as "the running condition": the whole training-scope
- *  payload (`buildPreviewFilterPayload`), or just its condition part. */
+/** Whole training-scope payload, or just its condition part. */
 export type CountFilterInput = TrainingScopeFilter | Pick<TrainingScopeFilter, 'value_filters' | 'combine'>;
 
-/**
- * The part of a training-scope filter the count reads: its value conditions and
- * AND/OR. Pass what `buildPreviewFilterPayload(draft, headers)` returns — its
- * time ranges are dropped here (Rust ignores them, and leaving them in would
- * make an edit of a TRAIN period look like a new request for the SCORING
- * periods). `null` when there is no condition at all.
- */
+/** Value conditions and AND/OR only (time ranges dropped, so editing a train period isn't a new request); null if none. */
 export function countCondition(filter: CountFilterInput | null | undefined): PeriodCountCondition | null {
     if (!filter || !Array.isArray(filter.value_filters) || filter.value_filters.length === 0) return null;
     return { value_filters: filter.value_filters, combine: filter.combine === 'or' ? 'or' : 'and' };
@@ -84,9 +51,7 @@ function plan<T extends { start: string; end: string }>(list: readonly T[], inva
     return { wire, positions };
 }
 
-/** The TRAIN periods to count: the ones `validatePeriods` accepts (an invalid
- *  period is never sent — its row shows the reason instead of a count, and it
- *  must not be part of the union). */
+/** Train periods to count: only those `validatePeriods` accepts; an invalid one is never sent nor part of the union. */
 export function trainCountPlan(periods: readonly TimePeriod[]): PeriodCountPlan {
     return plan(periods, validatePeriods([...periods]).map(s => s.invalid));
 }
@@ -96,30 +61,17 @@ export function scoringCountPlan(tests: readonly TestPeriod[]): PeriodCountPlan 
     return plan(tests, validateTestPeriods([...tests]).map(s => s.invalid));
 }
 
-/**
- * What a TRAIN count is a count OF: the valid train periods and the running
- * condition, as one string. Two running conditions with the same key get the
- * same answer from `count_period_rows` — so a settled count of one may be read
- * for the other without asking again (two Custom models of one sensor on the
- * same own condition), and "the training scope changed" is `key !== key`.
- */
+/** Identifies what a train count is of (valid train periods + condition); equal keys reuse a settled count. */
 export function trainCountKey(trainPeriods: readonly TimePeriod[], filter: CountFilterInput | null | undefined): string {
     return JSON.stringify([countCondition(filter), trainCountPlan(trainPeriods).wire]);
 }
 
-// ---------------------------------------------------------------------------
-// What the hook hands to the builders
-// ---------------------------------------------------------------------------
 
 /** State of the counts for the draft on screen (`usePeriodCounts`). */
 export interface PeriodCountsState {
-    /** `idle`: nothing is being counted (modal closed). `loading`: the draft
-     *  changed and its counts are not in yet — `train` / `scoring` still hold
-     *  the PREVIOUS answer so nothing flickers. `ok`: they are the draft's own.
-     *  `error`: the count failed; no numbers. */
+    /** `idle`: nothing counted. `loading`: `train`/`scoring` hold the previous draft's answer. `ok`: the draft's own answer. `error`: no numbers. */
     status: 'idle' | 'loading' | 'ok' | 'error';
-    /** Answer of the call that carried the valid TRAIN periods (`union` = the
-     *  rows used for training); `null` when there is none (yet). */
+    /** Answer of the call with the valid train periods (`union` = rows used for training); null if none yet. */
     train: PeriodCounts | null;
     /** Answer of the call that carried the valid SCORING periods. */
     scoring: PeriodCounts | null;
@@ -131,9 +83,6 @@ export interface PeriodCountsState {
 
 export const PERIOD_COUNTS_IDLE: PeriodCountsState = { status: 'idle', train: null, scoring: null, error: null, errorCode: null };
 
-// ---------------------------------------------------------------------------
-// Pure display maths
-// ---------------------------------------------------------------------------
 
 const DAY_MS = 86_400_000;
 
@@ -145,28 +94,20 @@ export interface CountBounds {
 
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
 
-/** A period as [start, end] in epoch ms; an open end resolves to the dataset
- *  bound. null when a bound is unknown, unparseable or the period is reversed. */
+/** Period as [start, end] epoch ms, open ends taken from the dataset bounds; null if unknown, unparseable or reversed. */
 function span(p: { start: string; end: string }, bounds: CountBounds | null | undefined): [number, number] | null {
     const s = isBlank(p.start) ? parseLocal(bounds?.min) : parseLocal(p.start);
     const e = isBlank(p.end) ? parseLocal(bounds?.max) : parseLocal(p.end);
     return s === null || e === null || e < s ? null : [s, e];
 }
 
-/** Whole CALENDAR days one period spans (open ends run to the dataset bounds);
- *  null when unknowable or reversed. The same number `periodDays` in
- *  `periodDisplay.ts` gives. */
+/** Whole calendar days one period spans (open ends run to dataset bounds); null if unknowable or reversed. */
 export function periodCalendarDays(p: { start: string; end: string }, bounds?: CountBounds | null): number | null {
     const sp = span(p, bounds);
     return sp ? Math.round((sp[1] - sp[0]) / DAY_MS) : null;
 }
 
-/**
- * Whole calendar days covered by AT LEAST ONE of the periods (overlapping
- * periods are not counted twice), clamped to the dataset's range when it is
- * known. Periods flagged in `invalid` are left out. null when nothing can be
- * measured (no countable period).
- */
+/** Whole calendar days in the union of periods, clamped to the dataset range; `invalid` ones skipped; null if none countable. */
 export function unionCalendarDays(
     periods: readonly { start: string; end: string }[],
     invalid: readonly boolean[],
@@ -195,8 +136,7 @@ export function unionCalendarDays(
     return Math.round(total / DAY_MS);
 }
 
-/** Running-time days for display: whole days from 10 d up ("69"), one decimal
- *  below that ("2.5", "0.3") so a short dataset does not read "0 d". */
+/** Running days for display: whole from 10 d up, one decimal below so a short dataset doesn't read '0 d'. */
 export function runningDaysText(days: number): string {
     if (!Number.isFinite(days) || days <= 0) return '0';
     if (days >= 10) return String(Math.round(days));
@@ -206,43 +146,21 @@ export function runningDaysText(days: number): string {
 
 const sameBound = (a: string | null | undefined, b: string | null | undefined) => ((a ?? '').trim() || null) === ((b ?? '').trim() || null);
 
-/**
- * Running-time days of the rows used for TRAINING, as counted (the train call's
- * union) — the figure the caption prints as "about N d running time" and the
- * amber "below the recommended train time" note reads. `null` unless the counts
- * are the request's own (`status: 'ok'`) and the dataset has a sample interval
- * (fewer than two dated rows: Rust's days are 0 then, not a fact).
- */
+/** Running days of the train union; null unless counts are the request's own and the dataset has a sample interval. */
 export function countedTrainRunningDays(state: PeriodCountsState): number | null {
     return state.status === 'ok' && state.train && state.train.interval_secs != null
         ? state.train.union.running_days
         : null;
 }
 
-/**
- * Does an answer of the TRAIN call say "no row is left to train on"?
- *
- * `union.running_rows === 0` — with ONE exception. A row WITHOUT a readable
- * timestamp is in no period for the count ("even a fully open period leaves
- * them out", `period_counts.rs`), but a train period left open at BOTH ends
- * means "no time limit" when training (`buildPreviewFilterPayload` sends no
- * time filter then), so those undated rows ARE trained on. With a fully open
- * period and undated rows in the dataset the count is therefore not the whole
- * truth, and it must never be read as "nothing to train on".
- */
+/** True when no running row is left to train on (`union.running_rows === 0`). Not when a fully open train period meets undated rows: those are trained on, so the count isn't the whole truth. */
 function zeroTrainRows(train: PeriodCounts | null): boolean {
     if (!train || train.union.running_rows !== 0) return false;
     const fullyOpen = train.periods.some(c => c.valid && isBlank(c.start) && isBlank(c.end));
     return !(fullyOpen && train.total_rows > train.union.rows_in_period);
 }
 
-/**
- * The counts are the request's own (`status: 'ok'` — never while loading, stale
- * or failed) and the train periods TOGETHER hold no running row: nothing to
- * train on (`zeroTrainRows`). The Running-condition settings disable Apply /
- * Save changes on it and the gate blocks Train (`GateOptions.noTrainRows`).
- * False when no train period was counted at all.
- */
+/** Settled counts show no running train row: nothing to train on (disables Apply/Save, blocks Train via `noTrainRows`). */
 export function countedNoTrainRows(state: PeriodCountsState): boolean {
     return state.status === 'ok' && zeroTrainRows(state.train);
 }
@@ -253,17 +171,12 @@ export function noRunningRowsNote(name: string): string {
     return `no running rows in ${name}`;
 }
 
-/** The count of one period inside an answer, found by its own bounds (so a
- *  period keeps its numbers when another one is added, removed or re-ordered
- *  while the new answer is on its way). null when it was not counted. */
+/** Count of one period, found by its bounds so it survives list edits; null if not counted. */
 export function countFor(counts: PeriodCounts | null | undefined, period: { start: string; end: string }): PeriodCount | null {
     if (!counts) return null;
     return counts.periods.find(c => c.valid && sameBound(c.start, period.start) && sameBound(c.end, period.end)) ?? null;
 }
 
-// ---------------------------------------------------------------------------
-// One period row: "P1 · 81 d · 69 d running"
-// ---------------------------------------------------------------------------
 
 export interface PeriodRowModel {
     /** "P1" (train) / "S1" (scoring) — the list position. */
@@ -283,8 +196,7 @@ export interface PeriodRowModel {
     runningText: string | null;
     /** The numbers are being counted again (dim them). */
     stale: boolean;
-    /** Its count is SETTLED (the request's own answer) and it holds no running
-     *  row — the row's quiet amber note (`noRunningRowsNote`). */
+    /** Count is settled and holds no running row: the row's amber note (`noRunningRowsNote`). */
     noRunningRows: boolean;
     /** "P1 · 81 d · 69 d running" / "P1 · 81 d" / "P1 · —". */
     text: string;
@@ -308,9 +220,7 @@ function rowModel(name: string, number: number, period: { start: string; end: st
     };
 }
 
-/** One model per TRAIN period row, in list order (P1, P2 …). `invalid` — the
- *  editor's own per-row verdict (it also judges the rows against the loaded
- *  data's range); default: the plain date rules. */
+/** One model per train period row (P1, P2 …). `invalid` is the editor's own verdict; default: the plain date rules. */
 export function trainRowModels(periods: readonly TimePeriod[], bounds: CountBounds | null | undefined, state: PeriodCountsState, invalid?: readonly boolean[]): PeriodRowModel[] {
     const bad = invalid ?? validatePeriods([...periods]).map(s => s.invalid);
     return periods.map((p, i) => rowModel(`P${i + 1}`, i + 1, p, !!bad[i], bounds, state.train, state.status === 'loading', state.status === 'ok'));
@@ -322,13 +232,8 @@ export function scoringRowModels(tests: readonly TestPeriod[], bounds: CountBoun
     return tests.map((t, i) => rowModel(`S${i + 1}`, i + 1, t, !!bad[i], bounds, state.scoring, state.status === 'loading', state.status === 'ok'));
 }
 
-// ---------------------------------------------------------------------------
-// The caption under the timeline
-// ---------------------------------------------------------------------------
 
-/** Where the count of the TRAIN periods stands for the draft on screen. It is
- *  never printed (no row numbers anywhere): it says whether the running time is
- *  known and whether the "nothing to train on" verdict may be read. */
+/** Where the train count stands for the draft, and whether the 'nothing to train on' verdict may be read. Never printed. */
 export type CaptionRows =
     | { kind: 'no-train' }
     /** A train period is invalid: no total until it is fixed. */
@@ -364,9 +269,7 @@ export interface RunningConditionCaption {
     belowRecommended: boolean;
     /** The amber sentence for it ("Only 12 d of train running time — …"), or null. */
     warning: string | null;
-    /** The count shown is SETTLED and the train periods together hold no running
-     *  row: the red "No rows match — nothing to train on" line, and Apply / Save
-     *  changes are disabled. Never while the count is loading, stale or failed. */
+    /** Settled count with no running train row: red 'nothing to train on', Apply/Save off. Never while loading, stale or failed. */
     noRows: boolean;
     /** The parts joined with " · " — the whole caption as one line. */
     text: string;
@@ -374,27 +277,7 @@ export interface RunningConditionCaption {
 
 export const CAPTION_RECOMMENDED_TEXT = `≥ ${RECOMMENDED_TRAIN_DAYS} d recommended`;
 
-/**
- * The ONE caption under the Running-condition timeline, from the draft's
- * periods (calendar days, from the dates) and the counts (running time, from
- * Rust):
- *
- *   117 d train (about 100 d running time) · 59 d scoring · ≥ 30 d recommended
- *
- * With no train period: "no train period · no scoring time". It never says how
- * many rows are used (see the note at the top of this file).
- *
- * `configured: false` = the running condition is still "Required" ("Only when
- * running" with no complete condition). The count Rust gives then is of every
- * row in the train periods (an incomplete condition is not sent), so it is not
- * read: no running time is printed and there is no verdict (`rows.kind:
- * 'no-condition'`).
- *
- * A period that is new / changed in the draft and lies entirely outside the
- * loaded data (`bounds`, judged against `savedTrain` / `savedScoring` — see
- * `validatePeriods`) is invalid like any other (`rows.kind: 'fix'`: no running
- * time until it is fixed). A SAVED period outside the data is not: it is counted.
- */
+/** Caption under the Running-condition timeline: days from the dates, running time from Rust's counts, never a row count. Unconfigured condition: count ignored (`no-condition`); a new/changed period fully outside the data is `fix`. */
 export function runningConditionCaption(input: {
     trainPeriods: readonly TimePeriod[];
     scoringPeriods: readonly TestPeriod[];
@@ -425,9 +308,7 @@ export function runningConditionCaption(input: {
         rows = { kind: 'counted', stale: counts.status === 'loading' };
     } else rows = { kind: counts.status === 'loading' ? 'loading' : 'idle' };
 
-    // Running time comes with the count (kept while a new answer is on its way —
-    // `rows.stale` says so). Unknown when the dataset has no sample
-    // interval (fewer than two dated rows): Rust's days are 0 then, not a fact.
+    // Kept while a new answer is in flight (`rows.stale`); unknown under two dated rows, where Rust's days are 0, not a fact.
     const trainRunningDays = rows.kind === 'counted' && counts.train?.interval_secs != null
         ? counts.train.union.running_days : null;
 

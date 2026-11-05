@@ -13,56 +13,35 @@ import { isModelComplete, modelDotState, modelSetPointFlag } from '../../utils/m
 import { summarizeFailureGroups } from '../../utils/failureGroupSummary';
 import { isDuplicateFailureGroupName } from './failureGroupOps';
 
-// The app-wide kind names (Individual / Relation model / Clustering) — used
-// for the model-kind badge's tooltip (see renderModelRow below).
 const KIND_LABEL = MODEL_KIND_LABEL;
 
 interface FailureGroupsPanelProps {
     fgGroups: FailureGroup[];
     fgModels: FailureModel[];
     sensorMetadata: SensorMetadata[] | null;
-    /** Workspace running-condition state (everything BuildModelWindow.tsx's
-     *  own `gateFg` carries except `models` — Dashboard's `fgExtra` mirror is
-     *  exactly this shape already). Combined with `fgModels` above (spread
-     *  in as `models`) to answer the same "is this model's build gate
-     *  blocked" / "is this model trained-and-fresh" questions the Workbench
-     *  answers for its own status pill/dot — see `dotStatusFor` below. */
+    /** Running-condition state (Dashboard's `fgExtra`); with `fgModels` it decides blocked vs trained-and-fresh (see `dotStatusFor`). */
     runningConditionFg: Omit<FailureGroupStateSlice, 'groups' | 'models'>;
-    /** Dataset headers (Dashboard's `allSensorTags`), or `null` when none
-     *  loaded yet — same `gateHeaders` role as BuildModelWindow.tsx's own,
-     *  needed so `getBuildBlockReason` can tell a configured-but-now-missing
-     *  running-condition sensor apart from a merely-unconfigured one. */
+    /** Dataset headers (null before load): tells a missing running-condition sensor from an unconfigured one. */
     datasetHeaders: string[] | null;
-    /** The workspace's special-sensor recipes: a model trained on a special sensor
-     *  whose formula changed since reads as out of date here too. Pass the
-     *  Dashboard's state array (stable identity — the signatures are memoised per array). */
+    /** Special-sensor recipes: a model trained on a changed formula reads out of date. Pass a stable array (signatures are memoised). */
     specialSensorRecipes?: SpecialSensorRecipe[] | null;
     getGroupColor: (groupNo: number) => string;
-    /** Saves Name + Description + Recommendation together (the name is only
-     *  editable together with the rest of the detail, not separately). */
+    /** Saves Name + Description + Recommendation together (the name isn't editable separately). */
     onUpdateGroupDetails: (groupNo: number, name: string, description: string, recommendation: string) => void;
     onDeleteGroup: (groupNo: number) => void;
     onCreateEmptyGroup: (name: string) => void;
-    /** Deletes a model record outright. Model lifecycle (creation, via the
-     *  Sensor tab's per-kind toggle, and deletion, here) lives entirely on
-     *  Dashboard; Build Model only edits/trains models. */
+    /** Deletes a model outright; creation (Sensor tab) and deletion live on Dashboard, Build Model only edits/trains. */
     onDeleteModel: (modelId: string) => void;
-    /** Opens the (singleton) Build Model window — for editing a model's
-     *  detail (category, notes, predictors, cluster ranges, kind, …) and
-     *  training it. Cards themselves still don't open anything on click. */
+    /** Opens the singleton Build Model window; cards themselves open nothing on click. */
     onOpenBuildModel: () => void;
-    /** "Assign sensors →" on a group with no sensors yet: the Dashboard switches
-     *  to the Sensor tab in assign mode for that group. Omitted = no link. */
+    /** "Assign sensors →" on a group with no sensors: switches the Sensor tab to assign mode for that group. Omitted = no link. */
     onAssignSensors?: (groupNo: number) => void;
 }
 
 // The same duplicate rule as the Dashboard's own group writers and Import step 3.
 const isDuplicateName = isDuplicateFailureGroupName;
 
-/** A model row of a sensor line. Today's "name (tag)", end-cut as it always was, unless its sensor has a long name
- *  AND the line is really cut: the sensor line above already names the sensor, so the row prints the model's own
- *  name, clustering adds its Y sensor (the one sensor the line above does not show), and a model with no name of
- *  its own prints its sensor, cut by rule 1. */
+/** Model row text "name (tag)", end-cut; if the sensor has a long name and the line is cut, print the model's own name instead (clustering adds its Y sensor). */
 function FgModelText({ model, text }: { model: FailureModel; text: string }) {
     const [ref, cut] = useLineCut(text);
     const lookup = useSensorLookup();
@@ -97,31 +76,12 @@ const sensorGroupTag = (sg: SensorModelGroup): string => {
     return (first && (first.kind === 'clustering' ? first.xSensor : first.targetSensor)) || '';
 };
 
-/**
- * Group-centric view for the Dashboard's Sensor panel — Failure Groups tab.
- * Each card shows the group's name/ID and every model inside it — the
- * model's own name if one was set, otherwise the target sensor's
- * description — so the whole group is scannable at a glance, plus a delete
- * button per model. Each card also has its own "Edit details" toggle (Name +
- * Description + Recommendation together).
- *
- * A small status DOT sits at the corner of each sensor row's I/R/C kind
- * badge (see `dotStatusFor` below). It reads the same status rules as
- * BuildModelWindow.tsx (`utils/modelStatus.ts`), so the two views can never
- * disagree about a model's state.
- *
- * Model creation happens on the Sensor tab (per-kind toggle on each sensor,
- * see SensorSelection.tsx); this panel handles deletion (a trash icon per
- * model row). Build Model only edits a model's own detail and trains it.
- */
+/** Failure Groups tab of the Sensor panel: a card per group with its models, a delete per model and an "Edit details" toggle. Status dots follow `utils/modelStatus.ts`, shared with BuildModelWindow. Models are created on the Sensor tab; this panel only deletes. */
 export default function FailureGroupsPanel({
     fgGroups, fgModels, sensorMetadata, runningConditionFg, datasetHeaders, specialSensorRecipes, getGroupColor,
     onUpdateGroupDetails, onDeleteGroup, onCreateEmptyGroup, onDeleteModel, onOpenBuildModel, onAssignSensors,
 }: FailureGroupsPanelProps) {
-    // "Edit details" panel — Name + Description + Recommendation together,
-    // one group expanded at a time. Mirrors Build Model window's own
-    // version exactly (moved here, not duplicated — see the doc comment
-    // above and this component's own top-level doc comment).
+    // "Edit details" panel (Name + Description + Recommendation), one group expanded at a time.
     const [expandedGroupNo, setExpandedGroupNo] = useState<number | null>(null);
     // Deleting a group deletes the models that are only in it: ask first.
     const [confirmDeleteNo, setConfirmDeleteNo] = useState<number | null>(null);
@@ -129,8 +89,7 @@ export default function FailureGroupsPanel({
     const [groupNameError, setGroupNameError] = useState('');
     const [groupDescDraft, setGroupDescDraft] = useState('');
     const [groupRecDraft, setGroupRecDraft] = useState('');
-    // Which sensor lines are expanded, keyed `${groupNo}:${sensorKey}` — the
-    // per-model rows (with their delete buttons) live inside the expansion.
+    // Expanded sensor lines, keyed `${groupNo}:${sensorKey}`; the per-model rows live inside the expansion.
     const [expandedSensors, setExpandedSensors] = useState<Set<string>>(new Set());
     const toggleSensor = (id: string) => setExpandedSensors(prev => {
         const next = new Set(prev);
@@ -140,35 +99,17 @@ export default function FailureGroupsPanel({
     const [showNewGroup, setShowNewGroup] = useState(false);
     const [newGroupDraft, setNewGroupDraft] = useState('');
     const [newGroupError, setNewGroupError] = useState('');
-    // Search box: filters which sensor lines render within each group (and
-    // hides a group entirely once its name and every one of its sensors
-    // fail to match). Two-level match: a group-NAME match keeps every
-    // sensor in that group, a sensor match on its own only keeps that
-    // sensor. Display-only; does not touch which models/groups exist.
+    // Display-only search; does not change which models/groups exist.
     const [fgSearch, setFgSearch] = useState('');
 
-    // Rows use the same stacked label as the Sensor tab, from this panel's own
-    // metadata layered on the window's provider (special-sensor badges come through).
+    // Same stacked label as the Sensor tab: this panel's metadata layered on the window's provider.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
-    // `RunningConditionFg` needs `models` too (category derivation falls back
-    // to it when a model's own `category` is null) — `fgModels` is already a
-    // separate top-level prop here, so it's spread in rather than asking the
-    // caller to pass it twice.
+    // `RunningConditionFg` needs `models` (category falls back to it when a model's `category` is null); spread in from `fgModels`.
     const fg: RunningConditionFg = { ...runningConditionFg, models: fgModels };
 
-    // Status comes from `utils/modelStatus.ts`, the single definition the
-    // Build Model window reads too, so the two views never disagree. A model
-    // that's fingerprint-fresh but blocked by a gate reason (e.g. a running-
-    // condition sensor missing from the dataset) reads as 'none', never
-    // 'trained'. A Complete model that is out of date (its inputs changed
-    // since it was trained) is NOT complete here either. `stale`/`blocked`
-    // draw no dot.
-    //
-    // A TRAINED model whose saved set points Rust rejected / left empty reads
-    // red / yellow — `modelSetPointFlag` (utils/modelStatus.ts) reads the
-    // verdict persisted on the model (`healthVerdict`), the same value the
-    // Build Model list dot and tab pill read.
+    // Status comes from `utils/modelStatus.ts` (shared with Build Model); `stale`/`blocked` draw no dot.
+    // Gate-blocked reads 'none' even if fresh; set points Rust rejected or left empty read red/yellow via `modelSetPointFlag`.
     const dotStatusFor = (m: FailureModel): 'none' | 'trained' | 'complete' | 'need' | 'bad' => {
         const s = modelDotState(m, fg, datasetHeaders, specialSensorRecipes);
         if (s === 'trained') {
@@ -178,27 +119,10 @@ export default function FailureGroupsPanel({
         return s === 'complete' ? s : 'none';
     };
     const isDone = (m: FailureModel): boolean => isModelComplete(m, fg, specialSensorRecipes);
-    // Model name if the user set one; otherwise the target sensor's
-    // description (clustering's "target" is its Y sensor, same convention
-    // as component derivation elsewhere); falls back to the raw tag, then a
-    // generic placeholder for a brand-new model with no sensor picked yet.
-    //
-    // A name that's identical to the target tag itself doesn't count as "the
-    // user set one" — legacy workspaces default a model's name to its sensor
-    // tag (see workspaceManager.ts's migration shim), so without this check
-    // every migrated model would permanently show its raw tag here instead of
-    // ever falling through to the sensor's description.
-    //
-    // The tag itself is always appended in parens when the target sensor is
-    // known, so several models named after the same sensor description can be
-    // told apart at a glance.
+    // Label: the model's name if set, else the target sensor's description (clustering: its Y sensor), else the tag, else a placeholder.
+    // A name equal to the target tag counts as unset. The tag is appended in parens when known.
     const modelDisplayLabel = (model: FailureModel) => {
-        // Clustering's Y sensor stays blank until configured in Build Model
-        // (Dashboard.tsx's makeDefaultModelForKind seeds X only) — falling
-        // back to X here keeps this label the same "description (tag)"
-        // shape Individual/Relationship always show, instead of silently
-        // dropping the tag, which the user flagged as an inconsistency
-        // ("i/r เหมือนกัน แต่ c ไม่เหมือนกัน").
+        // Clustering's Y stays blank until set in Build Model, so fall back to X to keep the "description (tag)" shape.
         const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const trimmedName = model.name.trim();
         if (!targetTag) return trimmedName || 'Untitled model';
@@ -206,11 +130,7 @@ export default function FailureGroupsPanel({
         return label ? `${label} (${targetTag})` : targetTag;
     };
 
-    // A trash icon per model row (no confirmation dialog) and a colored kind
-    // badge (I/R/C), so two models of the same sensor in different kinds can
-    // be told apart. The badge uses `.kind-badge`/`.kind-badge--*`; it never
-    // carries a status dot (the sensor row above it already shows one per
-    // kind).
+    // Per-model trash icon (no confirmation) and an I/R/C `.kind-badge` without a dot; the sensor row shows the dots.
     const renderModelRow = (model: FailureModel) => (
         <div key={model.id} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div
@@ -232,16 +152,8 @@ export default function FailureGroupsPanel({
         </div>
     );
 
-    // One collapsible line per SENSOR per group: the header shows the sensor
-    // once plus a mini chip per kind that exists; the per-model rows (and
-    // their delete buttons) sit inside the expansion. No category control
-    // here — category is set on Build Model's sensor header.
-    //
-    // The I/R/C badge SHELL uses `.kind-badge`/`.kind-badge--*`; the corner
-    // STATUS DOT uses `.f4-kb-dot`/`.f4-kb-dot--*`. Do not rename the dot
-    // class: `BuildModelWorkbenchStatusDotCrossWindow.integration.test.tsx`
-    // reads it with a `/f4-kb-dot--(\w+)/` regex, and a rename would make that
-    // assertion silently read back "none" for every state instead of failing.
+    // One collapsible line per sensor per group: a chip per existing kind in the header, model rows with delete inside. Category is set in Build Model.
+    // Do not rename `.f4-kb-dot`: `BuildModelWorkbenchStatusDotCrossWindow.integration.test.tsx` reads it by regex and would silently read "none".
     const renderSensorRow = (groupNo: number, sg: SensorModelGroup) => {
         const id = `${groupNo}:${sg.key}`;
         const open = expandedSensors.has(id);
@@ -268,10 +180,7 @@ export default function FailureGroupsPanel({
                             : <span className="fg-srow-plain">{label}</span>}
                     </button>
                     {kinds.map(k => {
-                        // One model per (sensor, kind) across the whole
-                        // workspace (Dashboard.tsx's `toggleSensorGroupKind`/
-                        // `findKindIn` enforce this) — `sg.models` here is
-                        // already scoped to this one FG, so at most one match.
+                        // One model per (sensor, kind) workspace-wide and `sg.models` is scoped to this FG, so at most one match.
                         const kindModel = sg.models.find(m => m.kind === k);
                         const dot = kindModel ? dotStatusFor(kindModel) : 'none';
                         return (
@@ -303,32 +212,21 @@ export default function FailureGroupsPanel({
     };
 
     const realGroups = [...fgGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
-    // "N groups · M sensors assigned · x of y models complete". Memoised on
-    // the Failure Group data alone, so a Dashboard re-render from a chart
-    // hover/pan never re-walks the models. `x` uses `isModelComplete`, the
-    // same rule as `isDone` and the per-group counters.
+    // Summary line, memoised so chart hover/pan doesn't re-walk models; `x` uses `isModelComplete`.
     const summary = useMemo(
         () => summarizeFailureGroups(fgGroups, fgModels, { ...runningConditionFg, models: fgModels }),
         [fgGroups, fgModels, runningConditionFg],
     );
-    // Real groups that no model belongs to yet: they get "Assign sensors →",
-    // and while one exists the landing callout keeps pointing at that step.
+    // Real groups with no model yet get "Assign sensors →"; while one exists the landing callout points at that step.
     const emptyGroupNos = useMemo(() => {
         const used = new Set<number>();
         for (const m of fgModels) for (const no of m.groupNos) used.add(no);
         return new Set(fgGroups.filter(g => g.no !== 0 && !used.has(g.no)).map(g => g.no));
     }, [fgGroups, fgModels]);
-    // Group 0 ("Not in Group") is a permanent sentinel carried in fgGroups
-    // for models built against a sensor that isn't part of any failure
-    // mode. Always rendered as its own card, so there is always an entry
-    // point to get a model into it.
+    // Group 0 ("Not in Group") is a permanent sentinel for sensors in no failure mode; always rendered as its own card.
     const ungroupedModels = fgModels.filter(m => m.groupNos.includes(0));
 
-    // Search box filtering, two-level match: a GROUP NAME match keeps every
-    // sensor line in that card; otherwise only sensor lines whose own
-    // description/tag matches survive, and a group with none left (and a
-    // non-matching name) is hidden entirely. Display/filter only — never
-    // touches which groups/models exist.
+    // Name match keeps all of a group's lines, otherwise only description/tag matches; a group left empty is hidden.
     const searchQuery = fgSearch.trim().toLowerCase();
     const sensorMatchesQuery = (sg: SensorModelGroup) => {
         if (!searchQuery) return true;
@@ -355,9 +253,7 @@ export default function FailureGroupsPanel({
         setGroupRecDraft(g.recommendation ?? '');
     };
 
-    // Debounced save (250ms). `toggleGroupDetails` seeds the drafts to match
-    // the group's current values on expand, so this naturally no-ops until
-    // the user actually changes something.
+    // Debounced save (250ms); `toggleGroupDetails` seeds drafts to current values on expand, so it no-ops until the user changes something.
     useEffect(() => {
         if (expandedGroupNo === null) return;
         const g = realGroups.find(x => x.no === expandedGroupNo);
@@ -390,9 +286,7 @@ export default function FailureGroupsPanel({
         setShowNewGroup(false);
     };
 
-    // "Not in Group" goes through the same search visibility rule as a
-    // real group (see `visibleSensorGroups` above) — computed once here
-    // since it isn't part of the `realGroups.map()` below.
+    // "Not in Group" uses the same search visibility rule as a real group; computed here since it isn't in the `realGroups.map()`.
     const notInGroupVisible = visibleSensorGroups(0, 'Not in Group');
 
     return (
@@ -416,10 +310,7 @@ export default function FailureGroupsPanel({
                     </span>
                 </div>
                 <div className="fg-legend">
-                    {/* No dot here on purpose — matches what an actual
-                        untrained badge renders below (renderSensorRow gates
-                        its dot on `dot !== 'none'`, so a never-trained model
-                        shows NO dot at all, not a neutral/ringed one). */}
+                    {/* No dot on purpose: a never-trained badge shows none (`renderSensorRow` gates the dot on `dot !== 'none'`). */}
                     <span>Not trained</span>
                     <span><i className="fg-legend-dot fg-legend-dot--trained" />Trained</span>
                     <span><i className="fg-legend-dot fg-legend-dot--complete" />Complete</span>
@@ -427,9 +318,7 @@ export default function FailureGroupsPanel({
             </div>
 
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                {/* Landing callout: after Import step 3, and on any project that
-                    still has no groups or an empty group. Names the lucide button,
-                    never an emoji. */}
+                {/* Landing callout for projects with no groups or an empty group; refer to the lucide button by name, never an emoji. */}
                 {realGroups.length === 0 ? (
                     <div className="fg-callout" data-testid="fg-callout">
                         <b>No failure groups yet.</b> Failure groups come first: create one below, then assign the sensors that show it. You can explore the charts meanwhile.
@@ -518,12 +407,7 @@ export default function FailureGroupsPanel({
                                             style={{ resize: 'vertical', padding: '5px 7px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.72rem' }}
                                         />
                                     </div>
-                                    {/* Static label, not a live dirty/clean indicator — the
-                                        debounced autosave above already runs unconditionally
-                                        on every change, this just tells the user that's the
-                                        case (matches the approved prototype's `.gedit .saved`,
-                                        which is the same always-on label, not a tracked
-                                        pending/saved state machine). */}
+                                    {/* Static label, not a live dirty indicator: the debounced autosave always runs. */}
                                     <div className="fg-edit-saved">
                                         <Check size={12} /> Saved automatically
                                     </div>
@@ -624,9 +508,7 @@ export default function FailureGroupsPanel({
                     </button>
                 )}
 
-                {/* The only entry to the Build Model window (the Dashboard header
-                    has none). With no model to build it stays visible but
-                    disabled, the reason as its tooltip. */}
+                {/* Only entry to the Build Model window; with no model to build it stays visible but disabled, reason as tooltip. */}
                 <button
                     className="fg-build-model-btn"
                     onClick={onOpenBuildModel}

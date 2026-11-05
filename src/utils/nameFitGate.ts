@@ -1,21 +1,4 @@
-/**
- * The measured gates behind long sensor names (DESIGN_SYSTEM §4): pure state machines, plus the DOM helpers
- * that read and adjust a rendered name. The React side is `hooks/useNameFit.ts`.
- *
- * THE RULE THAT PREVENTS THE CRASH: a form picked by measuring can change the very sizes it was measured with,
- * so "needs the short form" and "would fit back" can both be true (React error 185 in the mock). A gate therefore
- * only goes back when its ROOM or TEXT changed. It remembers the room it decided in AND the room its own change
- * produced (`settling`), because in a shrink-to-fit parent the change itself moves the room.
- *
- * Markup contract (data attributes, so this file does not depend on CSS class names):
- *  - `data-name-run` / `data-name-full`: on a name label of a set: the set id and its unshortened text.
- *  - `data-name-part="pre" | "head" | "tail"`: direct children of a split name.
- *  - `data-name-part="line1"` + `data-name-form="two-line"`: the two-line form (`pre`/`head` inside `line1`).
- *  - `data-short`: set here on a split whose visible head is under ~8 characters; the CSS then hides the head.
- *  - `data-short-pre`: the same for a kept start (`pre`) that is cut under ~8 characters.
- *  - `data-name-summary` / `data-name-ref`: a recipe summary and one sensor reference in it (never shrinks below
- *    "…" + its tail).
- */
+/** Measured gates for long sensor names (pure state machines + DOM helpers; React side is hooks/useNameFit.ts). A measured form can change the sizes it was measured with (React error 185), so a gate goes back only when its room or text changed; it remembers the room it decided in and the one its own change produced (`settling`). */
 import { fontOf, textWidth, type MeasureText } from './textMeasure';
 
 /** Rooms a decision stands for; `settling`: the next measurement's room is the result of our own change. */
@@ -32,7 +15,6 @@ function settled<T extends RoomPin>(s: T, room: string): T {
 /** Two sizes as one room key (the element's parent and its row). */
 export const roomKey = (parentPx: number, rowPx: number): string => `${parentPx}|${rowPx}`;
 
-// ---- two lines ----
 
 export interface TwoLineState extends RoomPin {
     two: boolean;
@@ -61,7 +43,6 @@ export function decideTwoLine(prev: TwoLineState, m: TwoLineMeasurement): TwoLin
     return { ...s, rooms: [m.room] };
 }
 
-// ---- a plain line with a richer cut form ----
 
 export interface LineCutState extends RoomPin {
     cut: boolean;
@@ -81,7 +62,6 @@ export function decideLineCut(prev: LineCutState, m: { room: string; clientWidth
     return { ...s, rooms: [m.room] };
 }
 
-// ---- the tail grows back ----
 
 export interface WideTailState extends RoomPin {
     k: number;
@@ -97,7 +77,6 @@ export function decideWideTail(prev: WideTailState, m: { room: string; best: num
     return { k: m.best, rooms: [], settling: true };
 }
 
-// ---- cut sets ----
 
 export interface CutRunState extends RoomPin {
     /** The room at which the whole name fits again. */
@@ -109,8 +88,7 @@ export function cutRunState(room: number, deficit: number): CutRunState {
     return { need: room + deficit + 2, rooms: [String(room)], settling: true };
 }
 
-/** The set after a measurement of its room; null: it goes back to the whole names. A room not rendered (0) says
- *  nothing. The room the cut itself produced (a scrollbar gone, say) never brings it back. */
+/** Null = back to whole names. Room 0 (not rendered) changes nothing; the room produced by the cut itself never brings it back. */
 export function decideCutRun(prev: CutRunState, room: number): CutRunState | null {
     if (!room) return prev;
     const key = String(room);
@@ -136,12 +114,10 @@ export function nameDeficit(el: HTMLElement, measure: MeasureText = textWidth): 
     return d;
 }
 
-// ---- whole-word heads, short heads, chips ----
 
 const MIN_HEAD_CH = 8;
 
-/** The px width at which `text` + "…" ends at its last whole word within `room`; -1 when not even the first
- *  word fits (only then a mid-word cut is allowed). */
+/** Width in px of the text up to its last whole word that fits `room`, plus '…'; -1 when not even the first word fits (then a mid-word cut). */
 export function wholeWordWidth(text: string, room: number, font: string, measure: MeasureText = textWidth): number {
     const ell = measure('…', font);
     let best = -1;
@@ -167,8 +143,7 @@ const underMinHead = (el: HTMLElement) => isCut(el) && el.clientWidth < parseFlo
 
 const part = (split: HTMLElement, name: string) => split.querySelector<HTMLElement>(`:scope > [data-name-part="${name}"]`);
 
-/** The minimums a split has set outside itself. The chip and its wrappers outlive the split (a name back to plain
- *  text is a new element), and a minimum worked out for the cut form can be wider than the plain name. */
+/** Minimums a split set on elements outside itself; the chip outlives the split, so they are released with it. */
 const heldBySplit = new WeakMap<HTMLElement, Map<HTMLElement, string>>();
 
 function hold(split: HTMLElement, el: HTMLElement, minWidth: string) {
@@ -210,8 +185,7 @@ function holdSummaryRef(split: HTMLElement, tail: HTMLElement) {
     hold(split, ref, `calc(${min} + ${extra}px)`);
 }
 
-/** Adjusts one rendered split name to its current room: a cut head ends at a whole word, a head under ~8
- *  characters is dropped (`data-short`), a chip or summary reference keeps its minimum. */
+/** Fits a split name to its room: a cut head ends at a whole word, a head under ~8 characters is dropped (`data-short`). */
 export function applyNameFit(split: HTMLElement, measure: MeasureText = textWidth): void {
     if (!split.isConnected) return;
     if (split.dataset.nameForm === 'two-line') {
@@ -240,8 +214,7 @@ export function applyNameFit(split: HTMLElement, measure: MeasureText = textWidt
 let sharedObserver: ResizeObserver | null = null;
 const splitsByTarget = new Map<Element, Set<HTMLElement>>();
 
-/** Keeps `applyNameFit` current on a split as its row resizes. One shared observer serves every row of a long
- *  list. Returns the cleanup (usable as a React 19 ref cleanup), which also takes back the split's minimums. */
+/** Re-fits the split as its row resizes, with one shared observer; the returned cleanup releases its minimums. */
 export function watchNameFit(split: HTMLElement | null): () => void {
     if (!split) return () => {};
     const raf = requestAnimationFrame(() => applyNameFit(split));
@@ -254,8 +227,7 @@ export function watchNameFit(split: HTMLElement | null): () => void {
             for (const e of entries) splitsByTarget.get(e.target)?.forEach(s => applyNameFit(s));
         }));
     }
-    // The row, and the head itself: the flex row can squeeze a head with the row's own size unchanged (the tail
-    // growing back, a sibling chip). `applyNameFit` measures from the reset state, so its own change cannot loop.
+    // Observe the row and the head: the flex row can squeeze the head without the row resizing.
     const head = part(split, 'head');
     const targets = head ? [target, head] : [target];
     for (const t of targets) {

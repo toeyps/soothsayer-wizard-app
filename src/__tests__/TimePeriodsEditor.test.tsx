@@ -119,8 +119,7 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(onChange).not.toHaveBeenCalled();
         expect(onPending).toHaveBeenLastCalledWith('P2');
         expect(field.value).toBe(''); // the field keeps what is being typed
-        // ...while the row keeps its committed state (P2 is the last period: a blank end would
-        // otherwise read as "End of data", and its days would run to the end of the dataset)
+        // The row keeps its committed state: a blank end on the last period would read as 'End of data'.
         expect(screen.getByTestId('period-days-2').textContent).toBe('24 d');
         expect(screen.queryByTestId('period-open-end')).toBeNull();
         fireEvent.blur(field);
@@ -160,8 +159,7 @@ describe('TimePeriodsEditor — adding and committing', () => {
         expect(onPending).toHaveBeenLastCalledWith(null);
     });
 
-    // A real datetime-local reports '' as soon as ONE segment is
-    // cleared, and '' is a VALID value on P1's start / the last period's end ("Start of data").
+    // A cleared datetime-local segment reports ''; '' is valid only for P1's start and the last end ('Start of data').
     it('clearing P1 start (or the last end) by typing never opens the bound: blur and Enter put the date back; only the × opens it', () => {
         const onChange = vi.fn();
         render(<Harness initial={[A, B]} onChange={onChange} />);

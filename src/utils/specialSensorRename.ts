@@ -1,31 +1,18 @@
 import { FailureModel, SpecialSensorRecipe } from '../types';
 
-/** Tag comparison is case-insensitive everywhere else this app matches a
- *  sensor tag (see `specialSensorDeps.ts`'s own `key()`), so it is here too. */
+/** Tag comparison is case-insensitive, as in `specialSensorDeps.ts`'s `key()`. */
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/**
- * Everything a special sensor's rename has to carry through, besides the
- * recipe/metadata pair itself (owned by `AddSensorWindow`'s save flow) — the
- * flat arrays, tag-keyed records, and
- * Failure Group models scattered across `AddSensorWindow.tsx` and
- * `Dashboard.tsx` that name a sensor by its tag. Kept as small, focused pure
- * functions rather than one big "rename everywhere" helper so each call site
- * only touches the shape of state it actually owns.
- */
+/** Carry a special sensor's rename through state that names sensors by tag: arrays, tag-keyed records, Failure Group models. Small pure functions so each call site touches only the state it owns. */
 
-/** Rename every occurrence of `oldTag` inside a flat array of tags
- *  (`selectedSensors`, `visibleSensors`, `sensorHeaders`, ...). A no-op
- *  (same array reference) when `oldTag` isn't present. */
+/** Rename `oldTag` in a flat tag array; returns the same array reference when absent. */
 export function renameTagInArray(tags: string[], oldTag: string, newTag: string): string[] {
     const target = key(oldTag);
     if (!tags.some(t => key(t) === target)) return tags;
     return tags.map(t => (key(t) === target ? newTag : t));
 }
 
-/** Rename the key of a `Record<sensorTag, T>` map (`sensorColors`,
- *  `sensorAxisRange`, `alarmLinesEnabled`), preserving whatever value lived
- *  under the old key. A no-op if the old key isn't present. */
+/** Rename a key of a `Record<sensorTag, T>`, keeping its value; no-op if the key is absent. */
 export function renameTagInRecord<T>(record: Record<string, T>, oldTag: string, newTag: string): Record<string, T> {
     const target = key(oldTag);
     const foundKey = Object.keys(record).find(k => key(k) === target);
@@ -37,14 +24,7 @@ export function renameTagInRecord<T>(record: Record<string, T>, oldTag: string, 
     return next;
 }
 
-/**
- * Rename every occurrence of `oldTag` across a Failure Group model's sensor-
- * bearing fields (see `specialSensorDeps.ts`'s `MODEL_SENSOR_FIELDS` for the
- * read-only version of this same list — kept separate here because each
- * field needs a different write-back shape: scalar, flat array, or an array
- * of objects), including `customRunningConditionFilters` — each model's own
- * per-condition `sensor` field.
- */
+/** Rename `oldTag` across a model's sensor-bearing fields, including `customRunningConditionFilters`. Mirrors `MODEL_SENSOR_FIELDS` in specialSensorDeps.ts; separate because each field has its own write-back shape. */
 export function renameTagInModels(models: FailureModel[], oldTag: string, newTag: string): FailureModel[] {
     const target = key(oldTag);
     const swap = (s: string) => (s && key(s) === target ? newTag : s);
@@ -62,20 +42,7 @@ export function renameTagInModels(models: FailureModel[], oldTag: string, newTag
     }));
 }
 
-/**
- * Rename every occurrence of `oldTag` inside the workspace-wide running-
- * condition filter (`FailureGroupStateSlice.runningConditionFilters`). Same
- * shape as `renameTagInModels`'s per-field
- * swap, just against one flat array instead of scattered across every
- * model's own fields.
- *
- * Dashboard's `rename-special-sensor` listener rewrites
- * the workspace's `runningConditionFilters` through this (persisted with
- * `withFailureGroupState` + broadcast), and the same function re-keys the
- * Dashboard's own Filter tab conditions (`filters.sensorFilters`, the same
- * `{ sensor }` shape) -- Rust silently drops a condition on an unknown sensor,
- * so a stale tag would turn the filter off without any sign in the UI.
- */
+/** Rename `oldTag` in the workspace running-condition filter; also used to re-key the Dashboard Filter tab. Rust silently drops a condition on an unknown sensor, so a stale tag would turn the filter off with no sign. */
 export function renameTagInRunningConditionFilters<T extends { sensor: string }>(
     filters: T[],
     oldTag: string,
@@ -86,30 +53,14 @@ export function renameTagInRunningConditionFilters<T extends { sensor: string }>
     return filters.map(f => (key(f.sensor) === target ? { ...f, sensor: newTag } : f));
 }
 
-/**
- * Drop every condition that names one of `tags` (a deleted special sensor).
- * Same case/space-insensitive match as the rename helpers. A no-op (same array
- * reference) when nothing matches. Used for the Dashboard's Filter tab: its
- * conditions are not a reason to block a delete (they are view-only), but they
- * must not keep naming a column that is gone -- Rust would silently ignore them
- * while the tab still showed the condition as applied.
- */
+/** Drop conditions naming a deleted special sensor (same case/space-insensitive match); same array when nothing matches. Filter-tab conditions don't block a delete, but Rust would ignore one on a gone column while the tab showed it applied. */
 export function removeTagsFromFilters<T extends { sensor: string }>(filters: T[], tags: string[]): T[] {
     const gone = new Set(tags.map(key));
     if (!filters.some(f => gone.has(key(f.sensor)))) return filters;
     return filters.filter(f => !gone.has(key(f.sensor)));
 }
 
-/**
- * Rename every reference to `oldTag` inside a list of OTHER special sensor
- * recipes — a formula-kind recipe's `$oldTag`/`${oldTag}` reference (via the
- * Rust `rename_formula_refs` command, which reuses the same tokenizer
- * `extract_formula_refs` does, so a name that's a prefix of another one
- * can't get corrupted), or an operation-kind recipe's `sourceSensors` entry
- * (a plain string, swapped directly). A recipe that doesn't reference
- * `oldTag` at all comes back as the SAME object reference, so callers can
- * tell nothing changed for it without a deep-equal check.
- */
+/** Rename references to `oldTag` in other recipes: formulas via Rust `rename_formula_refs`, operations via `sourceSensors`. Same tokenizer as `extract_formula_refs`, so prefix names aren't corrupted. An unaffected recipe comes back as the same object. */
 export async function renameTagInRecipes(
     recipes: SpecialSensorRecipe[],
     oldTag: string,

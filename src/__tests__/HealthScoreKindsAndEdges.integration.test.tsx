@@ -1,20 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Health score — per-kind specifics and edge cases with
- * the REAL Dashboard + Build Model window on the fake Rust health backend:
- *   - Individual master-data prefill: both / one / no alarm, special sensor,
- *     first-open snapshot of an old model (written once, never written back to
- *     master data), "use <master>", late metadata.
- *   - Relationship: cache_key follows the fingerprint, NOT_FITTED after a reload
- *     -> Re-train, Compare predictors, signs / asymmetric points.
- *   - Clustering: stepper / quick buttons, criteria ranges changed elsewhere.
- *   - Mark complete is the ONLY way to Complete (no full-view page / Finish
- *     control exists).
- *   - Misc: long / unicode names, empty units, malformed previews, tiny numbers,
- *     keyboard, accessible names.
- */
+/* Health score per-kind specifics and edge cases, with the real Dashboard + Build Model window on the fake Rust health backend. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -91,9 +78,6 @@ async function createViaSheet(tag: string, kindLabel: string) {
     await settle(50);
 }
 
-// ---------------------------------------------------------------------------
-// Individual master prefill
-// ---------------------------------------------------------------------------
 
 describe('Individual: master-data prefill (snapshot, chips, reset, never written back)', () => {
     it('one-sided (TAG3: H only) and none (TAG2): chips say so, the empty side is "required", nothing is guessed', async () => {
@@ -185,10 +169,7 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
         expect(env.files.has(`workspaces/${WS}/output/Pump ΔP (ปั๊ม)/INDV_INFO_Pump ΔP (ปั๊ม).json`)).toBe(false);
     });
 
-    // BEHAVIOUR PIN (reported, not a failure): an old model opened while the window has
-    // NO sensor metadata (payload `sensorMetadata: null`, i.e. no mapping) is snapshotted as
-    // "master has nothing" (null/null) on its first Health page open, and stays that way
-    // when metadata arrives later — `persistedSetPointsOf` treats `null` as "loaded, empty".
+    // Pinned: first open with no metadata freezes the snapshot at null/null (`persistedSetPointsOf` treats `null` as 'loaded, empty').
     it('late metadata: a first open with no metadata freezes the snapshot at null/null (pinned)', async () => {
         writeDisk(wsTrained({}, [model({ id: 'i1', kind: 'individual', healthSetPoints: { kind: 'individual', lower: null, upper: null } })]));
         await mountWindows({ dashboard: false, meta: null });
@@ -204,9 +185,6 @@ describe('Individual: master-data prefill (snapshot, chips, reset, never written
     });
 });
 
-// ---------------------------------------------------------------------------
-// Relationship specifics
-// ---------------------------------------------------------------------------
 
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
 
@@ -279,11 +257,10 @@ describe('Relationship specifics', () => {
         expect(sub).toHaveLength(1); // step 1 only; step 2 = the trained fit
         expect(sub[0].args.predictors).toEqual(['TAG3']);
         expect(sub[0].args.cache_key).toBeUndefined();
-        // Bounded response: the sub-model call (and the Train call whose response is reused as the
-        // last card) both ask for at most max_points rows, never every row.
+        // Bounded response: the sub-model call and the Train call whose response is reused both ask for at most max_points rows.
         expect(sub[0].args.max_points).toBe(4000);
         expect(env.backend!.cmds('preview_relationship_model').filter(c => c.args.cache_key).every(c => c.args.max_points === 4000)).toBe(true);
-        expect(modal.getAllByTestId('sub-model-card')[0].textContent).toMatch(/2·RMSE\d/); // no row-count ("N") tile any more
+        expect(modal.getAllByTestId('sub-model-card')[0].textContent).toMatch(/2·RMSE\d/); // no row-count ("N") tile
         expect(env.backend!.relCacheKeys()).toEqual(cacheBefore);
         fireEvent.keyDown(window, { key: 'Escape' });
         await settle(50);
@@ -308,9 +285,6 @@ describe('Relationship specifics', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Clustering specifics
-// ---------------------------------------------------------------------------
 
 describe('Clustering specifics', () => {
     const clu = (over: Record<string, unknown> = {}) => model({
@@ -364,9 +338,6 @@ describe('Clustering specifics', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Mark complete is the only road to Complete
-// ---------------------------------------------------------------------------
 
 describe('Mark complete (Health score page) is the only way a model becomes Complete', () => {
     it('no "Open full view" / "Finish" control exists on either page, and a model with valid SAVED set points stays Incomplete until Mark complete runs', async () => {
@@ -426,14 +397,10 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
         expect(env.backend!.cmds('export_model_files')).toHaveLength(0);
         expect(diskModel('r1').status).toBe(false);
         expect(bmw().getByTestId('save-error').textContent).toMatch(/is no longer in memory, so it was not marked complete/);
-        // The refusal marks the fit as gone and asks the preview again: NOT_FITTED -> the one
-        // silent re-fit -> the page is back and Mark complete can be pressed again (it used to stay
-        // enabled on the old preview and fail the same way on every click).
+        // The refusal marks the fit as gone and asks the preview again: NOT_FITTED, one silent re-fit, then Mark complete works again.
         await settle(400);
         await waitFor(() => expect(markBtn().disabled).toBe(false));
-        // The fit came back BY ITSELF, so the refusal stays on the page (it is what tells the
-        // user to click again) — but the notice line no longer says "fix it": nothing is left
-        // to fix, only the second click is missing.
+        // The fit came back by itself: the refusal stays (click again) but the notice no longer says 'fix it'.
         expect(bmw().getByTestId('save-error').textContent).toMatch(/Load it again, then Mark complete\.$/);
         expect(bmw().getByTestId('wb-notice').getAttribute('data-tone')).toBe('bad');
         const footSentence = bmw().getByTestId('wb-notice').querySelector('.wbx-reason')!.textContent;
@@ -445,9 +412,6 @@ describe('Mark complete (Health score page) is the only way a model becomes Comp
     });
 });
 
-// ---------------------------------------------------------------------------
-// Misc edges
-// ---------------------------------------------------------------------------
 
 describe('misc edges', () => {
     it('a very long unicode description, an empty unit and Thai text render on both pages without throwing', async () => {
@@ -507,13 +471,7 @@ describe('misc edges', () => {
         expect(bmw().getByRole('button', { name: 'Larger' })).toBeTruthy();
     });
 
-    // Each input's accessible name starts with the ONE name of its point on the score ruler
-    // ("0 low — the residual where the score reaches 0 on the low side" ...), so the four
-    // accessible names are distinct.
-    // Guards against: the four Relationship inputs once were labelled "Lower", "Upper",
-    // "Lower", "Upper" (the former set-point table): the 80-point and the 0-point of the
-    // same side shared one accessible name, so a screen reader (or a label search) could not
-    // tell them apart.
+    // Each input's accessible name starts with its own point on the score ruler, so the four are distinct.
     it('A11Y BUG: each Relationship set-point input has a distinct accessible name', async () => {
         writeDisk(wsTrained({}, [model({ id: 'r1', kind: 'relationship', predictorSensors: ['TAG3'], healthSetPoints: REL_SP })]));
         await mountWindows({ dashboard: false });
@@ -525,13 +483,7 @@ describe('misc edges', () => {
         expect(new Set(names).size).toBe(4);
     });
 
-    // `formatSetPointText` shows the full-precision value (round-trip safe).
-    // Guards against: set points of small-magnitude sensors are DISPLAYED rounded to 6
-    // decimals (`toText` in SetPointsCard.tsx:52: `String(+v.toFixed(6))`). A stored
-    // 0.0000004 (or a residual point of -4e-7) re-opens as "0", and 0.00012345 as
-    // "0.000123", while the model (and the exported file) keep the real value — the page
-    // shows a different number than the one that is used. The model files keep
-    // 4 significant digits for such sensors; the input must not lose them.
+    // `formatSetPointText` shows the full-precision value: a stored 0.0000004 must not reopen as '0'.
     it('BUG: a tiny stored set point (4e-7) is shown as itself, not as "0", when the Health page opens', async () => {
         const ds = plantDataset();
         ds.headers.push('VIB');

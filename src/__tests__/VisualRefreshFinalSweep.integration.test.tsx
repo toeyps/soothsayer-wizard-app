@@ -1,24 +1,4 @@
-/**
- * Cross-cutting stylesheet checks. jsdom never applies App.css, so component
- * tests cannot see whether the surfaces that share ONE token/class set
- * (Dashboard Sensor tab, Dashboard Failure Groups tab, Build Model Workbench)
- * agree with each other in the stylesheet, or that what the components render
- * still exists in it:
- *
- *   1. CSS contract — the same semantic element (I/R/C kind colour, status
- *      dot colour, modal backdrop, popover surface) resolves to the same
- *      value on every surface, after resolving the `var(--…)` aliases back
- *      to their base tokens.
- *   2. Class contract — every class the components render (all dot states,
- *      legend, footer, edit panel, the portaled popovers) is defined in
- *      App.css, so a rename can't silently leave an unstyled element.
- *   3. Regressions: the FG-tab legend never shows a dot no badge renders;
- *      portaled popovers never resurrect at a stale captured anchor after
- *      their row unmounts and remounts (collapse/expand, search
- *      filter-out/clear) or after a chart-type round trip; a popover left
- *      open while the search narrows the list closes; a popover that GROWS
- *      while open is re-clamped to the viewport.
- */
+/** Stylesheet checks jsdom can't do: shared tokens/classes agree across windows and every rendered class exists in App.css. */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
@@ -31,7 +11,6 @@ import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { rcOn } from './helpers/trainTestFixture';
 import type { FailureGroup, FailureModel, FailureGroupStateSlice, SensorMetadata, TimeHighlight, ValueHighlight } from '../types';
 
-// ── tiny App.css parser (jsdom does not load the stylesheet) ─────────────
 
 type CssRule = { selectors: string[]; decls: Record<string, string>; inAtRule: boolean };
 
@@ -89,7 +68,6 @@ function resolve(value: string | undefined, seen = 0): string | undefined {
 }
 const prop = (selector: string, p: string) => resolve(declsFor(selector)[p]);
 
-// ── shared fixtures ───────────────────────────────────────────────────────
 
 function makeModel(o: Partial<FailureModel> = {}): FailureModel {
     return {
@@ -172,7 +150,6 @@ afterEach(() => {
     document.getElementById('wizard-portal-root')?.remove();
 });
 
-// ── 1. CSS contract across the four surfaces ─────────────────────────────
 
 describe('CSS contract: the same semantic element renders the same on every refreshed surface', () => {
     const KINDS = ['individual', 'relationship', 'clustering'] as const;
@@ -241,12 +218,7 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
         expect(src('src/components/charts/ScatterChart.tsx')).toContain('[0.0627, 0.0627, 0.0706, 1.0]');
     });
 
-    // The ECharts option builders use the app's neutral chart literals
-    // (txtPrimary '#ededef', txtSecondary '#8c8c94', gridLine '#2a2a30',
-    // tooltipBg 'rgba(23, 23, 28, 0.92)', tooltipBorder
-    // 'rgba(255, 255, 255, 0.12)'), never the Tailwind slate palette
-    // (#94a3b8 / #334155 / navy tooltip rgba(30,41,59,…)) — so every chart
-    // in one window shows the same tooltip/grid.
+    // Chart option builders use the neutral chart literals, never the Tailwind slate palette, so tooltips/grids match.
     it('no chart option builder on Build Model still uses the pre-refresh slate palette Phase 1 removed from LineChart', () => {
         const offenders: string[] = [];
         for (const f of ['src/components/windows/BuildModelWindow.tsx', 'src/components/windows/SubModelsModal.tsx', 'src/components/windows/workbench/healthCharts.ts', 'src/components/windows/workbench/healthPageCharts.ts', 'src/components/windows/workbench/chartTheme.ts', 'src/components/charts/LineChart.tsx']) {
@@ -258,11 +230,8 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
     });
 });
 
-// ── 2. class contract: what the refreshed components render exists in App.css ──
 
-// Classes rendered as pure hooks (no styling ever intended) or Tailwind
-// utilities — pre-existing before the refresh, checked against the
-// pre-Phase-0 App.css (b6eebf3~1): none of these were ever defined there.
+// Classes that are pure hooks or Tailwind utilities, never defined in App.css.
 const NOT_EXPECTED_IN_APP_CSS = new Set([
     'fg-panel-widget',
     'h-full', 'flex', 'flex-col', 'flex-shrink-0', 'flex-1', 'min-h-0', 'overflow-y-auto',
@@ -326,14 +295,9 @@ describe('class contract: every class the refreshed components render is defined
     });
 });
 
-// ── 3. regressions ──────────────────────────────────────────────────────
 
 describe('FG tab legend vs the badges it explains', () => {
-    // The legend's "Not trained" entry has NO dot marker: the app renders
-    // "no dot = never trained" (`dot !== 'none' && …` in
-    // FailureGroupsPanel.tsx's renderSensorRow, and Build Model's own left
-    // list does the same), so the legend must not explain a grey dot that
-    // no badge on screen shows.
+    // The legend's 'Not trained' entry has no dot, matching the badges (no dot = never trained).
     it('the legend\'s "Not trained" marker matches what an untrained badge actually renders', () => {
         const { container } = render(<FailureGroupsPanel {...fgPanelProps()} />);
         const legendNotTrained = screen.getByText('Not trained').querySelector('.fg-legend-dot');
@@ -345,12 +309,7 @@ describe('FG tab legend vs the badges it explains', () => {
 });
 
 describe('SensorSelection assignment sheet — never left open or resurrected over a row that is gone (same class as fixed bug #6)', () => {
-    // The add-to-FG AnchoredPopover (whose stale captured rect these
-    // tests used to pin) became the docked Failure Group Assignment sheet. The
-    // failure mode is the same — a panel for a sensor whose row left the list,
-    // popping back unasked — so the same three triggers are kept, now asserting
-    // the sheet is closed and stays closed. (Its arrow is re-measured from the
-    // live row on every scroll/resize, so it can no longer sit at a stale rect.)
+    // The assignment sheet must stay closed when its sensor's row leaves the list and returns.
     const sheet = () => screen.queryByTestId('fg-sheet');
 
     it('collapsing then re-expanding the component does not resurrect the sheet', () => {
@@ -407,13 +366,7 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
         chartType,
     });
 
-    // Same pattern as the Dashboard colour/pin popovers (see
-    // Dashboard.test.tsx's "Line -> Scatter -> Line" tests): the popover's
-    // render is gated on `highlightApplies` (false on Pair Plot), and its
-    // open state is cleared the moment that turns false — so
-    // Line -> Pair Plot -> Line never re-mounts the picker unasked at the
-    // old captured screen position (the panel's layout changes in between:
-    // the "Not shown on Pair Plot" banner appears above the list).
+    // The colour popover renders only while highlights apply, so it can't reappear at a stale anchor.
     it('Line -> Pair Plot -> Line does not resurrect the time-highlight colour popover unasked', () => {
         const { rerender } = render(<HighlightsPanel {...hlProps('line')} />);
         const swatch = screen.getByTitle('Highlight colour');
@@ -423,17 +376,12 @@ describe('HighlightsPanel colour popover — same stale-anchor resurrection via 
         rerender(<HighlightsPanel {...hlProps('pair')} />);
         expect(openPopovers()).toHaveLength(0);
         rerender(<HighlightsPanel {...hlProps('line')} />);
-        expect(openPopovers()).toHaveLength(0); // actual: 1, at the pre-switch top (132px)
+        expect(openPopovers()).toHaveLength(0);
     });
 });
 
 describe('AnchoredPopover viewport clamp (direct consumer)', () => {
-    // This block used to also pin the clamp against the add-to-FG
-    // menu GROWING while open (creating a group added a row; a ResizeObserver
-    // re-ran the clamp). That menu is now the docked assignment sheet, which is
-    // sized by the Sensors panel instead of clamped near an anchor, so those two
-    // cases went with it. The ResizeObserver path itself is still covered by
-    // AnchoredPopover.test.tsx; the direct clamp is re-confirmed here.
+    // Direct check of the AnchoredPopover clamp; its ResizeObserver path is covered in AnchoredPopover.test.tsx.
     it('the clamp itself still works for a direct AnchoredPopover consumer (re-confirms fix #2 after Phases 2-4)', () => {
         HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
             if (this.classList.contains('sensor-popover')) {

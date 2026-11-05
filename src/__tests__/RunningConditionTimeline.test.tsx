@@ -7,11 +7,7 @@ import type { TestPeriod, TimePeriod } from '../types';
 
 afterEach(cleanup);
 
-/*
- * The timeline hero of the Running-condition settings (workbench redesign SPEC
- * §5): month axis, Train lane (P1 P2), Score lane (S1 S2, dashed), invalid =
- * red, and the ONE caption under it.
- */
+/* Running-condition timeline: month axis, Train lane, Score lane (dashed), invalid = red, one caption under it. */
 
 // 2026/01/01 00:00 → 2026/05/01 00:00 = 120 days, so percentages are easy to read.
 const bounds = { min: '2026-01-01 00:00:00', max: '2026-05-01 00:00:00' };
@@ -185,11 +181,7 @@ describe('RunningConditionTimeline — lanes', () => {
 
 describe('RunningConditionTimeline — the one caption', () => {
     const cap = () => screen.getByTestId('rc-caption');
-    /**
-     * User decision 2026-10-14: the Build Model window never says how many data rows are
-     * used. The caption has no rows part in ANY state of the count — no "N of M rows (x%)
-     * used for training", no "Counting rows…", no "… to count the rows".
-     */
+    /** The Build Model window never says how many rows are used: no rows part in the caption in any count state. */
     const expectNoRowsPart = () => {
         expect(screen.queryByTestId('rc-caption-rows')).toBeNull();
         expect(cap().querySelector('.rct-cap-rows')).toBeNull();

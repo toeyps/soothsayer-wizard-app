@@ -29,9 +29,7 @@ describe('FilterPanel', () => {
 
         expect(screen.queryByText('No sensor filters applied.')).toBeNull();
         expect(sensorValues()).toEqual(['A']);
-        // Operator is now a 4-button segmented control, not a <select> --
-        // "greater_than" (">") is the default, shown as the only `.is-on`
-        // button in the segment.
+        // Operator is a 4-button segmented control; "greater_than" (">") is the default and the only `.is-on` button.
         const greaterThanBtn = screen.getByTitle('Greater than');
         expect(greaterThanBtn.className).toContain('is-on');
     });
@@ -111,9 +109,7 @@ describe('FilterPanel', () => {
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
         expect(screen.queryByText('No sensor filters applied.')).toBeNull();
 
-        // Parent's sensorFilters actually changed content (not just a new
-        // object with the same values) — this panel must adopt it, discarding
-        // the local unapplied "Add condition" row.
+        // Parent's sensorFilters changed content (not just a new object): the panel adopts it, discarding the local unapplied "Add condition" row.
         rerender(
             <FilterPanel
                 filters={{
@@ -129,17 +125,7 @@ describe('FilterPanel', () => {
         expect((screen.getByPlaceholderText('value') as HTMLInputElement).value).toBe('5');
     });
 
-    // Regression: the local draft used to be
-    // re-derived from `filters` whenever `filters` differed from the
-    // CURRENT DRAFT -- so a re-render that supplied an unrelated piece of
-    // `filters` (e.g. the time period, changed by the Dashboard timebar's
-    // Reset period / Apply relative range / Start-End edits, which live in
-    // this same FilterState) looked just like an external reset and
-    // silently discarded whatever sensorFilters condition the user was
-    // mid-typing. The fix only re-syncs the piece of the draft that
-    // actually changed upstream (see the `lastSyncedFilters` comment in
-    // FilterPanel.tsx) -- this test pins the "unrelated change, same
-    // sensorFilters content" half of that fix directly.
+    // An unrelated `filters` change (e.g. the time period) must not discard a condition the user is mid-typing; only the piece that changed upstream is re-synced.
     it('an unrelated re-render whose sensorFilters content is unchanged does not touch the in-progress draft', () => {
         const { rerender } = render(
             <FilterPanel filters={emptyFilters} onFiltersChange={vi.fn()} selectedSensors={['A']} />,
@@ -159,10 +145,7 @@ describe('FilterPanel', () => {
         expect(screen.queryByText('No sensor filters applied.')).toBeNull();
     });
 
-    // Regression: switching away from "between" hid
-    // the max-value input but kept its draft value, so Apply still sent a
-    // stale `value2` for an operator that no longer shows or uses it, and
-    // switching back to "between" resurrected the old max.
+    // Switching away from "between" must drop the hidden max, or Apply sends a stale `value2` and switching back resurrects it.
     it('switching away from "between" clears the now-hidden max value from the draft', () => {
         render(<FilterPanel filters={emptyFilters} onFiltersChange={vi.fn()} selectedSensors={['A']} />);
         fireEvent.click(screen.getByText('Add condition').closest('button')!);
@@ -279,10 +262,7 @@ describe('FilterPanel', () => {
         });
     });
 
-    // A special sensor was renamed / deleted in the Add Special Sensor
-    // window. The Dashboard rewrites the APPLIED filters itself; `sensorChange`
-    // carries the same change into the panel's unapplied draft (the Dashboard
-    // cannot see it), without throwing away unrelated unapplied typing.
+    // A special sensor renamed/deleted in the Add Special Sensor window: the Dashboard rewrites the APPLIED filters; `sensorChange` carries it into the unapplied draft.
     describe('sensorChange (a special sensor renamed / deleted while the panel is open)', () => {
         const cond = (id: string, sensor: string, value1 = '4') => ({ id, sensor, operation: 'greater_than' as const, value1, value2: '' });
         const selectValues = sensorValues;

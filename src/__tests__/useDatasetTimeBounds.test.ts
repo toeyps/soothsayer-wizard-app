@@ -64,15 +64,13 @@ describe('useDatasetTimeBounds', () => {
         unmount();
         resolve({ min: '2020-01-01T00:00:00', max: '2020-06-01T00:00:00' });
         await Promise.resolve();
-        // Nothing to assert on `result` post-unmount beyond "no throw" — the
-        // live-flag guard is what prevents a set-state-after-unmount warning.
+        // No assertion beyond no throw: the live-flag guard prevents a set-state-after-unmount warning.
         expect(result.current).toBeDefined();
     });
 });
 
-// The Build Model window outlives its dataset (it is re-pointed at another workspace while it stays
-// open), so it passes a key — workspace + Rust dataset generation. The bounds it holds are a hard
-// input of the "no data to train on" guards: the OLD dataset's range must never be read as the new one's.
+// The window outlives its dataset (re-pointed while open), so it passes a key (workspace + Rust dataset generation);
+// the old dataset's range must never be read as the new one's.
 describe('useDatasetTimeBounds(datasetKey) — bounds belong to ONE dataset', () => {
     const A = { min: '2025-01-01T00:00:00', max: '2025-12-31T23:59:00' };
     const B = { min: '2027-01-01T00:00:00', max: '2027-12-31T23:59:00' };

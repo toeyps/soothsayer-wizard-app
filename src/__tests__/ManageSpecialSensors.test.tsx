@@ -170,7 +170,7 @@ describe('ManageSpecialSensors', () => {
         fireEvent.click(screen.getByLabelText(/^Edit (.* · )?special A$/));
         expect(props.onEdit).toHaveBeenCalledWith('special A');
         rerender(<ManageSpecialSensors {...props} editingTag="special A" />);
-        // Clicking it again re-opens it (no toggle); no editor is expanded inside the list any more.
+        // Clicking it again re-opens it (no toggle); no editor is expanded inside the list.
         expect(screen.getByLabelText(/^Edit (.* · )?special A$/).getAttribute('aria-pressed')).toBe('true');
         fireEvent.click(screen.getByLabelText(/^Edit (.* · )?special A$/));
         expect(props.onEdit).toHaveBeenLastCalledWith('special A');
@@ -247,10 +247,7 @@ describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
     });
 });
 
-// A sensor whose recipe could not be rebuilt this
-// session is flagged on its row with an amber note (its editor -- now the
-// Formula editor on the Create tab -- unlocks the formula even under a lock;
-// covered in AddSensorWindow.test).
+// A sensor whose recipe could not be rebuilt shows an amber note on its row.
 describe('ManageSpecialSensors -- not restored', () => {
     const usesC = makeModel({ id: 'm2', name: 'Pump model', targetSensor: 'special C' });
     const specialC: SpecialSensorRecipe = { kind: 'formula', tag: 'special C', formula: 'round($11PT1214A.PV, 2)' };

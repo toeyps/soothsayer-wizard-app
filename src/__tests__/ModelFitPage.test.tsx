@@ -116,12 +116,10 @@ describe('ModelFitPage — Individual', () => {
         // the app's ONE formatter for computed values: up to 3 decimals, never padded
         expect(tile('stat-mean')).toEqual({ label: 'Mean', value: '5', unit: '°C', sub: 'learned normal' });
         expect(tile('stat-sd')).toEqual({ label: 'SD', value: '1', unit: '°C', sub: '±1SD 4 – 6' });
-        // the fixture's bins: 10 rows in 0–2 and 10 rows in 8–10 lie outside 2 … 8 → 20 of 1,000 = 2.00%.
-        // User decision 2026-10-14: the Build Model window never says how many rows — the caption
-        // used to start "≈ 20 rows · "; only the ±3SD range is left, with no dangling "·".
+        // Fixture: 10 rows in 0-2 and 10 in 8-10 lie outside 2..8 = 2.00%. The caption shows only the ±3SD range, no row count.
         expect(tile('stat-outside3')).toEqual({ label: 'Outside ±3SD', value: '2.00%', unit: null, sub: '±3SD 2 – 8' });
         expect(screen.getByTestId('stat-outside3').textContent).not.toMatch(/≈|rows?\b|\b20\b/);
-        // the share is an estimate from the bins: the tile says so on hover (the old table row's tooltip)
+        // the share is an estimate from the bins: the tile says so on hover
         expect(screen.getByTestId('stat-outside3').getAttribute('title')).toBe('Estimated from the distribution bins');
     });
 
@@ -288,8 +286,7 @@ describe('ModelFitPage — Relationship', () => {
         expect(p.onCompare).toHaveBeenCalledTimes(1);
     });
 
-    // These read through the Workbench's own older formatter, which
-    // printed a non-zero value below 0.0005 as "0.000" (the app's rule: never show a non-zero as 0).
+    // A non-zero value must never show as 0.
     it('a tiny non-zero statistic never reads as zero: "0.0002", not "0.000"', () => {
         const base = makeHealthPreview({ kind: 'relationship', target: 'T1', predictors: ['A'] });
         const data = { ...base, stats: { ...(base.stats as any), residual_mean: 0.0002, residual_sd: 0.00004567, rmse: 1234.5678, two_rmse: -0 } };
@@ -305,8 +302,7 @@ describe('ModelFitPage — Relationship', () => {
         expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3);
     });
 
-    // The hover box says which colour is which (user decision 2026-11-03), and "Actual" / "Predicted"
-    // drawn at the line ends did not follow their lines through a wheel-zoom or a drag.
+    // The hover box says which colour is which; no names drawn on the plot (they didn't follow zoom or drag).
     it('Target vs predicted has no colour key beside the chart, and draws NO name on the plot', () => {
         page(rel(), { target: 'T1', predictors: ['A', 'B'] });
         expect(legendOf('tvp')).toBeNull();
@@ -331,15 +327,13 @@ describe('ModelFitPage — Relationship', () => {
 describe('ModelFitPage — Clustering', () => {
     const clu = () => model({ kind: 'clustering', targetSensor: '', xSensor: 'X1', ySensor: 'Y1' });
 
-    // User decision 2026-10-11: the whole right-hand column is gone (the "Clusters" summary card —
-    // rows / centre per cluster, "In no range" — and the "Train and scoring periods" card under it).
+    // No right-hand column: no Clusters summary card or Train/scoring periods card.
     it('the cluster scatter with its rings is the board\'s ONLY card and spans its full width, under the KPI strip — no summary card, no side column', () => {
         page(clu(), { n_clusters: 2, criteria_sensor: 'LOAD' });
         const board = screen.getByTestId('model-fit-clustering');
         expect([...board.children].map(c => c.getAttribute('data-testid'))).toEqual(['cl-stats', 'chart-card-cl']);
         expect([...board.querySelectorAll('section')].map(c => c.getAttribute('data-testid'))).toEqual(['chart-card-cl']);
-        // full width: the board's two-column grid with the card spanning every column
-        // (not the "chart + 350px side column" grid it had while the side column existed)
+        // Full width: the two-column grid with the card spanning every column.
         expect(board.className).toBe('wb2-board wb2-g2');
         expect(screen.getByTestId('chart-card-cl').className).toMatch(/(^| )wb2-full( |$)/);
         expect(screen.getByTestId('chart-card-cl').className).toMatch(/wb2-card--xtall/);
@@ -364,8 +358,7 @@ describe('ModelFitPage — Clustering', () => {
         // "split by" names the criteria sensor with the shared muted Inline label (description, then tag)
         expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '2', unit: null, sub: 'split by Label of LOADLOAD' });
         expect(screen.getByTestId('stat-clusters').querySelector('.wb3-kpi-s .sl--muted')).toBeTruthy();
-        // the fixture: 95 of 100 rows fall in a criteria range, 5 in none — said as a share and in
-        // words, never as "5 rows outside every criteria range" (user decision 2026-10-14)
+        // 95 of 100 rows fall in a criteria range, 5 in none: said as a share and in words, never a row count.
         expect(tile('stat-assigned')).toEqual({ label: 'In a cluster', value: '95.0%', unit: null, sub: 'the rest is outside every criteria range' });
         expect(strip.textContent).not.toMatch(/\d[\d,]*\s*rows?\b/);
         // the stats' own share (the fixture: 98.9% of the training rows inside the 3× SD ring)
@@ -377,8 +370,7 @@ describe('ModelFitPage — Clustering', () => {
     it('one cluster has no criteria sensor: the Clusters tile says so; "Inside 3× SD" has its number WITHOUT a scoring period', () => {
         page(clu(), { n_clusters: 1 });
         expect(tile('stat-clusters')).toEqual({ label: 'Clusters', value: '1', unit: null, sub: 'one cluster · no criteria sensor' });
-        // No `test_validation` here (no scoring period): the share comes from the stats (2026-10-14 —
-        // the tile used to read "—" for every model without a scoring period).
+        // No `test_validation` (no scoring period): the share comes from the stats.
         expect(tile('stat-inside3')).toMatchObject({ value: '98.9%', sub: 'of the training rows · score ≥ 80' });
     });
 
@@ -429,9 +421,7 @@ describe('ModelFitPage — Clustering', () => {
         expect(screen.getByTestId('cl-stats').textContent).not.toMatch(/\d[\d,]*\s*rows?\b/);
     });
 
-    // A name drawn on the chart is the ONLY key
-    // only on a chart that cannot zoom or pan. The Clusters chart zooms on both axes and a
-    // ring's name leaves the view with the ring's edge — so the rings also get a fixed key.
+    // Clusters zooms on both axes, so a name on the chart is not enough: rings also get a fixed key.
     it('the rings are named on the chart, once per level, AND in a fixed key under it (the chart zooms and pans)', () => {
         page(clu(), { n_clusters: 2 });
         expect(chartOf('cl').getAttribute('data-ring-labels')).toBe('1× SD|3× SD');
@@ -497,7 +487,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
             onXPredictorChange={vi.fn()} onCompare={vi.fn()} trainDaysEstimate={extra.estimate} />);
     };
 
-    /** The removed "Train and scoring periods" table (user decision 2026-10-11) left nothing behind. */
+    /** Nothing of the 'Train and scoring periods' table remains. */
     const expectNoTrainTestCard = (boardId: string) => {
         const board = screen.getByTestId(boardId);
         expect(screen.queryByTestId('train-test-card')).toBeNull();
@@ -548,8 +538,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expect(chartOf('res').getAttribute('data-strip')).toBe('TRAIN');
     });
 
-    // workbench-redesign SPEC §3: the scopes are named in the strip above the plot.
-    // User decision 2026-10-12: only the TRAIN period is highlighted — no band, no frame and no "S1" / "S2" for a scoring period.
+    // Only the TRAIN period is highlighted: no band, frame, or 'S1'/'S2' for scoring periods.
     it('only the train period is highlighted on a time chart: the strip reads "TRAIN" alone, no scoring band is drawn — and the subtitle still says which rows the chart shows', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
         expect(chartOf('ts').getAttribute('data-strip')).toBe('TRAIN');
@@ -565,8 +554,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
     it('the rows of the scoring periods are still drawn, exactly as before: the line is cut once (between TRAIN and S1), never inside or between the scoring periods', () => {
         mount(model(), { target: 'T1' }, withTests('individual'));
         expect(chartOf('ts').getAttribute('data-line-points')).toBe('5'); // 2 train rows + 3 scoring rows
-        // one gap, 01:00 → 02:00 (no period covers 01:30–02:00). Cut from the train period alone it would be three:
-        // the rows at 02:00, 03:00 and 04:00 would each stand apart.
+        // One gap, 01:00 to 02:00 (no period covers 01:30-02:00); cut from the train period alone it would be three.
         expect(chartOf('ts').getAttribute('data-line-gaps')).toBe('1');
         cleanup();
         mount(model({ kind: 'relationship', predictorSensors: ['A'] }), { target: 'T1', predictors: ['A'] }, withTests('relationship'));
@@ -599,8 +587,7 @@ describe('ModelFitPage — train and scoring periods ("just score it", 2026-10-1
         expectNoTrainTestCard('model-fit-clustering');
     });
 
-    // The S-number of a scoring period (its ORIGINAL list position) is shown by the "Scoring results" card on the
-    // Health score page (HealthScorePage.test.tsx, BuildModelWindow.test.tsx) — this page prints no scoring name at all.
+    // S-numbers show on the Health score page; this page prints no scoring name.
     it('whatever testNumbers says, the chart strip names no scoring period (neither "S1" nor "S2"); slowScoring shows the hint', () => {
         const data = { ...makeHealthPreview({ kind: 'individual', target: 'T1' }), test_validation: makeValidation({ tests: [makeTestResult({ index: 1 })] }) };
         render(<ModelFitPage model={model()} stale={false} preview={{ ...idle, data }} unit="°C" data={data}

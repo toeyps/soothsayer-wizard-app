@@ -3,12 +3,7 @@ import { attachFollowY, followRange, getFollowY, withFollowY, type FollowYSpec }
 import { buildTimeSeriesOption, niceExtent } from '../components/windows/workbench/healthCharts';
 import { buildScoreOption } from '../components/windows/workbench/healthPageCharts';
 
-/*
- * User decision 2026-10-16: on the Model fit and Health score pages a time chart's Y axis
- * follows the zoom window — the values inside it plus every reference line (±1SD / ±3SD,
- * L / H, ±2RMSE, 80 / 0), so a model line never leaves the plot. The Health score chart
- * stays 0-100.
- */
+/* Y axis follows the zoom window plus every reference line; the Health score chart stays 0-100. */
 
 const HOUR = 3600e3;
 const ts = (n: number) => Array.from({ length: n }, (_, i) => new Date(Date.UTC(2025, 0, 1) + i * HOUR).toISOString().slice(0, 19).replace('T', ' '));

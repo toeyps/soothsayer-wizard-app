@@ -1,33 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Train copy + page
- * states, the app-wide "Relation model" wording and the
- * engine messages Rust sends. Real Dashboard + real
- * Build Model window + real `workspaceManager` on one in-memory workspace
- * file, the fake Rust backend.
- *
- *   A. Train copy / page states that depend on what is on DISK or on the other
- *      window: the ▾ menu rows, the stale banner with no dead link, closing
- *      during a run, "Load it again" for a Complete model, a legacy Complete
- *      model whose ▾ train failed.
- *   B. Wording: a workspace saved with "X (Relationship)" names; a whole
- *      journey in which neither window ever says "Relationship", "sidecar",
- *      "Python" or the algorithm's name.
- *   C. The engine fails with the sentences Rust sends today: every place
- *      shows that fixed sentence and nothing else.
- *
- * Covered elsewhere and NOT repeated here:
- *   - a Custom-mode model trains, opens Health score and is marked Complete
- *     while the WORKSPACE running condition is unset:
- *     `WorkbenchSpineOneButton.integration.test.tsx` ("a Custom-mode model while…");
- *   - a Complete Relation model whose fit Rust dropped (NOT_FITTED) + "Load it
- *     again": `WorkbenchFitLostCrossWindow.integration.test.tsx` (a) / (c);
- *   - every menu label / state line / board per kind in one window with mocked
- *     storage: `BuildModelWindow.test.tsx`, `TrainQueueParts.test.tsx`;
- *   - the source scan for forbidden words: `UserFacingWording.test.ts`.
- */
+/* Train copy + page states, app-wide "Relation model" wording, engine messages from Rust. Real Dashboard + Build Model + `workspaceManager`, in-memory file, fake Rust. A: states from disk/other window (▾ menu rows, stale banner, closing during a run, "Load it again"). B: old "X (Relationship)" names; a journey that never says "Relationship", "sidecar", "Python" or the algorithm name. C: engine failures show Rust's fixed sentence only. Also covered: WorkbenchSpineOneButton, WorkbenchFitLostCrossWindow, BuildModelWindow.test.tsx, TrainQueueParts.test.tsx, UserFacingWording.test.ts. */
 
 vi.mock('@tauri-apps/api/event', async () => (await import('./helpers/healthEnv')).eventModule());
 vi.mock('@tauri-apps/plugin-fs', async () => (await import('./helpers/healthEnv')).fsModule());
@@ -84,7 +58,7 @@ const SP1 = { kind: 'individual', lower: 20, upper: 80, masterLower: 20, masterU
 const SP_WIDE = { kind: 'individual', lower: -500, upper: 500, masterLower: null, masterUpper: null };
 const EMPTY_SP = { kind: 'individual', lower: null, upper: null };
 const REL_SP = { kind: 'relationship', residualAt80Lower: -5, residualAt80Upper: 5, residualAt0Lower: -10, residualAt0Upper: 10 };
-// (`scoringIntervalSecs`: a record as THIS build writes it — the saved results use 1-hour averages; one without it gets the footer's "earlier row-by-row scoring" hint, covered in BuildModelWindow.test.tsx)
+// `scoringIntervalSecs`: a record as THIS build writes it; without it the footer's "earlier row-by-row scoring" hint shows (BuildModelWindow.test.tsx).
 const record = (setPoints: unknown) => ({ at: '2026-10-05T08:00:00.000Z', outputDir: env.backend!.outputDir(WS), setPoints, scoringIntervalSecs: 3600 });
 const FG = { runningConditionTimePeriods: [P_IN], runningConditionTestPeriods: [S_IN] };
 
@@ -142,9 +116,6 @@ const ENGINE_NO_OUTPUT = 'The Relation model engine stopped without returning a 
 const ENGINE_NO_START = 'The Relation model engine could not start: it is missing from this installation or is damaged. Please reinstall or update the app. Detail: program not found';
 const ENGINE_OUTDATED = 'SIDECAR_OUTDATED: The Relation model engine in this build is out of date - please reinstall or update the app.';
 
-// ---------------------------------------------------------------------------
-// The words a user must never read
-// ---------------------------------------------------------------------------
 
 const FORBIDDEN = /relationship|sidecar|python|linear\s*gam|\bgam\b|pygam|nuitka|stderr|traceback/i;
 /** Everything a user can read or hear in the document: text, tooltips, labels, placeholders, field values. */
@@ -164,9 +135,6 @@ function expectCleanWords(step: string) {
     expect(hit, `a forbidden word is readable — ${step}`).toEqual([]);
 }
 
-// ---------------------------------------------------------------------------
-// A. Train copy / page states
-// ---------------------------------------------------------------------------
 
 describe('A. Train sensor ▾ and the page states, on the real workspace file', () => {
     it('the ▾ menu follows the train records on disk: one row for a single-model sensor; "Re-train all 2 models" only once EVERY model was trained — and still after the app is restarted', async () => {
@@ -178,14 +146,12 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         await mountWindows();
         openDashFgTab();
 
-        // ── a sensor with ONE model: one row, named after the model — never "Train all 1 model" ──
         selectSensor('tag4', 2);
         await settle(300);
         openMenu();
         expect(menuRows()).toEqual({ 'only-individual': 'Train the Individual model | Not trained yet · ≈ 1 s' });
         closeMenu();
 
-        // ── Individual trained, Relation model never: the all-row is still "Train all" ──
         selectSensor('tag1');
         await waitForCharts();
         expect(trainBtn().textContent).toBe('▶ Train sensor · 1 of 2');
@@ -199,7 +165,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         closeMenu();
         expect(dashDot(1, 'tag1', 'relationship')).toBe('none');
 
-        // ── Train sensor trains the one that needs it; the record lands on disk and on the Dashboard ──
         await act(async () => { fireEvent.click(trainBtn()); });
         await waitFor(() => expect(stripPhase()).toBe('done'), { timeout: 8000 });
         await settle(50);
@@ -215,7 +180,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(all()['only-relationship']).toBe('Re-train Relation model only | Up to date · trains anyway');
         closeMenu();
 
-        // ── restart: the labels come from the file, not from this session ───
         await restartApp();
         selectSensor('tag1');
         await waitForCharts();
@@ -242,7 +206,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(bmw().queryByTestId('stale-banner')).toBeNull();
         const banner = () => bmw().getByTestId('stale-banner');
 
-        // ── another window changes the condition: stale, and Train sensor WOULD train it ──
         await otherWriter({ runningConditionFilters: [{ ...COND, value1: '20' }] });
         await waitFor(() => expect(banner().getAttribute('data-state')).toBe('stale'));
         expect(banner().textContent).toBe('Settings or running condition changed — this model is Incomplete again. Train it again with Train sensor ↑ to update the charts. Your set points are kept.');
@@ -251,7 +214,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(document.activeElement).toBe(trainBtn());
         expect(trainBtn().disabled).toBe(false);
 
-        // ── now nothing can train it (no train period inside the data): the reason, no link ──
         await otherWriter({ runningConditionTimePeriods: [P_OUT] });
         await waitFor(() => expect(banner().getAttribute('data-state')).toBe('blocked'));
         expect(bmw().queryByTestId('stale-go-train')).toBeNull();
@@ -263,7 +225,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(diskModel('i1').healthSetPoints).toEqual(SP1);
         expect(diskModel('i1').lastTrainedAt).toBe('2026-10-01T10:00:00.000Z');
 
-        // ── the period is back inside the data; a run is active on ANOTHER sensor ──
         await otherWriter({ runningConditionTimePeriods: [P_IN] });
         await waitFor(() => expect(banner().getAttribute('data-state')).toBe('stale'));
         const hold = env.backend!.gate('compute_sensor_stats', a => a?.sensor === 'TAG4');
@@ -406,7 +367,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         // nothing was trained by opening it
         expect(env.backend!.cmds('compute_sensor_stats').filter(c => c.args.sensor === 'TAG3')).toHaveLength(0);
 
-        // ── the ▾ row trains it — and the engine fails ──────────────────────
         env.backend!.failOn('compute_sensor_stats', a => a?.sensor === 'TAG3', 'Failed to read column: transient I/O error.');
         fireEvent.click(within(board()).getByTestId('board-train-menu'));
         const row = bmw().getByTestId('train-menu-only-individual') as HTMLButtonElement;
@@ -424,7 +384,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
         expect(modelsBytes()).toBe(bytes);
         expect(dashDot(1, 'tag3', 'individual')).toBe(dot0);
 
-        // ── the way out works: the same menu row, now it trains ─────────────
         fireEvent.click(within(board()).getByTestId('board-train-menu'));
         await act(async () => { fireEvent.click(bmw().getByTestId('train-menu-only-individual')); });
         await waitFor(() => expect(freshOnDisk('i3')).toBe(true), { timeout: 8000 });
@@ -438,9 +397,6 @@ describe('A. Train sensor ▾ and the page states, on the real workspace file', 
     });
 });
 
-// ---------------------------------------------------------------------------
-// B. Wording
-// ---------------------------------------------------------------------------
 
 describe('B. "Relation model" everywhere — and a workspace that still holds the old word in its model names', () => {
     it('saved names "X (Relationship)": both windows open with the same names, statuses and train records (nothing is rewritten); Mark complete (after a set-point change) keeps the saved name; a suggested name says "(Relation model)"', async () => {
@@ -458,7 +414,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         selectKindTab('Relation model');
         await waitForCharts();
 
-        // ── opened: the same model, the same state, in both windows ─────────
         expect(pill()).toBe('Complete');
         expect(bmwDot('r1').state).toBe('complete');
         expect(dashDot(1, 'tag1', 'relationship')).toBe('complete');
@@ -474,7 +429,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await settle(400);
         expect(modelsBytes()).toBe(bytes); // names, statuses, fingerprints, verdicts: byte-identical
 
-        // ── a suggested name for THIS model says "(Relation model)" ─────────
         const name = bmw().getByDisplayValue('Pump Pressure (Relationship)');
         fireEvent.change(name, { target: { value: 'Pump Pressure' } }); // the Individual model's name
         expect(bmw().getByTestId('duplicate-name-warning').textContent).toContain("Same name as this sensor's Individual model");
@@ -488,7 +442,7 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         expect(modelsBytes()).toBe(bytes);
         expect(pill()).toBe('Complete');
 
-        // ── a set point changed (Incomplete, export round 2026-10-20) → Mark complete: Complete again under the SAVED name (no files) ──
+        // A set point changed (Incomplete) -> Mark complete: Complete again under the SAVED name, no files.
         await openHealth();
         await waitFor(() => expect(bmw().getByTestId('check-valid')).toBeTruthy());
         await enterSp({ 'sp-residual_at_0_upper': '12' });
@@ -535,7 +489,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await mountWindows();
         expectCleanWords('both windows, empty workspace');
 
-        // ── Dashboard: the sensor's failure-group sheet ─────────────────────
         openDashSensorTab();
         fireEvent.change(dash().getByPlaceholderText('Search description, tag, unit or component…'), { target: { value: 'TAG1' } });
         await settle();
@@ -554,7 +507,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         await settle(100);
         expectCleanWords('the Failure Groups tab');
 
-        // ── Build Model: the new model, its settings ────────────────────────
         await waitFor(() => expect(bmw().getByTestId('sensor-list-row-fg:1-tag1')).toBeTruthy());
         selectSensor('tag1');
         await act(async () => { fireEvent.click(bmw().getByRole('button', { name: /Performance/i })); });
@@ -574,7 +526,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         expectCleanWords('the Train all preflight');
         fireEvent.click(bmw().getByTestId('train-all-close'));
 
-        // ── Train: the engine build is out of date (Rust's coded answer), then it fails to fit ──
         env.backend!.failOn('preview_relationship_model', a => !!a?.cache_key, ENGINE_OUTDATED);
         await act(async () => { fireEvent.click(trainBtn()); });
         await waitFor(() => expect(bmw().getByTestId('results-error')).toBeTruthy(), { timeout: 8000 });
@@ -592,7 +543,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         expect(dashDot(1, 'tag1', 'relationship')).toBe('none');
         expectCleanWords('Dashboard after the failed trains');
 
-        // ── it trains ───────────────────────────────────────────────────────
         await act(async () => { fireEvent.click(trainBtn()); });
         await waitFor(() => expect(freshOnDisk(id)).toBe(true), { timeout: 8000 });
         await waitForCharts();
@@ -602,7 +552,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
             expect(text, 'a chart label').not.toMatch(FORBIDDEN);
         }
 
-        // ── Compare predictors: one sub-model fit dies ──────────────────────
         env.backend!.failOn('preview_relationship_model', a => !a?.cache_key, ENGINE_NO_OUTPUT);
         await act(async () => { fireEvent.click(bmw().getByTestId('compare-predictors')); });
         const sub = await waitFor(() => screen.getByTestId('sub-models-modal'));
@@ -612,7 +561,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
         fireEvent.keyDown(window, { key: 'Escape' });
         if (screen.queryByTestId('sub-models-modal')) fireEvent.click(within(screen.getByTestId('sub-models-modal')).getAllByRole('button')[0]);
 
-        // ── Health score → Mark complete (the engine cannot start), then it works ──
         await openHealth();
         expectCleanWords('Health score page, empty set points');
         const w = env.backend!.lastOk('compute_health_preview').stats.two_rmse as number;
@@ -643,9 +591,6 @@ describe('B. "Relation model" everywhere — and a workspace that still holds th
     });
 });
 
-// ---------------------------------------------------------------------------
-// C. The engine fails
-// ---------------------------------------------------------------------------
 
 describe('C. the Relation model engine fails: only Rust\'s fixed sentence is shown, wherever it surfaces', () => {
     const rel = (o: Record<string, unknown> = {}) => model({ id: 'r1', name: 'Pressure from flow', kind: 'relationship', targetSensor: 'TAG1', predictorSensors: ['TAG3', 'TAG5'], ...o });

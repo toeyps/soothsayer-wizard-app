@@ -8,41 +8,17 @@ import { formatYearMonth } from '../../utils/dateFormat';
 import { parseLocal } from '../../utils/workbenchDate';
 import { boundsMs, formatPeriod, type DataBounds } from './periodDisplay';
 
-/*
- * The timeline hero of the Running-condition settings (workbench redesign SPEC
- * §5): a month axis ("2026/01", "2026/03" …), a TRAIN lane (P1, P2 … in train blue) and a SCORE lane
- * (S1, S2 … dashed, in the scoring colour), an invalid period in red, and the
- * ONE caption under it (`runningConditionCaption`). A period that lies entirely
- * outside the loaded data is a sliver on the edge it lies beyond — red when it
- * is new / changed in the draft (invalid), amber when it is exactly as it was
- * saved (a warning: it is simply not used). When the settled count says the
- * train periods hold no running row, one red line under the caption says there
- * is nothing to train on.
- *
- * The caption reads days only — train days (and the running time inside them),
- * scoring days, the recommendation. It NEVER says how many rows are used (user
- * decision 2026-10-14: no "N of M rows (x%) used for training", no "Counting
- * rows…"; do not add them back).
- *
- * Plain DOM positioned in percent of the dataset's time range — no chart
- * library, nothing to resize. It draws the lists it is given: the row editors
- * hand a typed date up as soon as it is complete (a half-typed one stays in its
- * field), so the blocks follow the edit. Drawing / dragging periods here is a
- * later step.
- */
+/* Timeline of the running-condition settings: month axis, TRAIN lane (P1…), SCORE lane (S1… dashed), invalid in red, one caption (`runningConditionCaption`). A period entirely outside the data is a sliver on the edge it lies beyond (red if new/changed, amber if as saved). No running row in the train periods: one red line says nothing to train on. The caption shows days only, never row counts. Plain DOM in % of the dataset time range; it draws the lists it is given. */
 
 export interface TimelineTick {
     pct: number;
     label: string;
 }
 
-/** At most this many month ticks are printed: a label is "2026/01" (7 mono
- *  characters, ~42 px), so 10 of them still stand apart on a narrow window. */
+/** Max month ticks printed: a label is ~42 px, so 10 still stand apart on a narrow window. */
 const MAX_MONTH_TICKS = 10;
 
-/** One tick per month start inside [t0, t1], labelled year/month in the app's
- *  date format ("2026/01", "2026/02" …); thinned evenly so at most
- *  `MAX_MONTH_TICKS` are printed. */
+/** One tick per month start in [t0, t1], 'YYYY/MM', thinned evenly to `MAX_MONTH_TICKS`. */
 export function monthTicks(t0: number, t1: number): TimelineTick[] {
     const span = t1 - t0;
     if (!(span > 0)) return [];
@@ -76,9 +52,7 @@ export interface TimelineBlock {
     openEnd: boolean;
     /** Tooltip / accessible text: "P1 · 2026/01/01 00:00 – 2026/02/28 23:59". */
     label: string;
-    /** The period lies entirely outside the dataset: a sliver on that edge
-     *  (`invalid` = red, a period new / changed in the draft; else amber — a
-     *  saved period, which only warns). */
+    /** Period lies entirely outside the data: a sliver on that edge (red if `invalid`, else amber for a saved period). */
     outside?: boolean;
 }
 
@@ -87,14 +61,7 @@ const OUTSIDE_SLIVER_PCT = 1.2;
 
 const isBlank = (s: string | null | undefined) => !(s ?? '').trim();
 
-/**
- * Where each period sits on the dataset's time range. An open end resolves to
- * the dataset bound; a reversed period is drawn over the time between its two
- * dates (red); a period that lies wholly outside the dataset — an open-ended one
- * included — is a sliver on the edge it lies beyond (`outside`; red when
- * `invalid[i]`, amber for a saved period that only warns — its row says which);
- * a period with an unreadable date has no block (its row says what is wrong).
- */
+/** Each period's place on the dataset range. Open end = dataset bound; reversed = red block between its dates; unreadable date = no block. Wholly outside the data (open-ended included) = sliver on its edge (`outside`; red if `invalid[i]`, else amber). */
 export function timelineBlocks(
     list: readonly { start: string; end: string }[],
     invalid: readonly boolean[],
@@ -113,9 +80,7 @@ export function timelineBlocks(
         const a = Math.max(b.t0, Math.min(s, e));
         const z = Math.min(b.t1, Math.max(s, e));
         const name = `${prefix}${i + 1}`;
-        // The SAME rule the rows are judged by (an open bound is unbounded there,
-        // so "open start … ends before the data" is outside too); a reversed
-        // period has no fit — it keeps its red block between its two dates.
+        // Same rule as the rows (an open bound is unbounded); a reversed period has no fit and keeps its red block between its two dates.
         const fit = periodDataFit(p, bounds);
         if (fit ? fit.outside : z < a) {
             // Nothing of it is inside the data: before the first row, or after the last.
@@ -173,12 +138,9 @@ export interface RunningConditionTimelineProps {
     tests: TestPeriod[];
     bounds: DataBounds | null | undefined;
     counts: PeriodCountsState;
-    /** The running condition (as drafted) is configured. `false` = "Only when
-     *  running" without a complete condition: the count (of every row) is not
-     *  read — no running time, no "nothing to train on". Default `true`. */
+    /** Running condition (as drafted) is configured; default `true`. `false` = 'Only when running' without a complete condition: the count isn't read, so no running time and no 'nothing to train on'. */
     configured?: boolean;
-    /** The lists as they are SAVED: a period unchanged from them that lies
-     *  outside the data only warns (amber sliver). Omitted = every period is new. */
+    /** Saved lists: a period unchanged from them that lies outside the data only warns (amber). Omitted = every period is new. */
     savedPeriods?: PeriodBaseline;
     savedTests?: PeriodBaseline;
 }
@@ -220,8 +182,7 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
                     </span>
                 )}
                 {cap.recommendedText && (
-                    // Amber while the counted train running time is below the
-                    // recommendation (never a block); the full sentence is the tooltip.
+                    // Amber while counted train running time is below the recommendation (never a block); the tooltip has the full sentence.
                     <span
                         className="rct-cap-min"
                         data-testid="rc-min-data"
@@ -233,9 +194,7 @@ function RunningConditionTimeline({ periods, tests, bounds, counts, configured =
                 )}
             </div>
             {cap.noRows && (
-                // The settled count of what is on screen: no running row in the train
-                // periods — nothing to train on (Train is blocked; Apply / Save
-                // changes too when this draft changed what is trained on).
+                // No running row in the train periods: nothing to train on (blocks Train, and Apply/Save if the draft changes the training rows).
                 <div className="rct-norows" role="alert" data-testid="rc-no-rows">{NO_TRAIN_ROWS_TEXT}</div>
             )}
         </section>

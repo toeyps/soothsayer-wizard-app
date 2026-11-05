@@ -4,14 +4,7 @@ import { dateText, formatBound, formatDataStamp, formatStamp, parseLocal } from 
 import * as workbenchDate from '../utils/workbenchDate';
 import * as periodDisplay from '../components/windows/periodDisplay';
 
-/*
- * The Workbench's date helpers (`utils/workbenchDate.ts`). They no longer have
- * a format of their own ("9 Feb 2026 23:50" is retired, user decision
- * 2026-10-12): every one prints through `utils/dateFormat.ts`, the one date
- * format of the whole app. `periodDisplay.test.ts` keeps testing the helpers
- * through the re-exports; this file covers the helpers themselves, that they
- * agree with the single source, and that none can print a month name.
- */
+/* Workbench date helpers print through `utils/dateFormat.ts` only; `periodDisplay.test.ts` tests them via the re-exports. This file covers the helpers, agreement with the source, and that none prints a month name. */
 const MONTH_NAME = /Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/i;
 
 describe('workbenchDate', () => {

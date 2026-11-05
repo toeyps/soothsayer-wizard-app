@@ -64,8 +64,7 @@ import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/t
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, noRowsTrainError, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
 import { fgLabel } from '../../utils/fgLabel';
 
-/** How long a Relation-model preview that scores scoring periods must have been loading before
- *  the "this can take up to ~15 s" hint shows (cached re-scores finish sooner). */
+/** Delay before the "up to ~15 s" hint shows for a Relation-model preview that scores periods. */
 const SLOW_SCORING_HINT_DELAY_MS = 1200;
 
 /** `flag`, but only once it has stayed true for `delayMs` (false at once). */
@@ -109,9 +108,6 @@ const DEFAULT_CLUSTER_RANGES = [
 /** A typed number whose commas are thousands separators only ("1,234.5", "-12,000"). */
 const THOUSANDS_GROUPED = /^[+-]?\d{1,3}(,\d{3})+(\.\d*)?$/;
 
-// `shortDecimals` / `TYPED_DECIMALS_MAX` / `fmtClusterBound` (a cluster boundary for display:
-// typed-looking values in full, float noise through `fmtNum`) live in `workbench/chartTheme.ts`,
-// shared with the Model fit page's cluster summary.
 /** The same boundary as plain input text (no thousands separators — an `<input>` value). */
 function clusterBoundInputText(v: number): string {
     if (shortDecimals(v) <= TYPED_DECIMALS_MAX) return String(v);
@@ -119,8 +115,7 @@ function clusterBoundInputText(v: number): string {
     return String(Number(a !== 0 && a < 0.001 ? v.toPrecision(3) : v.toFixed(3)));
 }
 
-// A group's colour comes from `getFgGroupColor` (utils/failureGroupColor.ts),
-// the one rule the Dashboard and the Import page's recent-project chip use too.
+// Group colour comes from getFgGroupColor (utils/failureGroupColor.ts), shared with the Dashboard and Import page.
 
 // Same oklch values as .fg-group-color-{name} in App.css, kept as plain JS
 // here rather than relied on via CSS inheritance.
@@ -132,11 +127,7 @@ const FG_ACCENT: Record<string, string> = {
     slate: 'var(--text-faint)',
 };
 
-/** Every model bucketed by its sensor key, workspace-wide (not scoped to one
- *  Failure Group) — the left list's "Component" grouping and the detail
- *  pane both need the sensor's FULL model set regardless of which FG a
- *  particular list row came from. Same identity (`modelSensorKey`) as
- *  `groupModelsBySensor`, just without the per-group filter. */
+/** Models bucketed by sensor key across all Failure Groups; same identity as groupModelsBySensor. */
 function allSensorGroups(models: FailureModel[]): SensorModelGroup[] {
     const out: SensorModelGroup[] = [];
     const byKey = new Map<string, SensorModelGroup>();
@@ -154,7 +145,6 @@ type SidebarFilter = 'all' | 'attn' | 'done' | 'sp';
 
 const LEGACY_BADGE = 'Legacy · all data';
 
-/** The sensor a model belongs to (its Target, or X for Clustering). */
 /** The sensor list pane (DESIGN_SYSTEM §4 rule 7): where its width is saved, and where it starts. */
 const LIST_WIDTH_KEY = 'wizard.buildModelListWidth';
 const LIST_DEFAULT_WIDTH = 300;
@@ -168,8 +158,7 @@ interface SettingsSummaryParts {
     fixed: string[];
 }
 
-/** Model settings, collapsed. Today's one line of text while it fits; only while it is really cut, the model's
- *  name and the Y sensor shrink (the Y sensor keeps its distinguishing end) and the counts stay whole. */
+/** Collapsed summary: one line while it fits; when cut, name and Y sensor shrink (Y keeps its end), counts stay whole. */
 function SettingsSummary({ text, parts }: { text: string; parts: SettingsSummaryParts }) {
     const [ref, cut] = useLineCut(text);
     if (!cut) return <span ref={ref} className="bmw-sets-sum">{text}</span>;
@@ -195,10 +184,7 @@ const KIND_COLOR: Record<ModelKind, string> = {
     clustering: 'var(--kind-clu)',
 };
 
-/** Unsaved edits to ONE model (kept per model id so switching a sensor's
- *  kind tabs never loses them). Only fields the user can edit here;
- *  `category` is deliberately absent (per-sensor, saved instantly from the
- *  detail header). */
+/** Unsaved edits to one model, kept per model id so kind-tab switches keep them; category is saved instantly, not here. */
 interface ModelDraft {
     name: string;
     predictors: string[];
@@ -208,8 +194,7 @@ interface ModelDraft {
     stiffness: number;
     numClusters: number;
     runningConditionMode: 'workspace' | 'custom';
-    /** Custom running-condition editor fields — they live in the draft, so they follow
-     *  the same Save-changes flow as every other field here. */
+    /** Custom running-condition fields; saved with the rest of the draft. */
     customFilters: WorkspaceSensorFilter[];
     customCombine: 'and' | 'or';
     customAllData: boolean;
@@ -235,9 +220,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
     customTestPeriods: m.customTestPeriods ?? [],
 });
 
-// Fixed order (not alphabetical) -- I/R/C is a small, natural taxonomy, not
-// an open-ended list like components, so it reads better presented in the
-// same order the kind toggles/badges use everywhere else in the app.
+// Fixed order, not alphabetical: matches the kind toggles/badges elsewhere.
 const KIND_ORDER: ModelKind[] = ['individual', 'relationship', 'clustering'];
 /** Left-list dot colour per status: green = complete, yellow = needs input /
  *  re-train, red = needs fixing, none = never trained. */
@@ -255,50 +238,32 @@ const TAB_WORDS: Record<ModelDotState, string> = {
 };
 /** A run of this session failed: red dot on the tab and in the list. */
 const TRAIN_FAILED_WORDS = 'Training failed';
-// (`FIT_GONE_WORDS` — the Relation-model fit Rust held is gone, NOT_FITTED: tab tooltip,
-// board title and the start of the notice-line sentence — lives next to the board itself.)
-/** Why Mark complete is blocked then, as the button's tooltip (the notice line turns
- *  "load it again" — and, for a model that is not Complete, "Train sensor ↑" — into links).
- *  A Complete model is never trained by Train sensor, so its reason does not name it. */
+/** Mark complete's blocked reason (tooltip); Train sensor never trains a Complete model, so its variant omits it. */
 const FIT_GONE_BLOCK_REASON = `${FIT_GONE_WORDS} · load it again, or re-train with Train sensor ↑`;
 const FIT_GONE_BLOCK_REASON_COMPLETE = `${FIT_GONE_WORDS} · load it again first`;
-/** Mark complete answered NOT_FITTED: the files need the fit Rust no longer holds. */
+/** Mark complete answered NOT_FITTED: it needs the fit Rust no longer holds. */
 const FIT_GONE_SAVE_MESSAGE = 'The fitted Relation model is no longer in memory, so it was not marked complete. Load it again, then Mark complete.';
-/** A COMPLETE model whose result could not be worked out again when it was opened (the
- *  silent load failed for another reason than a lost fit): tab / list tooltip, and the
- *  reason Mark complete again is blocked. Train sensor never trains an up-to-date
- *  Complete model, so these never point at it — "Load it again" is the way out. */
+/** Complete model whose result could not be recomputed on open: tooltip and Mark complete block reason. */
 const LOAD_FAILED_WORDS = "Couldn't load the model";
-/** The end of Mark complete's "N set points not valid — …" reason: a REJECTED set point
- *  (the notice line and the reason under the button are red for it; an empty one is amber). */
+/** Tail of the "N set points not valid" reason; red for a rejected set point, amber for an empty one. */
 const SET_POINTS_NOT_VALID_TAIL = ' not valid — fix before marking complete';
 const LOAD_FAILED_BLOCK_REASON = `${LOAD_FAILED_WORDS} · load it again first`;
 /** The gate badge (tab / list tooltip) of a model that still has to train and whose
  *  train periods hold no running row. */
 const NO_ROWS_BADGE = NO_TRAIN_ROWS_FOOTER;
-/** The line under Train sensor for a model on its OWN (Custom) running condition while the
- *  workspace one is not set / not valid: the card's "Set running condition" is the only
- *  filled button then, but nothing is blocked for this model. */
+/** Line under Train sensor for a Custom-condition model while the workspace condition is unset or invalid (not blocked). */
 const OWN_RC_NOT_BLOCKED = 'own running condition, not blocked';
 /** A model with results whose training scope holds no row of the loaded data (`noDataOf`). */
 interface ModelNoData { cause: NoModelDataCause; mode: 'workspace' | 'custom'; hasCondition: boolean }
-/** "Load it again" while Mark complete is writing this model's files (it runs the engine too). */
+/** "Load it again" while Mark complete is saving this model (it runs the engine too). */
 const FIT_RELOAD_SAVING_REASON = 'Wait for the save to finish';
 /** Mark complete while Rust is still answering for what was just typed (a moment). */
 const CHECKING_SET_POINTS = 'Checking the set points…';
 /** Mark complete while the health score could not be loaded (its red card has the Retry). */
 const PREVIEW_FAILED_BLOCK_REASON = 'The health score did not load · Retry above, then Mark complete';
-/** ...and when it could not be loaded because the dataset was replaced (STALE_SESSION):
- *  asking again cannot help, so that card has NO Retry — the notice line must not point at one. */
+/** Load failed because the dataset was replaced (STALE_SESSION): asking again cannot help, so no Retry. */
 const PREVIEW_STALE_BLOCK_REASON = TRAIN_STALE_MESSAGE;
-// (No note beside the Model-settings fields: the amber "changing it sets the model to
-// Incomplete" line that stood next to every training input, on every model whatever its
-// state, read as "something here is wrong" — removed 2026-10-12, user decision. A change
-// that needs a re-train is said when it happens: the stale banner and the Incomplete pill.)
-/** The most clusters a Clustering model can be SET to. Only the stepper is capped: a
- *  model saved with more keeps its count untouched — clamping it on open would change
- *  its train fingerprint and set it back to Incomplete — it just cannot be raised
- *  further ("−" still works). */
+/** Max clusters via the stepper only; a saved higher count is kept (clamping would change the train fingerprint). */
 const MAX_CLUSTERS = 5;
 const MAX_CLUSTERS_REASON = `At most ${MAX_CLUSTERS} clusters`;
 /** Word for word what Export results says (`x_equals_y` in workspace_export.rs). */
@@ -323,8 +288,7 @@ async function broadcastFailureGroups(payload: FailureGroupStateChangedPayload):
 }
 /** The close notice while a running export is finished first (capped like Mark complete). */
 const EXPORT_CLOSE_WAIT_NOTICE = 'Finishing the export first — the window closes by itself when it is done (at most 90 s).';
-/** Mark complete, Compare predictors and the Re-train buttons while a training
- *  run is active: one Relation-model sidecar call at a time. */
+/** Disabled while a training run is active: one Relation-model sidecar call at a time. */
 const TRAIN_RUN_ACTIVE_REASON = 'Wait for the training run to finish';
 /** A model whose Mark complete is being checked is not trained meanwhile. */
 const BEING_SAVED_REASON = 'It is being checked for Mark complete';
@@ -332,17 +296,12 @@ const BEING_SAVED_REASON = 'It is being checked for Mark complete';
 const RUN_CLOSE_WAIT_NOTICE = 'This model is still training. The window closes when it finishes. Close it again to stop training and leave now.';
 /** A model stopped by a close that gave up: its row says this, not "Failed". */
 const ENGINE_STOPPED_ROW_NOTE = 'Stopped before it finished';
-/** THE kind names of this window — tabs, tooltips, notices: Individual / Relation
- *  model / Clustering. (The UI never says "Relationship": CLAUDE.md naming rule.)
- *  The app-wide map (`utils/modelNames.ts`) — the Dashboard and the special-sensor
- *  lock sentences read the same one; `kindModelName` (a kind inside a sentence:
- *  "the Individual model", "the Relation model") comes from there too. */
+/** Kind names for this window; the UI says "Relation model", never "Relationship". */
 const KIND_TAB_LABEL: Record<ModelKind, string> = MODEL_KIND_LABEL;
 /** The ONE filled button of the detail pane (at most one filled button on
  *  screen) — see `primaryActionOf`. */
 type PrimaryAction = 'save' | 'train' | 'mark' | null;
 
-// ─── Train in place ───────────────────────────────────────────────────────
 // Shape returned by Rust's `compute_sensor_stats`.
 interface SensorStats {
     mean: number;
@@ -356,31 +315,20 @@ interface SensorStats {
     upper3: number;
 }
 
-/** One model's cached preview result, keyed by kind so the results stage can
- *  render the right chart without re-deriving which invoke produced it.
- *  Session-only: never persisted (only `lastTrainedAt`/`trainedFingerprint` are). */
+/** One model's cached preview result by kind; session-only, never persisted. */
 type TrainResult =
     | { kind: 'individual'; stats: SensorStats }
-    // `result.health_preview` is the bounded Relationship preview Rust returns
-    // when asked to cache the fit (no set points applied — draw it right away).
+    // Bounded preview Rust returns when asked to cache the fit; no set points applied.
     | { kind: 'relationship'; result: RelationshipPreviewResult }
     | { kind: 'clustering'; preview: ClusteringPreview };
 
 interface TrainCacheEntry {
-    /** The fingerprint this result was computed against — lets a stale
-     *  auto-recompute effect tell "already have the current result" apart
-     *  from "have an old one that happens to still be cached". */
+    /** Fingerprint the result was computed for; tells a current result from an old cached one. */
     fingerprint: string;
     result: TrainResult;
 }
 
-/** `TimePeriodsEditor`'s date fields hand a COMPLETE typed date to the parent on
- *  change; the blur re-sorts the list and commits a date that was still pending (a
- *  year being typed), and a half-typed field goes back to its committed date. A close
- *  path that is a plain state update (the modal's X / backdrop, the whole window's
- *  close) causes no DOM blur, so the editor would unmount without settling. Calling
- *  this before any close / Apply forces that blur synchronously — a no-op when
- *  nothing relevant is focused. */
+/** Call before any close/Apply: forces a blur so a pending typed date is committed (state-only closes cause no blur). */
 function flushFocusedInput(): void {
     const active = document.activeElement;
     if (active instanceof HTMLElement && typeof active.blur === 'function') active.blur();
@@ -389,14 +337,10 @@ function flushFocusedInput(): void {
 /** One shared empty list, so a hook input does not change identity per render. */
 const NO_PERIODS: TimePeriod[] = [];
 
-/** The neutral line next to Apply while a period date is half-typed (`name` =
- *  the row, "P1" / "S2"): its change is not in the draft yet, so there is no
- *  impact to show for it. */
+/** Neutral line next to Apply while a period date is half-typed (name = row, e.g. P1/S2). */
 const pendingDateText = (name: string): string => `Finish the date in ${name} to see what this changes`;
 
-/** The four workspace Running condition fields the settings modal edits as ONE
- *  local draft (nothing is written until Apply — see `applyRcDraft`). Same shape
- *  `persistRunningCondition` takes. */
+/** The workspace running-condition fields edited as one local draft; nothing is written until Apply. */
 interface RcDraft {
     filters: WorkspaceSensorFilter[];
     combine: 'and' | 'or';
@@ -411,20 +355,13 @@ type ProjectInfo = Pick<WorkspaceState, 'id' | 'name' | 'machine' | 'dataUtcOffs
 const projectInfoOf = (ws: WorkspaceState): ProjectInfo =>
     ({ id: ws.id, name: ws.name, machine: ws.machine, dataUtcOffsetMin: ws.dataUtcOffsetMin });
 
-/** The one-time conversion left the WORKSPACE condition unset although there was
- *  an old one to explain (conditions, "Use all rows" or the export's own line).
- *  `needs-set` alone is not enough: it is also the result when the workspace was
- *  simply never set and only Custom models were converted. */
+/** True when the conversion left the workspace condition unset although an old one existed. */
 function conversionMustSetAgain(c: RunningConditionConversion | null | undefined): boolean {
     if (!c || c.result !== 'needs-set') return false;
     return c.before.allRows || c.before.filters.length > 0 || !!c.before.savedStatus;
 }
 
-/** What is left of the conversion record once the WORKSPACE condition is Applied
- *  again: the workspace part (before / after / result / incomplete models) is
- *  settled, but a Custom model listed as `needs-set` that still has no complete
- *  "sensor > value" of its own (and is still Custom) must keep its "Own
- *  condition" line. `null` when nothing is left to explain. */
+/** Conversion record left after a workspace Apply: Custom needs-set models still without their own condition; null if none. */
 function conversionAfterWorkspaceApply(
     c: RunningConditionConversion | null | undefined,
     models: FailureModel[],
@@ -447,12 +384,7 @@ function conversionAfterWorkspaceApply(
     };
 }
 
-/** Draft vs. persisted comparison. JSON is enough: every draft object is built
- *  by spreading the persisted one (key order preserved) and the period editor
- *  hands back already-sorted lists. Scoring periods are compared as id / start /
- *  end only: the editor hands back periods without the legacy label / event
- *  time an old workspace may still have on disk, and losing those is not an
- *  edit (editing a date and typing it back must not read as "not applied"). */
+/** Draft vs persisted via JSON; scoring periods compare by id/start/end only (toScoringPeriods). */
 function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
     return a.combine === b.combine
         && a.allData === b.allData
@@ -461,32 +393,7 @@ function rcDraftEqual(a: RcDraft, b: RcDraft): boolean {
         && JSON.stringify(toScoringPeriods(a.testPeriods)) === JSON.stringify(toScoringPeriods(b.testPeriods));
 }
 
-/**
- * The single Build Model window — a singleton (label `build-model`) opened
- * from the Failure Groups tab's "Build Model" button.
- *
- * A master/detail "Workbench":
- *   - A left sensor list (search + filter chips + Failure-group/Component
- *     grouping) selects a sensor; the right detail pane shows that sensor's
- *     I/R/C tabs and, per model, two pages — Model fit (settings, Train,
- *     charts) and Health score (set points, checks, Mark complete). The header
- *     holds the actions (at most one filled button); a notice line appears at the
- *     bottom only while there is something to fix or wait for (no footer bar).
- *   - The workspace-wide running condition is the Step-1 card plus a settings
- *     modal wrapping `RunningConditionPanel` (see RunningConditionCard /
- *     RunningConditionPanel).
- *   - There is no "add" flow: toggling a sensor into a group (Dashboard's
- *     Sensor tab) is the sole way a model comes into existence, always as kind
- *     'individual'. A model's kind, its auto-filled identity sensor (Target / X)
- *     and FG membership are not editable here.
- *
- * All of this is local state — no window spawn for any of it.
- *
- * Owns `failureGroupState` jointly with Dashboard —
- * every write here is a read-modify-write against the full workspace file
- * and broadcasts `failure-group-state-changed` afterward so those other
- * windows never see stale data.
- */
+/** Singleton Build Model window (label `build-model`): sensor list plus per-model Model fit / Health score pages. Writes failureGroupState read-modify-write and broadcasts failure-group-state-changed. */
 export default function BuildModelWindow() {
     const [workspaceId, setWorkspaceId] = useState<string | null>(null);
     const [allSensors, setAllSensors] = useState<string[]>([]);
@@ -498,43 +405,20 @@ export default function BuildModelWindow() {
     const [runningConditionFilters, setRunningConditionFilters] = useState<WorkspaceSensorFilter[]>([]);
     // How the conditions above combine — 'and' (default) or 'or'.
     const [runningConditionCombine, setRunningConditionCombine] = useState<'and' | 'or'>('and');
-    // Workspace-default TRAIN periods. At least one is REQUIRED to train — an
-    // empty list does not mean "whole dataset" (`getBuildBlockReason`).
-    // A model in Workspace mode uses THIS list; Custom mode uses its own
-    // `filterTimePeriods`.
+    // Workspace train periods; at least one is required (empty is not the whole dataset). Custom mode uses filterTimePeriods.
     const [runningConditionTimePeriods, setRunningConditionTimePeriods] = useState<TimePeriod[]>([]);
-    // Workspace-default SCORING periods: the time the trained model gives a health
-    // score for; at least one is needed before Mark complete. Custom mode uses the
-    // model's own `customTestPeriods`.
+    // Workspace-default scoring periods; at least one is needed before Mark complete. Custom mode uses customTestPeriods.
     const [runningConditionTestPeriods, setRunningConditionTestPeriods] = useState<TestPeriod[]>([]);
-    // The workspace's Dashboard time highlights — only feed the amber TRAIN-period
-    // overlap warning ("Remove the overlap"; never drawn on Workbench charts, and
-    // not a source of scoring periods). Read from the workspace file at
-    // hydration and again whenever the Running condition settings open.
+    // Dashboard time highlights; only feed the train-period overlap warning. Re-read on hydration and when settings open.
     const [dashHighlights, setDashHighlights] = useState<TimeHighlight[]>([]);
-    // The workspace's special-sensor recipes, read from disk: a model trained on a
-    // special sensor whose formula changed since reads as out of date in every status
-    // (`isModelStale` & co. take them). Kept as ONE array per read, so the recipe
-    // signatures (memoised per array) are computed once, not per render.
+    // Special-sensor recipes, one array per read so signatures are computed once; a changed formula makes models stale.
     const [specialRecipes, setSpecialRecipes] = useState<SpecialSensorRecipe[] | null>(null);
-    // Drives the Workbench's Running condition settings modal (opened from the
-    // Step-1 card's Edit / Set running condition / Fix period button).
     const [rcFilterOpen, setRcFilterOpen] = useState(false);
-    // The modal edits this LOCAL DRAFT, never the persisted
-    // values above. `null` = nothing edited yet (the modal then just shows the
-    // persisted values live — copy-on-write on the first edit), so there is no
-    // "seed on open" step to forget on any of the several paths that open the
-    // modal. Cleared on every close, so a reopen always starts from persisted.
-    // Held in a ref too: the blur of a period date (which re-sorts the list and
-    // commits a date that was still pending) fires right before the Apply click —
-    // the click handler must see that commit synchronously, not wait for a re-render.
+    // Modal edits this draft; null = nothing edited, modal shows persisted values. Cleared on close.
+    // Also a ref: a date blur commits right before the Apply click.
     const [rcDraft, setRcDraftState] = useState<RcDraft | null>(null);
     const rcDraftRef = useRef<RcDraft | null>(null);
-    // A period date inside the modal that is HALF-TYPED (the field reports no
-    // complete date yet): the row's name per list ("P1" / "S2"), else null. A
-    // complete date is in the draft the moment it is typed (the editors commit on
-    // change), so this only drives the neutral "Finish the date in P1 …" line —
-    // it never enables Apply and nothing half-typed is ever written.
+    // Row name per list of a half-typed period date; only drives the "Finish the date" line, never enables Apply or gets written.
     const [rcPendingDate, setRcPendingDate] = useState<{ train: string | null; scoring: string | null }>({ train: null, scoring: null });
     const onRcPendingDate = useCallback((list: 'train' | 'scoring', name: string | null) => {
         setRcPendingDate(prev => (prev[list] === name ? prev : { ...prev, [list]: name }));
@@ -542,44 +426,32 @@ export default function BuildModelWindow() {
     // Inline "Discard changes?" row, shown instead of closing when X/backdrop
     // is used with an unapplied draft.
     const [rcDiscardPrompt, setRcDiscardPrompt] = useState(false);
-    // Models an Apply made in THIS session sent back to training: the notice
-    // under the running-condition line counts the ones still not trained again
-    // (`modelsStillNeedingTraining`). Session-only by decision — the amber dots
-    // in the list are what persists.
+    // Models an Apply sent back to training this session; session-only.
     const [rcRetrainIds, setRcRetrainIds] = useState<string[]>([]);
-    // What the gate reads (`gateFg`, built further down) and the special-sensor
-    // recipes, for `applyRcDraft` (a stable callback defined before them).
+    // Refs for applyRcDraft, a stable callback defined before gateFg and the recipes.
     const gateFgRef = useRef<RunningConditionFg>(null);
     const specialRecipesRef = useRef<SpecialSensorRecipe[] | null>(null);
     // The Running-condition dialog element (focus on open, Tab kept inside).
     const rcDialogRef = useRef<HTMLDivElement>(null);
-    // Mirrors failureGroupState.runningConditionAllData — "Use all data" (2026-10-28):
-    // Train and the Health score use every row of the periods; the condition is
-    // still required (it is the export's running status).
+    // Mirrors runningConditionAllData: train and Health score use every row of the periods, with no value filter.
     const [runningConditionAllData, setRunningConditionAllData] = useState(false);
-    // The project's details as they are on disk (name "Plant · Machine", machine, the
-    // data's time zone) — re-read whenever any window saves Project details.
+    // Project details as on disk; re-read whenever any window saves them.
     const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
     const projectSeq = useRef(0);
-    // Project details dialog: the project read fresh from disk and the other projects
-    // (loaded BEFORE it opens, so Save never runs without the duplicate check).
+    // Project details dialog data; the other projects load before it opens so Save always has the duplicate check.
     const [projectDetails, setProjectDetails] = useState<{ ws: ProjectInfo; others: WorkspaceMetadata[] } | null>(null);
     // The one-time running-condition conversion (`failureGroupState.runningConditionConversion`).
     const [rcConversion, setRcConversion] = useState<RunningConditionConversion | null>(null);
-    // Workspace id the panel was last auto-opened for, so "auto-open when the
-    // running condition is unconfigured" happens once per hydration, not on
-    // every broadcast.
+    // Workspace id the panel last auto-opened for: auto-open once per hydration, not on every broadcast.
     const rcAutoOpenedFor = useRef<string | null>(null);
     const [loading, setLoading] = useState(true);
 
-    // ---- Workbench left list ----
     const [leftGroupBy, setLeftGroupBy] = useState<LeftGroupBy>('fg');
     const [sidebarFilter, setSidebarFilter] = useState<SidebarFilter>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
     const [listWidth, setListWidth] = useState(() => readSavedPaneWidth(LIST_WIDTH_KEY, LIST_DEFAULT_WIDTH));
-    /** The sensor currently shown in the detail pane (a `modelSensorKey`), or
-     *  null before anything is selected / when there are no models yet. */
+    /** Sensor shown in the detail pane (a modelSensorKey). */
     const [selectedSensorKey, setSelectedSensorKey] = useState<string | null>(null);
     /** Which model (kind tab) is active per sensor. */
     const [activeTab, setActiveTab] = useState<Record<string, string>>({});
@@ -587,43 +459,20 @@ export default function BuildModelWindow() {
      *  (open while incomplete, else collapsed). */
     const [settingsOpenOverride, setSettingsOpenOverride] = useState<Record<string, boolean>>({});
 
-    // ---- Train in place ----
-    /** Session-only cache of the last successful preview run per model id —
-     *  never persisted (only `lastTrainedAt`/`trainedFingerprint` go to the
-     *  workspace; the actual chart data is cheap to recompute). */
+    /** Session-only cache of the last preview per model id; never persisted. */
     const [trainResults, setTrainResults] = useState<Record<string, TrainCacheEntry>>({});
-    /** Presence of a key = that model id currently has a preview run in
-     *  flight (explicit Train/Re-train click OR the silent auto-recompute on
-     *  reopen); absence = idle. There is no separate "done" value — a
-     *  finished run is represented by its entry landing in `trainResults`. */
+    /** Key present = a preview run is in flight (explicit or silent); a finished run lands in trainResults. */
     const [trainStatus, setTrainStatus] = useState<Record<string, 'loading'>>({});
     const [trainError, setTrainError] = useState<Record<string, string>>({});
-    /** Models whose SILENT load (opening a trained / Complete model, "Load it again")
-     *  the engine answered "no rows" for, as model id -> `noRowsLoadKey` (the train
-     *  fingerprint + dataset generation it was asked with). Nobody trained it and
-     *  nothing about the model changed: it is not a `trainError` — the window shows
-     *  the "No data for this model in the loaded file" board (`noDataOf`) and does
-     *  not ask again for the same scope and data. */
+    /** Silent loads that got no rows: id -> noRowsLoadKey (fingerprint + generation); not asked again for the same scope and data. */
     const [noRowsLoads, setNoRowsLoads] = useState<Record<string, string>>({});
-    // ---- Two pages per model ----
-    /** Which page of the detail pane each model is on ("Model fit" is the
-     *  default). Keyed by model id so switching sensors/kind tabs keeps each
-     *  model's page. The Health score page can never be SHOWN for a stale or
-     *  untrained model — `pageOf` below falls back to "Model fit". */
+    /** Page per model id; Health score is never shown for a stale or untrained model (pageOf falls back to Model fit). */
     const [pageByModel, setPageByModel] = useState<Record<string, WorkbenchPage>>({});
-    /** The Rust session generation of the dataset this window was opened on
-     *  (`metadata.generation` of the `build-model-data` payload), sent as
-     *  `expectedGeneration` so a window left over from an old dataset gets
-     *  `STALE_SESSION` instead of another dataset's numbers. */
+    /** Rust dataset generation this window opened on; sent as expectedGeneration so an old window gets STALE_SESSION. */
     const [generation, setGeneration] = useState<number | undefined>(undefined);
-    // The loaded data's time range, for the "no data to train on" guards and the
-    // timelines. Known ONLY for the dataset this window is pointed at right now
-    // (workspace + Rust dataset generation): it is asked again whenever that
-    // changes, and it is `null` (unknown — nothing is judged against it) from the
-    // very render the window is re-pointed in until the new dataset's answer lands.
+    // Loaded data's time range; null (unknown) from the render the window is re-pointed until the new dataset's answer lands.
     const { bounds: datasetBounds } = useDatasetTimeBounds(workspaceId === null ? null : `${workspaceId}|${generation ?? ''}`);
-    /** Bumped after every Train so `useHealthPreview` refetches even when the
-     *  request itself is identical (a Relationship re-train re-fills Rust's fit cache). */
+    /** Bumped after every Train so useHealthPreview refetches (a re-train re-fills Rust's fit cache). */
     const [healthRevision, setHealthRevision] = useState(0);
     /** "Compare predictors" (Sub-models) modal of the active Relationship model. */
     const [compareOpen, setCompareOpen] = useState(false);
@@ -631,15 +480,7 @@ export default function BuildModelWindow() {
     // navigated away from (switching sensor or kind tab).
     useEffect(() => { setCompareOpen(false); }, [selectedSensorKey, activeTab]);
 
-    // ---- Health score page ----
-    /** DRAFT set points per model id: what the user is typing on the Health score
-     *  page. A key is present only while there is something typed that has not
-     *  been confirmed on disk yet; the page and `useHealthPreview` read
-     *  `draft ?? persisted`, so typing moves the charts/score/Checks at once and a
-     *  broadcast from another window (which only refreshes the persisted side) can
-     *  never overwrite what is being typed. Persisted by `commitSetPointDrafts` (input
-     *  blur / Enter, leaving the page or the model, window close). Mirrored in a ref
-     *  so the commit paths see the latest value synchronously. */
+    /** Draft set points per model id (draft ?? persisted), committed on blur/Enter, page or model leave and window close. */
     const [spDrafts, setSpDraftsState] = useState<Record<string, HealthSetPoints>>({});
     const spDraftsRef = useRef<Record<string, HealthSetPoints>>({});
     const writeSpDrafts = useCallback((next: Record<string, HealthSetPoints>) => {
@@ -653,13 +494,8 @@ export default function BuildModelWindow() {
     /** Models whose Mark complete is running right now (double-click guard; a ref so two
      *  clicks in the same tick cannot both pass). */
     const completeRunningRef = useRef<Set<string>>(new Set());
-    // (The last validate verdict Rust gave per model - "Set points needed" /
-    // "Fix set point" - is not window state: it is PERSISTED on the model
-    // (`healthVerdict`) so the Dashboard's dot reads the same value; see
-    // `modelSetPointFlag` and the effect that writes it below.)
-    /** Every "Mark complete" run in flight (the WHOLE run: validate -> export -> save),
-     *  so a window close can wait for it (`pendingSaveRef` is a single slot a later
-     *  write overwrites). */
+    // The last validate verdict is persisted on the model (healthVerdict), not window state.
+    /** Every Mark complete run in flight, so a window close can wait for it (pendingSaveRef holds only one slot). */
     const markRunsRef = useRef<Set<Promise<unknown>>>(new Set());
     /** The user was told the close is waiting too long for a running save; the next
      *  close attempt does not wait for it again. */
@@ -671,11 +507,7 @@ export default function BuildModelWindow() {
     /** Cancels the running export (a close that gave up waiting). */
     const exportCancelRef = useRef<(() => Promise<void>) | null>(null);
 
-    // ---- Train sensor / Train all with a queue ----
-    // `useTrainQueue` runs models strictly one at a time through `trainForQueue`
-    // (defined further down, it needs the window's train rules). The hook reads
-    // `train` through its own ref, so this indirection only exists because the
-    // hook has to be called before those functions are defined.
+    // Queue runs one model at a time via trainForQueue; the ref exists because the hook is called before that is defined.
     const queueTrainRef = useRef<(id: string) => Promise<TrainOutcome>>(async () => ({ ok: false, abandoned: true }));
     const queue = useTrainQueue({ train: id => queueTrainRef.current(id), scopeKey: workspaceId });
     /** For handlers registered once (the native close). */
@@ -703,8 +535,7 @@ export default function BuildModelWindow() {
     const trainMenuBtnRef = useRef<HTMLButtonElement>(null);
     /** The notice line at the bottom of the detail pane — set only while it is on screen. */
     const noticeRef = useRef<HTMLDivElement>(null);
-    /** The page tab that is open (① Model fit / ② Health score) — also where the focus
-     *  moves when the focused "Save changes" unmounts (see the effect on `drafts`). */
+    /** Open page tab; focus moves here when the focused Save changes unmounts. */
     const activePageTabRef = useRef<HTMLButtonElement>(null);
     /** Id of the model whose "Save changes" was pressed (see the effect on `drafts`). */
     const saveFocusRef = useRef<string | null>(null);
@@ -725,9 +556,7 @@ export default function BuildModelWindow() {
     /** Mirror of `closeAsk` for the once-registered `workspace-closing` listener. */
     const closeAskRef = useRef(false);
     closeAskRef.current = closeAsk;
-    /** Relationship models whose fit Rust no longer holds (NOT_FITTED seen this
-     *  session, e.g. evicted from the fit cache during a long run): planned as
-     *  ready again until a train of them succeeds. */
+    /** Relationship models whose Rust fit is gone (NOT_FITTED); planned as ready again until a train succeeds. */
     const [notFittedIds, setNotFittedIds] = useState<ReadonlySet<string>>(() => new Set());
     /** `id::fingerprint` already re-fitted automatically after a NOT_FITTED (once each). */
     const refitTriedRef = useRef<Set<string>>(new Set());
@@ -740,59 +569,36 @@ export default function BuildModelWindow() {
     const [drafts, setDrafts] = useState<Record<string, ModelDraft>>({});
     const draftsRef = useRef(drafts);
     draftsRef.current = drafts;
-    /** One-time "categories were made consistent" notice — STORED in the
-     *  workspace (failureGroupState.categoryNormalisationNotice), not computed
-     *  per render, so it survives whichever window writes the file first. */
+    /** One-time category notice, stored in failureGroupState.categoryNormalisationNotice so any window's write keeps it. */
     const [categoryNotice, setCategoryNotice] = useState<CategoryChange[] | null>(null);
     const [categoryWarn, setCategoryWarn] = useState<{ key: string; text: string } | null>(null);
-    /** "Copied N periods and M conditions from Workspace" note for the Custom
-     *  running-condition editor, keyed per model id — session-only (never
-     *  persisted), shown once per model per switch-to-Custom that actually
-     *  copied something. */
+    /** "Copied N periods and M conditions" note per model id; session-only, shown once per switch to Custom. */
     const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number; tests: number } | null>>({});
-    /** Clustering's criteria-sensor stats (drives the cluster-range slider's
-     *  [min, max] bounds) — scoped to whichever model is currently active,
-     *  refetched whenever its (draft-aware) criteria sensor or effective
-     *  training-scope filter changes; `null` while unset/loading.
-     *  Stored with the key it was fetched for (model + criteria sensor +
-     *  filter); the `criteriaStats` read further down is only non-null when
-     *  that key matches what is selected NOW. */
+    /** Criteria-sensor stats for the cluster slider with the key they were fetched for; used only while the key matches. */
     const [criteriaStatsEntry, setCriteriaStatsEntry] = useState<{ key: string; stats: SensorStats } | null>(null);
     /** The stats request failed, for that key: the slider says so and offers Try again. */
     const [criteriaStatsFailure, setCriteriaStatsFailure] = useState<{ key: string; message: string } | null>(null);
     const [criteriaStatsTry, setCriteriaStatsTry] = useState(0);
-    /** Cluster-range boundary being typed: `idx` = the boundary between cluster
-     *  idx+1 and idx+2. `initial` is the text the box showed on focus (an unchanged box
-     *  commits nothing, so a rounded readout of a dragged value is never written back). */
+    /** Boundary being typed (idx = between cluster idx+1 and idx+2); initial = text on focus, so no change commits nothing. */
     const [boundaryEdit, setBoundaryEdit] = useState<{ modelId: string; idx: number; text: string; initial: string; error: string | null } | null>(null);
-    /** The exact text of each boundary the user typed (`modelId:idx`), shown while the stored
-     *  number still equals it — a typed "33.60" keeps its "33.60" (never rounded). Session only. */
+    /** Exact text typed per boundary, shown while the stored value equals it; session only. */
     const [typedBoundaryText, setTypedBoundaryText] = useState<Record<string, { value: number; text: string }>>({});
 
     const sensorMetaMap = useSensorMetaMap(sensorMetadata);
     // Every sensor label / picker in this window resolves through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
     const getComponent = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.component ?? '', [sensorMetaMap]);
-    // Raw description only (not the "description (tag)" combo `sensorLabel`
-    // below builds). Sensor labels in the UI come from `sensorLookup` (the
-    // shared SensorLabel standard).
+    // Raw description only; labels come from sensorLookup.
     const getDesc = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.description ?? '', [sensorMetaMap]);
     // Unit text for the Running condition chips / value fields ("kW", "BAR"...).
     const getUnit = useCallback((tag: string) => sensorMetaMap.get(normalizeSensorTag(tag))?.unit ?? '', [sensorMetaMap]);
-    // "description (tag)" everywhere a sensor is shown to the user (picker
-    // options, predictor chips, the summary line) — the raw tag alone isn't
-    // enough to recognize a sensor by; falls back to the bare tag when no
-    // mapping/description exists for it.
+    // "description (tag)", or the bare tag when there is no description.
     const sensorLabel = useCallback((tag: string) => {
         const desc = sensorMetaMap.get(normalizeSensorTag(tag))?.description;
         return desc ? `${desc} (${tag})` : tag;
     }, [sensorMetaMap]);
 
-    // The model's own name if the user set one — a name identical to its
-    // own target tag doesn't count (legacy-migrated models default to
-    // that), else "description (tag)" for the target sensor, else a
-    // placeholder. Clustering's Y sensor stays blank until configured,
-    // falling back to X.
+    // Model's own name unless it equals the target tag; else description (tag); Clustering uses Y, falling back to X.
     const modelDisplayLabel = useCallback((model: FailureModel) => {
         const targetTag = model.kind === 'clustering' ? (model.ySensor || model.xSensor) : model.targetSensor;
         const trimmedName = model.name.trim();
@@ -807,22 +613,14 @@ export default function BuildModelWindow() {
         return sensorMetaMap.get(normalizeSensorTag(targetTag))?.component || UNCATEGORIZED;
     }, [sensorMetaMap]);
 
-    // Which workspace this window is currently showing, and a counter that
-    // lets a slow, superseded `loadWorkspaceData` drop its result instead of
-    // overwriting a newer one (several `build-model-data` replies can be in
-    // flight at once).
+    // Current workspace and a counter so a slow, superseded load drops its result.
     const workspaceIdRef = useRef<string | null>(null);
     const loadSeq = useRef(0);
     /** Counts broadcasts: a slice read from disk before the latest one is older than what is on screen. */
     const fgBroadcastSeq = useRef(0);
     const recipeSeq = useRef(0);
 
-    // The most recent in-flight `updateWorkspaceData` write from ANY persist path
-    // in this window (running-condition edits, a model draft Save, Mark complete,
-    // the hydration-time migration write, …). Always overwritten to the LATEST
-    // write; a superseded one is simply abandoned, never left dangling.
-    // `handleClose` and the `onCloseRequested` handler below await whatever this
-    // currently holds before actually letting the window close.
+    // Latest in-flight updateWorkspaceData write from any persist path; the close handlers await it.
     const pendingSaveRef = useRef<Promise<void> | null>(null);
     const trackPending = useCallback((p: Promise<void>): Promise<void> => {
         // What a close waits for never rejects; the caller still sees the failure.
@@ -861,11 +659,7 @@ export default function BuildModelWindow() {
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
     }, []);
 
-    /** Adopts what one of THIS window's writes put on disk: the slice and the
-     *  special-sensor recipes the write read (a Train after a Repair stamps
-     *  `trainedFormulas` from the recipes on disk, so this window must judge
-     *  freshness against those same recipes, not an older copy). Any recipe read
-     *  still in flight is older than this write. */
+    /** Adopts what this window's write put on disk, recipes included, so freshness is judged against them. Older in-flight recipe reads are dropped (recipeSeq). */
     const applyWritten = useCallback((ws: WorkspaceState | null | undefined) => {
         if (!ws?.failureGroupState) return;
         applyFg(ws.failureGroupState);
@@ -873,9 +667,7 @@ export default function BuildModelWindow() {
         setSpecialRecipes(ws.specialSensorRecipes ?? null);
     }, [applyFg]);
 
-    /** Re-reads the workspace's Dashboard time highlights from disk (the Dashboard
-     *  may have changed them since this window opened). Never touches anything
-     *  else; a failure keeps the last list. */
+    /** Re-reads Dashboard time highlights from disk; a failure keeps the last list. */
     const refreshHighlights = useCallback(async (): Promise<void> => {
         const ws = workspaceIdRef.current;
         if (!ws) return;
@@ -889,11 +681,7 @@ export default function BuildModelWindow() {
         }
     }, []);
 
-    /** Persists every set-point draft that is not on disk yet (health score
-     *  3b-2). Writes ONLY `healthSetPoints` (`commitSetPoints`: no status, no train
-     *  record, never stale), tracked in `pendingSaveRef` like every other write so
-     *  a window close waits for it. A draft is dropped once its write landed,
-     *  unless the user typed something newer meanwhile. No draft = no write. */
+    /** Persists set-point drafts not yet on disk (only healthSetPoints, tracked in pendingSaveRef). A draft is dropped once written unless a newer one was typed. */
     const spInflightRef = useRef<{ drafts: Record<string, HealthSetPoints>; promise: Promise<void> } | null>(null);
     /** Set points failed to save and the user was told: the next close leaves without them. */
     const leaveUnsavedRef = useRef(false);
@@ -902,8 +690,7 @@ export default function BuildModelWindow() {
         const drafts = spDraftsRef.current;
         const ids = Object.keys(drafts);
         if (!ws || ids.length === 0) return Promise.resolve();
-        // Several triggers can fire for one edit (blur, leaving the page, window close): the
-        // same drafts already being written are not written a second time.
+        // Several triggers can fire for one edit; drafts already being written are not written again.
         const inflight = spInflightRef.current;
         if (inflight && ids.every(id => inflight.drafts[id] === drafts[id])) return inflight.promise;
         const entry: { drafts: Record<string, HealthSetPoints>; promise: Promise<void> | null } = { drafts, promise: null };
@@ -913,9 +700,7 @@ export default function BuildModelWindow() {
                     const sp = drafts[id];
                     const next = await commitSetPoints(ws, id, sp, 'build-model');
                     if (!next) throw new Error(NO_PROJECT_FILE);
-                    // The window may have been re-pointed at another workspace meanwhile:
-                    // the remaining drafts still belong to `ws` and are still written
-                    // there; only this window's own state is left alone.
+                    // The window may have been re-pointed; remaining drafts are still written to ws, only this window's own state is skipped.
                     if (workspaceIdRef.current !== ws) continue;
                     applyWritten(next);
                     if (spDraftsRef.current[id] === sp) {
@@ -941,16 +726,10 @@ export default function BuildModelWindow() {
         return promise;
     }, [trackPending, applyWritten, writeSpDrafts]);
 
-    /** Awaits this window's own pending write (and any running Mark complete),
-     *  so no path off this window can drop an edit made just before closing. A set-point draft that was typed
-     *  but never blurred is committed first, so it is part of what is awaited. */
+    /** Awaits this window's pending write and any running Mark complete; an unblurred set-point draft is committed first. */
     const flushAllPending = useCallback(async (): Promise<boolean> => {
         if (!leaveUnsavedRef.current) void commitSetPointDrafts();
-        // A running "Mark complete" (export + save) is waited for, so files that were
-        // written always end with the status saved or a clear refusal — but never
-        // forever: a hung sidecar makes the close wait give up once, with a message.
-        // (Holds even when the window was re-pointed at another workspace mid-run:
-        // `runMarkComplete` saves into the workspace captured at click time.)
+        // Wait for a running Mark complete so it ends saved or refused; gives up once after a timeout (hung sidecar).
         if (markRunsRef.current.size > 0 && !closeWaitGivenUpRef.current) {
             let timer: ReturnType<typeof setTimeout> | undefined;
             const finished = Promise.allSettled([...markRunsRef.current]).then(() => true);
@@ -972,9 +751,7 @@ export default function BuildModelWindow() {
         return true;
     }, [commitSetPointDrafts]);
 
-    /** A running Export results is finished before the window closes — never forever:
-     *  after `MARK_COMPLETE_CLOSE_WAIT` it is cancelled (nothing is left half-written)
-     *  and the close goes on. */
+    /** Finishes a running Export results before closing; after MARK_COMPLETE_CLOSE_WAIT it is cancelled and the close continues. */
     const waitForExportBeforeClose = useCallback(async (): Promise<void> => {
         const run = exportRunRef.current;
         if (!run) return;
@@ -1009,10 +786,7 @@ export default function BuildModelWindow() {
         });
     }, [allModels]);
 
-    // A cached preview (or an in-flight one) for a model that no longer exists
-    // (deleted on the Dashboard, or the window was re-pointed at a different
-    // workspace — see the `switched` reset below) must be thrown away, never
-    // written back anywhere.
+    // Drop cached and in-flight previews of models that no longer exist.
     useEffect(() => {
         const ids = new Set(allModels.map(m => m.id));
         setTrainResults(prev => {
@@ -1038,11 +812,7 @@ export default function BuildModelWindow() {
         });
     }, [allModels]);
 
-    // The sensor shown in the detail pane must always be one that still has
-    // at least one model — reselects the first available sensor whenever the
-    // current selection disappears (another window deleted it, or this is
-    // the first hydration). Runs off `allModels` directly (not off any
-    // memoized bucket) so it fires exactly when the underlying data changes.
+    // Keep the selected sensor one that still has a model; else pick the first.
     useEffect(() => {
         const keys = allSensorGroups(allModels).map(sg => sg.key);
         setSelectedSensorKey(prev => (prev !== null && keys.includes(prev)) ? prev : (keys[0] ?? null));
@@ -1051,15 +821,9 @@ export default function BuildModelWindow() {
     useEffect(() => {
         const offData = subscribe<BuildModelData>('build-model-data', async (event) => {
             const d = event.payload;
-            // Re-pointed at a DIFFERENT workspace than the one on screen (the
-            // main window moved on to another project while this window
-            // stayed open): drop everything belonging to the old one —
-            // including a half-edited form for a model that does
-            // not exist in the new workspace.
+            // Re-pointed at another workspace: drop everything of the old one, including half-edited forms.
             const switched = workspaceIdRef.current !== null && workspaceIdRef.current !== d.workspaceId;
-            // A set point typed (not yet blurred) in the OLD workspace is written THERE
-            // first — `commitSetPointDrafts` captures the old workspace id and its drafts
-            // synchronously, before the ref below moves, and never writes into the new one.
+            // An unblurred set point of the old workspace is written there first; its id and drafts are captured before the ref moves.
             if (switched) void commitSetPointDrafts();
             workspaceIdRef.current = d.workspaceId;
             setWorkspaceId(d.workspaceId);
@@ -1070,10 +834,7 @@ export default function BuildModelWindow() {
                 // A half-typed cluster boundary (or its error) belongs to the old workspace.
                 setBoundaryEdit(null);
                 setTypedBoundaryText({});
-                // The auto-divide memory and the criteria stats are keyed by MODEL id, and two
-                // workspaces can hold the same model id: left behind, the new workspace's model
-                // would read the old one's last division key as its own, re-divide its saved
-                // (uneven) cluster ranges and show an unprompted "edited" draft.
+                // Keyed by model id, which two workspaces can share: reset so the new workspace does not inherit the old division key.
                 prevClusterDivisionKeyRef.current = {};
                 setCriteriaStatsEntry(null);
                 setSearchQuery('');
@@ -1111,11 +872,7 @@ export default function BuildModelWindow() {
                 setSaveInfo({});
                 setAttemptIssues({});
                 setPointsSeededRef.current = new Set();
-                // `completeRunningRef` / `markRunsRef` are deliberately NOT reset: a Mark
-                // complete of the old workspace may still be validating. It finishes and saves
-                // into ITS workspace (see `runMarkComplete`), and a window close must still
-                // wait for it (`flushAllPending`); model ids are unique across workspaces, so
-                // keeping them cannot block a model of the new one.
+                // Not reset: an old workspace's Mark complete still saves into its own workspace, and a close must wait for it.
                 closeWaitGivenUpRef.current = false;
                 // A `workspace-closing` for the old workspace set the bypass; the new
                 // workspace's runs must ask before closing again.
@@ -1124,8 +881,7 @@ export default function BuildModelWindow() {
                 setCloseNotice(null);
                 setSaveFailed(false);
                 leaveUnsavedRef.current = false;
-                // The run belonged to the old workspace: drop it (a train still in
-                // flight finishes, but its result is ignored — see `executeTrain`).
+                // The run belonged to the old workspace; an in-flight train's result is ignored.
                 queueReset();
                 setNotFittedIds(new Set());
                 refitTriedRef.current = new Set();
@@ -1141,9 +897,7 @@ export default function BuildModelWindow() {
                 setProjectInfo(null);
                 setSpecialRecipes(null);
             }
-            // (The dataset bounds follow by themselves: `useDatasetTimeBounds` is keyed on
-            // the workspace + this generation, so from this very render they are unknown
-            // until the answer for the NEW dataset lands — never the old dataset's range.)
+            // Dataset bounds follow by themselves: keyed on workspace + generation, unknown until the new answer lands.
             setGeneration(d.metadata?.generation);
             setAllSensors(d.sensorHeaders);
             setSensorMetadata(d.sensorMetadata);
@@ -1151,23 +905,14 @@ export default function BuildModelWindow() {
             const fgAtRead = fgBroadcastSeq.current;
             try {
                 const ws = await loadWorkspaceData(d.workspaceId);
-                // Only a newer load supersedes this one (it also ends `loading`). A broadcast
-                // meanwhile is newer than the slice below, not than the rest of this read.
+                // Only a newer load supersedes this one; a broadcast meanwhile is newer than the slice, not than the rest of this read.
                 if (seq !== loadSeq.current || workspaceIdRef.current !== d.workspaceId) return;
                 setDashHighlights(ws?.timeHighlights ?? []);
                 projectSeq.current++;
                 setProjectInfo(ws ? projectInfoOf(ws) : null);
                 recipeSeq.current++;
                 setSpecialRecipes(ws?.specialSensorRecipes ?? null);
-                // One-time legacy cleanup: a sensor whose models disagree on category is
-                // made consistent. When that changed something, the result + notice are
-                // WRITTEN BACK here so the notice is stored data (Dashboard's autosave
-                // can't lose it, and it never re-fires once dismissed).
-                // The running condition's one-time conversion to the ONE "sensor >
-                // value" line already ran in the workspace READ path
-                // (`migrateSingleRunningCondition`); this window only shows its notice.
-                // Old single time ranges become periods and the old keys are dropped;
-                // written back only when that changed something.
+                // Cleanup written back only if it changed something: categories (with a stored notice) and old time ranges to periods.
                 const periodsMigrated = ws ? migratePeriods(ws, { dropLegacyKeys: true }) : ws;
                 const periodsChanged = periodsMigrated !== ws;
                 const migrated = periodsMigrated ? normalizeCategories(periodsMigrated) : periodsMigrated;
@@ -1175,9 +920,7 @@ export default function BuildModelWindow() {
                 if (migrated && rcAutoOpenedFor.current !== d.workspaceId) {
                     rcAutoOpenedFor.current = d.workspaceId;
                     const headers = d.sensorHeaders.length ? d.sensorHeaders : null;
-                    // An old project that must set it again: the "Set it again" card says
-                    // why, so the modal does not open over it. A workspace that was simply
-                    // never set keeps opening it.
+                    // An old project that must set its condition again shows the "Set it again" card instead of the modal.
                     const mustSetAgain = conversionMustSetAgain(migrated.failureGroupState?.runningConditionConversion);
                     if (!mustSetAgain && !isWorkspaceRunningConditionConfigured(migrated.failureGroupState, headers)) setRcFilterOpen(true);
                 }
@@ -1197,19 +940,14 @@ export default function BuildModelWindow() {
             setLoading(false);
         });
 
-        // Any other window (Dashboard) that
-        // persists failureGroupState broadcasts this so our copy never
-        // goes stale. Ignores another workspace's broadcast (events are
-        // global) and this window's own echo.
+        // Other windows' failureGroupState broadcasts; ignore other workspaces (events are global) and this window's own echo.
         const offChanged = subscribe<FailureGroupStateChangedPayload>('failure-group-state-changed', (event) => {
             if (event.payload.workspaceId !== workspaceIdRef.current) return;
             if (event.payload.origin === 'build-model') return;
             // A load already in flight read an older slice than this.
             fgBroadcastSeq.current++;
             applyFg(event.payload);
-            // The Dashboard's autosave WROTE a special-sensor recipe change (`recipesChanged`):
-            // re-read the recipes from disk -- never carried in a payload. Any other broadcast
-            // costs no disk read.
+            // On recipesChanged re-read recipes from disk (never in the payload); other broadcasts cost no read.
             if (event.payload.recipesChanged === true) {
                 const ws = event.payload.workspaceId;
                 const mySeq = ++recipeSeq.current;
@@ -1231,9 +969,7 @@ export default function BuildModelWindow() {
         };
     }, [applyFg, applyWritten, trackPending, writeSpDrafts, commitSetPointDrafts, queueReset]);
 
-    // A Project details save in ANY window (Dashboard title bar, a recent card, or here)
-    // renames the project: re-read name / machine / time zone from disk. Only this
-    // window's project — a payload for another workspace (or with no id) is dropped.
+    // A Project details save in any window re-reads name/machine/time zone; other workspaces' or id-less payloads are dropped.
     const reloadProjectInfo = useCallback((ws: string) => {
         const seq = ++projectSeq.current;
         loadWorkspaceData(ws)
@@ -1248,8 +984,7 @@ export default function BuildModelWindow() {
         if (!ws || ws !== workspaceIdRef.current) return;
         reloadProjectInfo(ws);
     }), [reloadProjectInfo]);
-    /** Opens Project details for this window's project (the export checklist's "Fix →"
-     *  calls it). The recent list is read first, then the project itself. */
+    /** Opens Project details (the export checklist's Fix); reads the recent list first, then the project. */
     const openProjectDetails = useCallback(async () => {
         const ws = workspaceIdRef.current;
         if (!ws) return;
@@ -1261,8 +996,7 @@ export default function BuildModelWindow() {
         setProjectDetails({ ws: projectInfoOf(data), others });
     }, []);
 
-    // Returns the write's promise (also tracked via `trackPending`, so a
-    // window close can await it) rather than being fire-and-forget itself.
+    // Resolves true when the write reached disk; tracked via trackPending so a window close can await it.
     const persist = useCallback((
         updater: (models: FailureModel[], groups: FailureGroup[]) => { models: FailureModel[]; groups: FailureGroup[] },
     ): Promise<boolean> => {
@@ -1272,15 +1006,11 @@ export default function BuildModelWindow() {
                 const groups = prev.failureGroupState?.groups ?? [];
                 const models = prev.failureGroupState?.models ?? [];
                 const result = updater(models, groups);
-                // Spread-merge: this path only changes groups/models; every other slice
-                // field (running condition incl. time range, future fields) must survive.
-                // "Incomplete immediately": a Complete model whose training inputs this
-                // write changed goes back to Incomplete in the SAME write.
+                // Spread-merge keeps other slice fields; a Complete model whose training inputs changed goes Incomplete in the same write.
                 return applyIncompleteRule(prev, withFailureGroupState(prev, { groups: result.groups, models: result.models }));
             });
             if (!next) throw new Error(NO_PROJECT_FILE);
-            // Re-pointed at another workspace meanwhile: the write landed in ITS
-            // workspace; this window now shows another one — touch nothing here.
+            // Re-pointed meanwhile: the write landed in its own workspace; touch nothing here.
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
@@ -1289,11 +1019,7 @@ export default function BuildModelWindow() {
         })());
     }, [workspaceId, applyWritten, savedOk]);
 
-    // The one path that actually changes the workspace-wide running
-    // condition — edited entirely from the "Running Condition Filter" modal
-    // (see the JSX below), never per-model. One function for every
-    // sub-field (filters/combine/train periods/none/scoring periods) rather than a
-    // near-duplicate persist-function per field.
+    // The only path that changes the workspace running condition (edited from the modal); one function for all sub-fields.
     const persistRunningCondition = useCallback((patch: {
         filters?: WorkspaceSensorFilter[];
         combine?: 'and' | 'or';
@@ -1309,22 +1035,14 @@ export default function BuildModelWindow() {
                     ...(patch.combine !== undefined ? { runningConditionCombine: patch.combine } : {}),
                     ...(patch.periods !== undefined ? { runningConditionTimePeriods: patch.periods } : {}),
                     ...(patch.allData !== undefined ? { runningConditionAllData: patch.allData } : {}),
-                    // Scoring periods are WRITTEN as id / start / end only: a legacy label /
-                    // event time (an old workspace file) never goes back to disk.
+                    // Scoring periods are written as id/start/end only (toScoringPeriods).
                     ...(patch.testPeriods !== undefined ? { runningConditionTestPeriods: toScoringPeriods(patch.testPeriods) } : {}),
                 });
-                // Applying a different condition settles the WORKSPACE part of the
-                // one-time conversion notice (its "Now" would no longer be true) — in this same write.
+                // A changed condition settles the workspace part of the one-time conversion notice in this same write.
                 const conditionChanged = patch.filters !== undefined
                     && JSON.stringify(patch.filters) !== JSON.stringify(prev.failureGroupState?.runningConditionFilters ?? []);
-                // Applying a different workspace running condition changes what every
-                // Workspace-mode model trains on: those that were Complete go back to
-                // Incomplete in this same write (Custom-mode models are unaffected).
-                // A change of ONLY the scoring periods keeps them trained but still needs
-                // Mark complete again (`testsChangedAt`) — `applyIncompleteRule` does
-                // both, never this window by hand.
-                // Only the WORKSPACE part is settled: a Custom model that still has to
-                // set its own condition keeps its "Own condition" line.
+                // A changed workspace condition sets Complete Workspace-mode models Incomplete, via applyIncompleteRule.
+                // Only the workspace part of the conversion is settled; a Custom model still needing its own condition keeps its line.
                 return applyIncompleteRule(prev, conditionChanged
                     ? withFailureGroupState(applied, {
                         runningConditionConversion: conversionAfterWorkspaceApply(
@@ -1333,9 +1051,7 @@ export default function BuildModelWindow() {
                     : applied);
             });
             if (!next) throw new Error(NO_PROJECT_FILE);
-            // Re-pointed at another workspace meanwhile (same guard as `persist`): the
-            // write landed in ITS workspace; this window now shows another one — never
-            // put the old workspace's slice into this state, never broadcast it from here.
+            // Re-pointed meanwhile (as in persist): never put the old workspace's slice into this state or broadcast it.
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
@@ -1344,17 +1060,8 @@ export default function BuildModelWindow() {
         })());
     }, [workspaceId, applyWritten, savedOk]);
 
-    // ---- Running Condition modal: local draft + explicit Apply ----
-    // Every edit in the modal lands in `rcDraft` only. Nothing is written to
-    // disk or broadcast until Apply (`applyRcDraft`), which is ONE
-    // `persistRunningCondition` call carrying all four fields. The Step-1 card
-    // summary, the build gate and the per-model Workspace mode keep reading the
-    // PERSISTED state vars above, so a dirty draft can never leak into them.
-    //
-    // A persisted change that arrives while the modal is open (another window's
-    // broadcast) does NOT clobber a dirty draft; a clean modal just shows it
-    // live. Apply then overwrites all four fields with the draft
-    // (last-writer-wins, same as every other full-slice write here).
+    // The modal edits a local draft; nothing is written or broadcast until Apply (one persistRunningCondition call).
+    // A broadcast while open does not clobber a dirty draft; Apply is last-writer-wins.
     const rcPersisted: RcDraft = {
         filters: runningConditionFilters,
         combine: runningConditionCombine,
@@ -1364,16 +1071,11 @@ export default function BuildModelWindow() {
     };
     const rcPersistedRef = useRef<RcDraft>(rcPersisted);
     rcPersistedRef.current = rcPersisted;
-    /** What the modal's Apply gate knew about the loaded data on the last render:
-     *  the dataset bounds and — for exactly `draft` — whether its settled row count
-     *  is zero AND the draft changed what is trained on. `applyRcDraft` re-checks
-     *  the gate with it. */
+    /** Gate state from the last render: dataset bounds and, for exactly this draft, whether the settled row count is zero and the draft changed training; applyRcDraft re-checks with it. */
     const rcGateRef = useRef<{ draft: RcDraft | null; bounds: PeriodDataBounds | null; noTrainRows: boolean }>({ draft: null, bounds: null, noTrainRows: false });
     /** The condition line blocks Apply (half-filled, or a set condition removed), as of the last render. */
     const rcCondBlockRef = useRef(false);
-    /** Applies a patch (or a function of the current draft) to the draft,
-     *  updating the ref synchronously so a blur-commit followed immediately by
-     *  the Apply click is never missed. */
+    /** Applies a patch to the draft and updates the ref synchronously, so a blur-commit right before the Apply click is not missed. */
     const patchRcDraft = useCallback((patch: Partial<RcDraft> | ((base: RcDraft) => Partial<RcDraft>)) => {
         const base = rcDraftRef.current ?? rcPersistedRef.current;
         const next: RcDraft = { ...base, ...(typeof patch === 'function' ? patch(base) : patch) };
@@ -1387,9 +1089,8 @@ export default function BuildModelWindow() {
     const setRunningConditionLine = useCallback(({ sensor, value }: { sensor: string; value: string }) => {
         patchRcDraft(base => ({
             filters: [{ id: base.filters[0]?.id ?? `rcf-${Date.now()}`, sensor, operation: 'greater_than' as const, value1: value, value2: '' }],
-            // With one condition AND / OR no longer matters: `combine` is left as it
-            // was, so typing a value back to the saved one is not an edit. "Use all
-            // data" is its own choice: editing the line keeps it.
+            // With one condition AND/OR no longer matters: combine stays as it was, so retyping the saved value is not an edit.
+            // Editing the line keeps "Use all data".
         }));
     }, [patchRcDraft]);
     /** "Only when running" / "Use all data" — which rows Train and the Health score use. */
@@ -1397,8 +1098,7 @@ export default function BuildModelWindow() {
         patchRcDraft({ allData });
     }, [patchRcDraft]);
 
-    // The editor hands up a typed date as soon as it is complete (in the order on
-    // screen) and the sorted list on blur / Enter / a discrete action.
+    // The editor hands up a typed date once complete, and the sorted list on blur/Enter/a discrete action.
     const updateRunningConditionPeriods = useCallback((periods: TimePeriod[]) => {
         patchRcDraft({ periods });
     }, [patchRcDraft]);
@@ -1417,8 +1117,7 @@ export default function BuildModelWindow() {
         setRcFilterOpen(false);
     }, []);
 
-    /** X button / backdrop click. A dirty draft is never silently thrown away:
-     *  the footer swaps to an inline "Discard changes?" row instead. */
+    /** X/backdrop click: a dirty draft is not dropped silently; the footer asks "Discard changes?". */
     const requestCloseRc = useCallback(() => {
         // Settle the focused period date first (a pending one commits, the list is
         // sorted), so it counts as "dirty".
@@ -1432,9 +1131,7 @@ export default function BuildModelWindow() {
     }, [closeRc]);
 
     const applyRcDraft = useCallback(async () => {
-        // The click may land before the focused period date's blur (sort, and the
-        // commit of a date still pending) has re-rendered; this forces it, and the
-        // ref picks it up at once.
+        // The click may land before the date field's blur; force it so the ref has the commit.
         flushFocusedInput();
         const d = rcDraftRef.current;
         if (!d || rcDraftEqual(d, rcPersistedRef.current)) {
@@ -1444,13 +1141,8 @@ export default function BuildModelWindow() {
         // A half-filled condition line, or removing a condition that was set, keeps
         // the modal open (the footer says why).
         if (rcCondBlockRef.current) return;
-        // Invalid train period, NO train period (rule 1), an invalid scoring period (a
-        // missing date, or an end before its start), a period that was added / changed
-        // in this draft and lies entirely outside the loaded data, or a settled count
-        // of zero running rows for a draft that changed what is trained on keeps the
-        // modal open; the footer says why. A period that is exactly as it was saved
-        // never blocks (it only warns), and the zero-rows answer only counts for the
-        // very draft it was counted for.
+        // Keeps the modal open (footer says why): bad or missing train period, bad scoring period, a changed period outside the data,
+        // or zero running rows for a draft that changed training (counted for that draft only). An unchanged saved period only warns.
         const gate = rcGateRef.current;
         if (runningConditionApplyBlock(d.periods, d.testPeriods, 'applying', {
             bounds: gate.bounds,
@@ -1459,12 +1151,9 @@ export default function BuildModelWindow() {
             noTrainRows: gate.draft === d && gate.noTrainRows,
             hasCondition: !d.allData,
         }) !== null) return;
-        // The models this Apply sends back to training (the same answer the impact
-        // line next to Apply showed): kept for the notice under the running-condition
-        // line. Models an earlier Apply of this session already sent back stay listed.
+        // Models this Apply sends back to training (same as the impact line), kept for the notice; earlier ones stay listed.
         const retrain = runningConditionImpact(gateFgRef.current, d, { recipes: specialRecipesRef.current ?? undefined }).retrainIds;
-        // The modal and its draft stay until the write has landed: a failed save leaves the
-        // draft to try again, and the card and gate on what is on disk.
+        // Modal and draft stay until the write lands: a failed save keeps the draft for a retry.
         await trackPending((async () => {
             if (!(await persistRunningCondition({ filters: d.filters, combine: d.combine, periods: d.periods, allData: d.allData, testPeriods: d.testPeriods }))) return;
             if (retrain.length > 0) setRcRetrainIds(prev => [...new Set([...prev, ...retrain])]);
@@ -1472,32 +1161,21 @@ export default function BuildModelWindow() {
         })());
     }, [closeRc, persistRunningCondition, trackPending]);
 
-    // ---- Model editing ----
-    // Edits are kept as one DRAFT PER MODEL ID (not one global form), so
-    // switching between a sensor's Individual / Relationship / Clustering
-    // tabs never loses an unsaved edit. Identity fields (target sensor / X
-    // sensor, kind, failure groups) are read straight from the stored model:
-    // they are locked/read-only, so a draft can never carry a stale copy of
-    // them. A draft also never carries `category`: category is per SENSOR
-    // and saves instantly from the detail header (see `changeCategory`).
+    // Drafts are per model id so tab switches keep edits; category is per sensor and saved instantly (changeCategory).
     const draftOf = (m: FailureModel): ModelDraft => drafts[m.id] ?? draftFromModel(m);
     /** Raw draft write (no side effects) — the cluster auto-divide effect uses this. */
     const writeDraft = (m: FailureModel, patch: Partial<ModelDraft>) =>
         setDrafts(prev => ({ ...prev, [m.id]: { ...(prev[m.id] ?? draftFromModel(m)), ...patch } }));
-    /** A user edit in "Model settings". It also pins the section open when it was only open
-     *  because something was missing: fixing the last missing item (e.g. picking the
-     *  criteria sensor) must not collapse the section under the user's hands. */
+    /** A user edit in Model settings; also pins the section open, so fixing the last missing item does not collapse it. */
     const patchDraft = (m: FailureModel, patch: Partial<ModelDraft>) => {
         writeDraft(m, patch);
         setSettingsOpenOverride(prev => (m.id in prev ? prev : { ...prev, [m.id]: true }));
     };
 
-    /** Category of the model's sensor across every FG (never per-model any more). */
+    /** Category of the model's sensor across every FG (never per model). */
     const categoryOf = (m: FailureModel): ModelCategory | null => sensorCategory(allModels, modelSensorKey(m));
 
-    // ---- Running-condition gate. ONE source of truth: `getBuildBlockReason`.
-    //      Every Train / "mark Complete" path below asks it; Save is
-    //      deliberately NOT gated by it. ----
+    // Running-condition gate: getBuildBlockReason is the one source; every Train/Mark complete path asks it, Save does not.
     const gateFg: RunningConditionFg = {
         models: allModels, runningConditionFilters, runningConditionCombine,
         runningConditionTimePeriods, runningConditionAllData, runningConditionTestPeriods,
@@ -1507,41 +1185,8 @@ export default function BuildModelWindow() {
     const gateHeaders = allSensors.length ? allSensors : null;
     const rcConfigured = isWorkspaceRunningConditionConfigured(gateFg, gateHeaders);
 
-    // ---- "No data to train on" guards ----
-    // The intent: stop a train that has NO data, and warn at once when a period is
-    // chosen beyond the data — never take away results that already exist.
-    //  R1. The data's range (`datasetBounds`) is known only for the CURRENT dataset
-    //      (see `useDatasetTimeBounds` above). Unknown = nothing is judged.
-    //  R2. In a DRAFT (the settings modal, a Custom model's own panel): a train or
-    //      scoring period that is NEW or was CHANGED there and lies entirely outside
-    //      the data is invalid — red row, reason line, Apply / Save changes disabled.
-    //  R3. A period that is exactly as it was SAVED and lies entirely outside the
-    //      data (an old workspace, the data file changed) is an AMBER warning on its
-    //      row and on the card. It blocks nothing and flips no pill.
-    //  R4. Train is blocked ("nothing to train on") only when there truly is no
-    //      data: NO train period is inside the data (pure — from the dates), or the
-    //      settled count of that model's training scope is zero rows (the counts the
-    //      card / the panels already ask for — no new request).
-    //  R5. The guards block ACTIONS only — Train (`trainBlockReason`), Apply and
-    //      Save changes. The READ paths (`buildBlockReason` and `gateReasonOf`: a
-    //      trained model's charts, its Health score page (page tab ②),
-    //      the preview / auto-recompute, the sub-model fits, Mark complete, Mark
-    //      incomplete, the dots of a trained or Complete model) never see them.
-    // Nothing is written, and no model's `status`, fingerprint or `healthVerdict`
-    // changes.
-    //
-    // Period counts — ONE source for every "running days" number and every "nothing
-    // to train on" verdict of this window: Rust's `count_period_rows`
-    // (`usePeriodCounts`), so the one-line card, the settings modal and the amber
-    // "below the recommended train time" note can never disagree about the same
-    // condition. The NUMBER of rows is never shown anywhere in this window (user
-    // decision 2026-10-14) — the counts feed the gate and the days only. Three instances:
-    //  - the card (here): the PERSISTED workspace condition — its train periods
-    //    only, so ONE call per settled persisted state (none while the window loads);
-    //  - the settings modal: its draft, only while it is open (debounced, at most
-    //    two calls per settled draft);
-    //  - the active Custom model's own lists, only while its Model fit page is on
-    //    screen (see `customCountsWanted`).
+    // Data guards block actions only (Train, Apply, Save changes), never reads or existing results; a period outside the data
+    // is invalid when new/changed in a draft, a warning as saved. Counts come from Rust count_period_rows (usePeriodCounts).
     const persistedCountFilter = useMemo(
         () => buildPreviewFilterPayload(
             { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods },
@@ -1550,8 +1195,7 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [runningConditionFilters, runningConditionCombine, runningConditionAllData, runningConditionTimePeriods, allSensors],
     );
-    // A persisted train period that is broken (the plain date rules: a saved period
-    // outside the data is a warning on the card, never "invalid").
+    // A broken persisted train period (plain date rules); a saved period outside the data is only a card warning.
     const persistedPeriodsInvalid = validatePeriods(runningConditionTimePeriods).some(st => st.invalid);
     const cardCounts = usePeriodCounts({
         // No train period = nothing is trained on (rule 1): no whole-dataset count.
@@ -1566,8 +1210,7 @@ export default function BuildModelWindow() {
         // write), never per keystroke: nothing to wait for.
         debounceMs: 0,
     });
-    /** The persisted workspace condition is counted (settled) and its train periods
-     *  hold no running row: no Workspace-mode model can TRAIN (nothing else changes). */
+    /** The persisted workspace condition is counted with no running row in its train periods: no Workspace-mode model can train. */
     const cardNoRows = countedNoTrainRows(cardCounts);
     /** What a Custom model's own training scope is, as the count sees it
      *  (`trainCountKey`): its train periods + its condition. */
@@ -1575,18 +1218,9 @@ export default function BuildModelWindow() {
         d.customPeriods,
         buildPreviewFilterPayload({ filters: d.customFilters, combine: d.customCombine, allData: d.customAllData, periods: d.customPeriods }, gateHeaders),
     );
-    /** The training scope (`customCountKeyOf`) the ACTIVE Custom model's settled
-     *  count found NO running row for, else null. Assigned further down, right
-     *  after its counts hook has run this render (the hook needs the active model);
-     *  every reader below that point — and every handler / effect — sees this
-     *  render's value. */
+    /** Training scope the active Custom model's settled count found no running row for, else null; set after its counts hook. */
     let customNoRowsKey: string | null = null;
-    /** This Custom model's own training scope is known to hold no running row: it is
-     *  the active model, or its scope is the very one counted for the active model
-     *  (two Custom models of a sensor on the same own condition — the answer is the
-     *  same, so the story must not flip with the open tab). A Custom model whose
-     *  scope was never counted is not known here: its train is stopped by the
-     *  engine's answer instead (`noRowsTrainError`). */
+    /** This Custom model's scope is known to hold no running row: it is the active model or shares the counted scope. An uncounted scope is stopped by the engine's answer (noRowsTrainError). */
     const customNoRowsOf = (m: FailureModel): boolean => {
         if (customNoRowsKey === null) return false;
         const eff = effectiveModelFor(m);
@@ -1599,76 +1233,40 @@ export default function BuildModelWindow() {
         bounds: datasetBounds,
         noTrainRows: effectiveModelFor(m).runningConditionMode === 'custom' ? customNoRowsOf(m) : cardNoRows,
     });
-    // Judges the DRAFT-merged model (`effectiveModelFor`, defined below — only
-    // ever CALLED after the render body has defined it), not the persisted one:
-    // `getBuildBlockReason` reads `runningConditionMode` /
-    // `customRunningConditionFilters` / `filterTimePeriods` straight off the model
-    // it is given, so a pending Custom-mode switch/edit must be visible to the
-    // gate — otherwise Train could commit a draft with no condition set (or an
-    // invalid period) and train on every row. Staleness
-    // (`isModelTrainedFresh`/`isModelStale`) reads through `effectiveModelFor`
-    // for the same reason, so the gate is live in both directions (blocks a
-    // draft that just broke the condition; unblocks one that just fixed it,
-    // without waiting for Save).
-    //
-    // TWO gates (R5 above):
-    //  - `gateBlockOf` / `gateReasonOf` — category, no condition, an invalid or
-    //    missing train period. Every READ path asks this.
-    //  - `trainGateBlockOf` — the same, PLUS the data guards (`no-rows`: no train
-    //    period inside the data / a settled count of zero rows). Only where Train
-    //    is the action.
+    // Judge the draft-merged model (effectiveModelFor) so a pending Custom edit is seen by the gate.
+    // gateBlockOf/gateReasonOf serve read paths; trainGateBlockOf adds the data guards, for Train only.
     const gateBlockOf = (m: FailureModel): BuildBlock | null => getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders);
     const gateReasonOf = (m: FailureModel): string | null => gateBlockOf(m)?.reason ?? null;
     const trainGateBlockOf = (m: FailureModel): BuildBlock | null => getBuildBlock(effectiveModelFor(m), gateFg, gateHeaders, trainGuardOptsOf(m));
-    /** The data guard alone: "nothing to train on" for a model nothing else blocks. */
+    /** Gate part needing no row count; it decides auto-opening Model settings, so it must not depend on counts. */
     const trainGuardBlockOf = (m: FailureModel): BuildBlock | null => {
         const block = trainGateBlockOf(m);
         return block !== null && block.kind === 'no-rows' ? block : null;
     };
-    /** The data guard as part of what a model SHOWS about itself (dot, badge, board,
-     *  notice line): only for a model that still has to train — never trained, or
-     *  out of date. A trained or Complete model keeps its own words; that it cannot be
-     *  trained AGAIN is said where Train is offered — and, since its charts are
-     *  computed from the loaded data, its pages show the "No data for this model in
-     *  the loaded file" board instead of them (`noDataOf`, further down). */
+    /** Data guard as shown on a model: only while it still has to train; trained/Complete models show the noDataOf board. */
     const shownGuardBlockOf = (m: FailureModel): BuildBlock | null =>
         isModelDone(m) || isModelTrainedFresh(m) ? null : trainGuardBlockOf(m);
-    /** The part of the shown gate that needs NO row count (the gate + "no train
-     *  period inside the data"). What decides whether Model settings open by
-     *  themselves — and with them whether a Custom model's own counts are asked for —
-     *  must not depend on those counts. */
+    /** Gate part needing no row count; it decides auto-opening Model settings, so it must not depend on counts. */
     const countFreeGateReasonOf = (m: FailureModel): string | null =>
         gateReasonOf(m) ?? (isModelDone(m) || isModelTrainedFresh(m)
             ? null
             : getBuildBlockReason(effectiveModelFor(m), gateFg, gateHeaders, { bounds: datasetBounds }));
-    /** A model's own (save) block and the gate's, in ONE order — the gate's: a Custom
-     *  model with neither a condition nor a train period is told about the condition
-     *  first, like its badge ("Needs condition", then "Needs train period"). */
+    /** Custom model with neither condition nor train period hears about the condition first; else own reason, then the gate's. */
     const orderedBlockReason = (own: string | null, gate: BuildBlock | null): string | null =>
         own === NO_TRAIN_PERIOD_REASON_CUSTOM && gate?.kind === 'no-condition' ? gate.reason : own ?? gate?.reason ?? null;
-    /** The gate reason as the model's OWN page words it. A Custom model's own
-     *  running condition is fixed inside its Model settings, so the wording says
-     *  where: "Own running condition: P1 ends before it starts. Fix it in Model
-     *  settings", or "Fix P1's end above" while that section is open
-     *  (`customBlockText`). Any other text is returned unchanged. */
+    /** Gate reason in the model's own wording: a Custom model's condition is fixed in Model settings. Other text is unchanged. */
     const ownGateText = (m: FailureModel, text: string | null): string | null => {
         if (text === null) return null;
         const block = trainGateBlockOf(m);
         if (!block || block.mode !== 'custom' || block.kind === 'category' || block.reason !== text) return text;
         return customBlockText(block, { settingsOpen: isSettingsOpen(m) });
     };
-    /** A block reason shown AWAY from the Model settings form (the Health score page,
-     *  the save card, a tooltip in the header): "Fill in the required fields above
-     *  first" reads wrong there — nothing is "above" — so the missing setting is named
-     *  ("Add at least 1 predictor (+1 more)"). Everything else as `ownGateText`. */
+    /** Block reason shown away from the form: name the missing setting instead of "fill in the fields above". */
     const awayFromFormText = (m: FailureModel, text: string | null): string | null =>
         text === REQUIRED_FIELDS_BLOCK_REASON ? missingSettingsText(missingItems(m)) : ownGateText(m, text);
-    // The DRAFT-merged model, like the gate itself: the badge and the sentence then
-    // name the same thing while a Custom model's own condition is being edited.
+    // Draft-merged model, like the gate, so badge and sentence agree.
     const needsCondition = (m: FailureModel): boolean => !isRunningConditionConfigured(effectiveModelFor(m), gateFg, gateHeaders);
-    /** Badge text for a model the gate blocks, for ANY reason (missing condition,
-     *  missing category, invalid period — and, for a model that still has to train,
-     *  nothing to train on), else null. Hover text is the reason. */
+    /** Badge text for a model the gate blocks, else null; hover text is the reason. */
     const gateBadge = (m: FailureModel): string | null => {
         const block = gateBlockOf(m) ?? shownGuardBlockOf(m);
         if (block === null) return null;
@@ -1678,10 +1276,7 @@ export default function BuildModelWindow() {
         return effectiveRunningCondition(effectiveModelFor(m), gateFg).periods.length === 0 ? 'Needs train period' : 'Fix periods';
     };
 
-    /** Another model of the WORKSPACE (any sensor, any kind) already using the name
-     *  being saved — the export writes each name as the model's display name.
-     *  Only the model being edited is gated: an untouched draft (or one reverted
-     *  to its saved name) is never blocked; a saved twin blocks Mark complete. */
+    /** Other workspace model using the draft's name. Only an edited name is gated; a saved twin blocks Mark complete. */
     const nameConflictOf = (m: FailureModel): FailureModel | null => {
         const d = drafts[m.id];
         if (!d || d.name.trim() === (m.name ?? '').trim()) return null;
@@ -1690,13 +1285,7 @@ export default function BuildModelWindow() {
     /** "DESCRIPTION · TAG" (the tag alone without a description) for plain-text reasons. */
     const plainSensorLabel = (tag: string): string => sensorPlainLabel(sensorLookup(tag));
 
-    /** A Custom model's own lists as they are SAVED — what its draft is judged
-     *  against (R2 / R3): the model's own saved lists. For a model that is saved in
-     *  Workspace mode and is being switched to Custom, ALSO the periods the switch
-     *  copied from the workspace (`seedCustomFromWorkspace` gives the copies fresh
-     *  ids, so they are matched by their dates): the user did not pick those — a
-     *  saved workspace period outside the data must not block the switch, it warns
-     *  here exactly as it does in the workspace settings. */
+    /** Custom lists as saved, what the draft is judged against. Periods copied from the workspace (matched by dates, copies get new ids) count too, so a saved out-of-data one only warns. */
     const savedCustomListsOf = (m: FailureModel): { periods: TimePeriod[]; tests: TestPeriod[] } => {
         const own = { periods: m.filterTimePeriods ?? NO_PERIODS, tests: m.customTestPeriods ?? NO_PERIODS };
         if (m.runningConditionMode === 'custom') return own;
@@ -1710,23 +1299,12 @@ export default function BuildModelWindow() {
             tests: [...own.tests, ...copied(d.customTestPeriods, runningConditionTestPeriods)],
         };
     };
-    /** The training scope a model has as it is SAVED (`trainCountKey`): its own
-     *  lists in Custom mode, the workspace's in Workspace mode. A draft whose scope
-     *  equals it did not change what is trained on. */
+    /** Training scope as saved (trainCountKey); a draft with the same scope did not change what is trained. */
     const savedScopeKeyOf = (m: FailureModel): string =>
         m.runningConditionMode === 'custom'
             ? customCountKeyOf(draftFromModel(m))
             : trainCountKey(runningConditionTimePeriods, persistedCountFilter);
-    /** What blocks Save changes in a Custom model's OWN lists, or null — exactly what
-     *  blocks Apply in the workspace settings (`runningConditionApplyBlock`, whole).
-     *  (ANY invalid own period blocks the save — train as well as scoring.)
-     *   - `data: false` — the plain rules only: an invalid train period, NO train
-     *     period, an invalid scoring period. What every READ path sees.
-     *   - `data: true` — plus the data guards of the DRAFT, for the Save / Train
-     *     actions: a period that is new or was changed here and lies entirely outside
-     *     the loaded data, and a settled count of zero running rows when the draft
-     *     changed what is trained on. A period (or a scope) that is exactly as it was
-     *     saved never blocks: renaming such a model saves fine. */
+    /** What blocks Save in a Custom model's own lists, same as workspace Apply; data=true adds the data guards. New or changed periods outside the data and zero rows block; unchanged saved ones never do. */
     const customSaveBlockOf = (m: FailureModel, data = false): RunningConditionApplyBlock | null => {
         const d = draftOf(m);
         if (d.runningConditionMode !== 'custom') return null;
@@ -1741,9 +1319,7 @@ export default function BuildModelWindow() {
             hasCondition: !d.customAllData,
         });
     };
-    /** That block as the reason Save / Train show. The two train-side blocks use the
-     *  gate's own sentences, so every place that words a gate reason (`ownGateText`,
-     *  the preflight list) reads them the same whichever rule found them first. */
+    /** Save/Train reason; train-side blocks reuse the gate's sentences so the wording matches everywhere. */
     const customSaveReason = (m: FailureModel, block: RunningConditionApplyBlock): string =>
         block.kind === 'no-train' ? NO_TRAIN_PERIOD_REASON_CUSTOM
             : block.kind === 'no-rows' ? noTrainRowsReason('custom', !draftOf(m).customAllData)
@@ -1751,9 +1327,7 @@ export default function BuildModelWindow() {
 
     const clusteringSameXY = (m: FailureModel, d: ModelDraft): boolean =>
         m.kind === 'clustering' && !!d.y.trim() && d.y.trim() === (m.xSensor ?? '').trim();
-    /** Why Save is disabled (category / required fields / the model's own lists), or
-     *  null. `data` as in `customSaveBlockOf`: `true` only where saving (or training,
-     *  which saves first) is the action. */
+    /** Why Save is disabled, or null; data=true only where saving or training is the action. */
     const modelBlockReason = (m: FailureModel, data = false): string | null => {
         // Same text as `getBuildBlockReason` (single source: one string everywhere).
         if (categoryOf(m) === null) return CATEGORY_BLOCK_REASON;
@@ -1767,38 +1341,25 @@ export default function BuildModelWindow() {
         );
         if (!ok) return REQUIRED_FIELDS_BLOCK_REASON;
         if (clusteringSameXY(m, d)) return X_EQUALS_Y_REASON;
-        // A Custom model's own periods are saved with Save changes: whatever blocks
-        // the workspace Apply blocks this save too (`customSaveBlockOf`).
+        // A Custom model's own periods save with Save changes; whatever blocks the workspace Apply blocks this too.
         const own = customSaveBlockOf(m, data);
         if (own) return customSaveReason(m, own);
         return nameConflictOf(m) ? WORKSPACE_DUPLICATE_NAME_REASON : null;
     };
 
-    /** The notice line's words when what blocks Save changes is in the Custom model's
-     *  OWN lists: "Fix P1 before saving" / "Add a train period" / "Fix S1 before
-     *  saving" / "No rows to train on" — the wording of the workspace settings'
-     *  footer next to Apply; the row itself (or the red line under the timeline)
-     *  says what is wrong. Null for any other reason, and while there is nothing
-     *  to save (no draft). */
+    /** Notice words when the Custom model's own lists block Save (workspace footer wording); null otherwise or with no draft. */
     const customSaveBlockText = (m: FailureModel, reason: string | null): string | null => {
         if (reason === null || !(m.id in drafts)) return null;
         const own = customSaveBlockOf(m, true);
         return own && reason === customSaveReason(m, own) ? own.footer : null;
     };
 
-    /** The READ gate: everything Save needs (plain rules), then the gate — without
-     *  the data guards. What a model may SHOW is decided by this: its charts, the
-     *  Health score page, the preview, Mark complete. */
+    /** Read gate: Save's plain rules, then the gate, no data guards. Decides charts, Health score page, preview, Mark complete. */
     const buildBlockReason = (m: FailureModel): string | null => orderedBlockReason(modelBlockReason(m), gateBlockOf(m));
-    /** The ACTION gate — why TRAIN cannot run for this model: the read gate plus the
-     *  data guards (a draft period outside the data, no train period inside the data,
-     *  no rows). Asked only where Train is offered or started. */
+    /** The action gate: why Train cannot run (read gate plus data guards); asked only where Train is offered or started. */
     const trainBlockReason = (m: FailureModel): string | null => orderedBlockReason(modelBlockReason(m, true), trainGateBlockOf(m));
 
-    /** Short list of what's missing from THIS model's own settings (not the
-     *  running condition — that's a separate concern surfaced by the gate
-     *  badge/footer instead). Drives the "Model settings" section's
-     *  auto-expand and its "N to fix" pill. */
+    /** What is missing in this model's own settings (not the running condition); drives the auto-expand and the "N to fix" pill. */
     const missingItems = (m: FailureModel): string[] => {
         const d = draftOf(m);
         const items: string[] = [];
@@ -1812,8 +1373,7 @@ export default function BuildModelWindow() {
             if (!d.criteria && d.numClusters > 1) items.push(CLUSTERS_NEED_CRITERIA);
         }
         if (d.runningConditionMode === 'custom') {
-            // A scoring period that is new / changed in the draft and outside the data
-            // included; one that is exactly as it was saved is not "to fix".
+            // A new/changed scoring period outside the data counts; one as saved is not "to fix".
             const badTest = testPeriodsError(d.customTestPeriods, datasetBounds, savedCustomListsOf(m).tests);
             if (badTest) items.push(badTest);
         }
@@ -1829,9 +1389,7 @@ export default function BuildModelWindow() {
         if (m.kind === 'relationship') parts.push(stiffnessLabel(d.stiffness));
         else if (m.kind === 'clustering') parts.push(`${d.numClusters} clusters`);
         else parts.push('1σ + 3σ');
-        // Custom has its own editable conditions/periods (see
-        // `switchRunningConditionMode` / the "Training data" field below), so the
-        // collapsed summary shows what is actually configured.
+        // Custom has its own conditions/periods, so the summary shows what is configured.
         if (d.runningConditionMode === 'custom') {
             parts.push(customSummaryText({
                 allData: d.customAllData,
@@ -1850,13 +1408,7 @@ export default function BuildModelWindow() {
         return [name, ...(y === null ? [] : [`Y: ${y ? sensorLabel(y) : '—'}`]), ...fixed].join(' · ');
     };
 
-    // `commitModel` returns the `persist()` promise (rather than firing it and
-    // forgetting) so `trainForQueue` can await the write landing on disk first.
-    /** The persistable fields a model's draft would write on Save — factored
-     *  out of `commitModel` so `trainForQueue` can compute the exact same
-     *  merged-with-draft model to train against, without waiting for a
-     *  `persist()` round-trip + re-render to see the fresh values. The custom
-     *  running-condition fields are common to every kind, so they are in `base`. */
+    /** Fields a draft writes on Save; trainForQueue merges the same fields without waiting for a write. */
     const draftFields = (m: FailureModel, d: ModelDraft): Partial<FailureModel> => {
         const base: Partial<FailureModel> = {
             name: d.name.trim(),
@@ -1867,7 +1419,7 @@ export default function BuildModelWindow() {
             // does not add the key (its bytes stay the same).
             ...(d.customAllData || m.customRunningConditionAllData !== undefined ? { customRunningConditionAllData: d.customAllData } : {}),
             filterTimePeriods: d.customPeriods,
-            // WRITTEN as id / start / end only (never a legacy label / event time).
+            // Written as id / start / end only.
             customTestPeriods: toScoringPeriods(d.customTestPeriods),
         };
         if (m.kind === 'individual') return base;
@@ -1902,13 +1454,7 @@ export default function BuildModelWindow() {
         return run;
     };
 
-    /** The Custom running-condition editor's Workspace/Custom switch. Everything
-     *  it touches (`runningConditionMode`, `customFilters`/`customCombine`/
-     *  `customPeriods`) is a DRAFT field, so a switch here (and any seeding it
-     *  triggers) is staged, not written until Save changes. The seed check ("does
-     *  this model already have its own custom rows") reads the CURRENT draft, which
-     *  starts out as the model's own stored fields (`draftFromModel`) plus whatever
-     *  the user has since edited. */
+    /** Workspace/Custom switch: stages draft fields until Save changes; the seed check reads the current draft. */
     const switchRunningConditionMode = (m: FailureModel, mode: 'workspace' | 'custom') => {
         if (mode === 'workspace') {
             patchDraft(m, { runningConditionMode: 'workspace' });
@@ -1916,8 +1462,7 @@ export default function BuildModelWindow() {
             return;
         }
         const d = draftOf(m);
-        // Each of the model's own lists (conditions, train periods, scoring periods) is
-        // copied from the workspace ONCE — only while it is still empty.
+        // Each own list (conditions, train periods, scoring periods) is copied from the workspace once, only while empty.
         const { patch: seed, copied } = seedCustomFromWorkspace(
             { customFilters: d.customFilters, customPeriods: d.customPeriods, customTestPeriods: d.customTestPeriods },
             { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods, testPeriods: runningConditionTestPeriods },
@@ -1928,11 +1473,7 @@ export default function BuildModelWindow() {
         }
     };
 
-    /** The Relationship result chart's X-axis switcher — writes immediately: it is
-     *  a view choice for the chart, not a model parameter like predictors /
-     *  stiffness / training scope, so it does not belong in the draft / Save-
-     *  changes flow. Same immediate-write shape as `changeCategory` above — a
-     *  direct `persist()` call, not a `patchDraft`. */
+    /** Writes immediately: a chart view choice, not a model parameter, so it skips the draft/Save flow. */
     const changeScatterX = (modelId: string, xSensor: string) => {
         void persist((models, groups) => ({
             groups,
@@ -1940,8 +1481,7 @@ export default function BuildModelWindow() {
         }));
     };
 
-    /** The detail header's category control: writes EVERY model of that
-     *  sensor in EVERY failure group, and saves instantly (no Save button). */
+    /** Writes every model of the sensor in every failure group; saves instantly. */
     const changeCategory = async (key: string, cat: ModelCategory) => {
         if (sensorCategory(allModels, key) === cat) return;
         const groupNos = [...new Set(allModels.filter(m => modelSensorKey(m) === key).flatMap(m => m.groupNos))].sort((a, b) => a - b);
@@ -1963,38 +1503,21 @@ export default function BuildModelWindow() {
         })());
     };
 
-    /** The model Train/staleness checks should actually judge RIGHT NOW: the
-     *  persisted model, merged with any pending (unsaved) draft edit for it —
-     *  same merge `trainForQueue` commits on an actual Train. A draft change
-     *  to a fingerprinted field (stiffness, predictors, Y, cluster settings,
-     *  Workspace/Custom, …) makes the results area go stale and disables
-     *  Mark complete IMMEDIATELY, not only after Save/Train. The persisted
-     *  `trainedFingerprint` write itself only ever happens through
-     *  `trainForQueue`/`executeTrain`, never from this. */
+    /** Model that Train/staleness checks judge now: persisted merged with the pending draft, as trainForQueue commits. A fingerprinted draft change makes results stale at once; trainedFingerprint is written only by trainForQueue/executeTrain. */
     const effectiveModelFor = (m: FailureModel): FailureModel =>
         m.id in drafts ? { ...m, ...draftFields(m, draftOf(m)) } : m;
 
-    /** "Trained" (the status pill, distinct from Complete): a successful
-     *  preview run exists AND its fingerprint still matches the model's current
-     *  inputs AND the model isn't already Complete — see
-     *  `src/utils/trainFingerprint.ts`. */
+    /** Trained: a run exists, its fingerprint matches current inputs, and the model is not Complete (utils/trainFingerprint.ts). */
     const isModelTrainedFresh = (m: FailureModel): boolean =>
         !m.status && trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes);
-    /** Was trained at some point, but the model's inputs (or the effective
-     *  running condition) changed since — "Settings changed — re-train". */
-    // NOT gated on `status`: a Complete model whose inputs changed since it was
-    // trained is out of date too (the write side already set it Incomplete; this
-    // is the read side, for old data and for a pending draft). See
-    // `utils/modelStatus.ts`.
+    /** Trained earlier, but its inputs (or effective running condition) changed since. */
+    // Not gated on status: a Complete model with changed inputs is stale too (read side, for old data and pending drafts).
     const isModelStale = (m: FailureModel): boolean => isModelStaleFor(effectiveModelFor(m), gateFg, specialRecipes);
     /** Complete AND still up to date — what every "Complete" display reads
      *  (never `m.status` alone). */
     const isModelDone = (m: FailureModel): boolean => m.status && !isModelStale(m);
 
-    // A model is marked Complete ONLY through `runMarkComplete` below (validate the
-    // set points -> write the model's files -> persist `status: true`). Going back
-    // to Incomplete only writes `status: false` (the files already written stay on
-    // disk).
+    // Complete is set only through runMarkComplete; going back to Incomplete just writes status:false.
     const markModelIncomplete = (modelId: string) => {
         void persist((models, groups) => ({
             groups,
@@ -2005,18 +1528,10 @@ export default function BuildModelWindow() {
     /** A Custom-mode model whose OWN running condition is what blocks it: the fix is inside Model settings. */
     const customFixInside = (m: FailureModel): boolean =>
         draftOf(m).runningConditionMode === 'custom' && categoryOf(m) !== null && countFreeGateReasonOf(m) !== null;
-    /** "Model settings" of this model is open on screen. It opens by itself when
-     *  the thing to fix is INSIDE it (a missing setting, or a Custom model's own
-     *  running condition — that panel lives in this section); the user's own open /
-     *  close (the override) wins; a model queued or training in the run shows the
-     *  locked one-line header instead. */
+    /** Settings open on screen: auto when the fix is inside; the user's override wins; queued/training shows the locked header. */
     const isSettingsOpen = (m: FailureModel): boolean =>
         !queue.isLocked(m.id) && (settingsOpenOverride[m.id] ?? (missingItems(m).length > 0 || customFixInside(m)));
-    /** Everything currently wrong with THIS model's own settings, plus (if
-     *  distinct from the category reason `missingItems` already covers) the
-     *  running-condition/period gate reason — feeds the results area's
-     *  "N items to fix" list, in the same wording `missingItems` uses in the
-     *  Model settings section. Each item carries its own "take me there" action. */
+    /** Everything wrong with this model's settings plus the gate reason (not the category one, missingItems has it). Feeds the "N items to fix" list, each with a take-me-there action. */
     const incompleteItems = (m: FailureModel): { text: string; onClick: () => void }[] => {
         const items = missingItems(m).map(text => ({
             text,
@@ -2024,13 +1539,7 @@ export default function BuildModelWindow() {
         }));
         // The gate — and, for a model that still has to train, "nothing to train on".
         const gr = gateReasonOf(m) ?? shownGuardBlockOf(m)?.reason ?? null;
-        // Avoid double-reporting the category reason: `missingItems` already
-        // lists "Pick a category" when it's null; `gateReasonOf` returns the
-        // SAME `CATEGORY_BLOCK_REASON` text in that case, not a distinct one.
-        // A Custom-mode model's own condition/period editor lives inline in
-        // its Model settings section, not in the workspace Running Condition
-        // modal, so its link goes there (same action `missingItems` above
-        // uses to jump to a missing field).
+        // Category reason is skipped (missingItems has it). Custom: the condition editor is in Model settings, so the link goes there.
         if (gr && categoryOf(m) !== null) {
             const isCustom = draftOf(m).runningConditionMode === 'custom';
             items.push({
@@ -2062,18 +1571,7 @@ export default function BuildModelWindow() {
         delete rest[id];
         return rest;
     });
-    /** A model that HAS results (trained and up to date, or Complete) and whose
-     *  training scope holds NO row of the loaded data — else null. Its charts are
-     *  computed from the loaded data, so they cannot be drawn; nothing about the model
-     *  changed. Known from the same source that blocks its Train (`trainGuardBlockOf`:
-     *  no train period inside the data — known at once — or a settled count of zero),
-     *  or, while that was not known yet, from the engine's own "no rows" answer to
-     *  the silent load (`noRowsLoads`). Display only — nothing is ever written for it:
-     *  the model keeps its own status words, ONE board says why there are no charts
-     *  and where to fix it, and the window does not ask the engine for it.
-     *  Not while it is being loaded (the answer is on its way), not for a run of this
-     *  session that failed for another reason, and not while the gate itself blocks
-     *  the model (those boards say what to fix first). */
+    /** Model with results whose training scope has no row in the loaded data, else null. Display only, nothing written. Not while loading, after another failed run, or while the gate blocks; from trainGuardBlockOf, else noRowsLoads. */
     const noDataOf = (m: FailureModel): ModelNoData | null => {
         if (!m.lastTrainedAt || isModelStale(m)) return null;
         if (trainStatus[m.id] === 'loading' || trainError[m.id]) return null;
@@ -2085,33 +1583,10 @@ export default function BuildModelWindow() {
         }
         return null;
     };
-    /** Runs the read-only preview computation for ONE model (`compute_sensor_stats` /
-     *  `preview_relationship_model` / `compute_clustering_preview`). Never writes a
-     *  `*_INFO_*.json` file — Mark complete does. `opts.persistMeta` distinguishes
-     *  an explicit Train/Re-train (writes `lastTrainedAt`/`trainedFingerprint` via
-     *  `persist()`, never a hand-built object literal) from the silent
-     *  auto-recompute that runs when reopening an already-Trained-and-fresh model
-     *  (session-only — nothing to persist, the fingerprint hasn't changed).
-     *  `merged` carries the exact inputs used, so a Train can pass the
-     *  just-committed draft values without waiting for this window's state to
-     *  re-render first (see `trainForQueue`).
-     *  Returns its outcome for the train queue (`useTrainQueue`) while still
-     *  setting `trainError` for the window's own UI: `{ ok: true }`, a failure
-     *  (`stale` when the dataset is no longer this window's — the run then
-     *  stops), or `abandoned` when the window was re-pointed at another
-     *  workspace meanwhile. */
+    /** Runs one model's preview on the exact inputs in merged. persistMeta=true (explicit Train) saves lastTrainedAt/trainedFingerprint. persistMeta=false is a silent, session-only recompute. Returns an outcome for the train queue and sets trainError. */
     const executeTrain = async (merged: FailureModel, fingerprint: string, opts: { persistMeta: boolean }): Promise<TrainOutcome> => {
         const id = merged.id;
-        // A Train can still be running when this window gets re-pointed at a
-        // different workspace (`build-model-data` for a new project).
-        // `persist()`'s write targets the `workspaceId` its own closure
-        // captured, which is fine — but its `applyFg` call would replace this
-        // window's CURRENT in-memory state even though `workspaceIdRef` already
-        // points elsewhere. So capture the workspace this run belongs to now,
-        // and refuse to write back (or touch any of this window's state) if it
-        // no longer matches once the preview finishes. A stray
-        // `trainStatus`/`trainResults` entry for the abandoned model id is
-        // harmless: the effect above prunes any id no longer in `allModels`.
+        // Re-pointing mid-Train: write nothing back if the workspace changed (applyFg would replace the current state).
         const capturedWorkspaceId = workspaceIdRef.current;
         setTrainStatus(prev => ({ ...prev, [id]: 'loading' }));
         setTrainError(prev => {
@@ -2121,12 +1596,8 @@ export default function BuildModelWindow() {
             return rest;
         });
         try {
-            // This window was opened on ONE dataset generation. The train commands carry
-            // no generation of their own, so if the dataset was replaced since (another
-            // CSV loaded in the main window) they would train on the OTHER data and the
-            // model would be stamped "Trained" with numbers from the wrong dataset. Check
-            // before AND after (diagnostic `get_session_generation`; unavailable /
-            // unknown = no check).
+            // Train commands carry no generation: a replaced dataset would be trained on silently.
+            // Check before and after (get_session_generation; unavailable = no check).
             if (await datasetChangedSinceOpen()) throw new Error(DATASET_CHANGED_MESSAGE);
             if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             const eff = effectiveRunningCondition(merged, gateFg);
@@ -2136,11 +1607,8 @@ export default function BuildModelWindow() {
                 const stats = await invoke<SensorStats>('compute_sensor_stats', { sensor: merged.targetSensor, filter });
                 result = { kind: 'individual', stats };
             } else if (merged.kind === 'relationship') {
-                // Health score: ask Rust to keep the full-resolution fit under a key that
-                // contains the train fingerprint — Rust ignores `filter` for the cached
-                // fit, so a key that did not change with the scope/predictors/target/
-                // stiffness would serve stale data. (`fingerprint` is the same value that
-                // is persisted as `trainedFingerprint`.)
+                // Rust keeps the full fit under this key and ignores filter for it,
+                // so the key must change with scope/predictors/target/stiffness (the fingerprint does).
                 const cacheKey = `${merged.id}::${fingerprint}`;
                 const trainTestPeriods = testPeriodsWireFor(merged, gateFg);
                 const r = await invoke<RelationshipPreviewResult>('preview_relationship_model', {
@@ -2150,10 +1618,7 @@ export default function BuildModelWindow() {
                     filter,
                     cache_key: cacheKey,
                     max_points: HEALTH_DEFAULT_MAX_POINTS,
-                    // The active scoring periods ride along (start / end only), so this
-                    // one sidecar run also predicts their rows and the health preview
-                    // that follows scores them at once (no second ~15 s run). Same wire
-                    // as `compute_health_preview`; omitted when there is none.
+                    // Active scoring periods (start/end only) ride along so one sidecar run also predicts their rows (no second ~15 s run).
                     ...(trainTestPeriods ? { test_periods: trainTestPeriods } : {}),
                 });
                 if (r.error) throw new Error(r.error);
@@ -2170,7 +1635,7 @@ export default function BuildModelWindow() {
                 });
                 result = { kind: 'clustering', preview: r };
             }
-            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true }; // abandoned — see comment above
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             if (await datasetChangedSinceOpen()) throw new Error(DATASET_CHANGED_MESSAGE);
             if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             setTrainResults(prev => ({ ...prev, [id]: { fingerprint, result } }));
@@ -2180,14 +1645,9 @@ export default function BuildModelWindow() {
                 return rest;
             });
             forgetNoRowsLoad(id);
-            // The Relationship fit is now in Rust's cache under this key: make the
-            // health preview (re)fetch even if its request is byte-identical. Only
-            // for the model on screen (the one preview there is): a training run
-            // must not refetch the open model's charts after every OTHER model.
+            // The fit is now in Rust's cache: refetch the health preview even if the request is identical (open model only).
             if (activeModelIdRef.current === id) setHealthRevision(r => r + 1);
-            // Rust holds the fit again (an explicit train, the silent re-fit or "Load it
-            // again"): no longer "fit gone". Should the next preview still answer
-            // NOT_FITTED, the effect below marks it again.
+            // Rust holds the fit again, so no longer "fit gone"; a later NOT_FITTED answer marks it again.
             setNotFittedIds(prev => {
                 if (!prev.has(id)) return prev;
                 const rest = new Set(prev);
@@ -2200,12 +1660,7 @@ export default function BuildModelWindow() {
                 for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
                 const metaSaved = await persist((models, groups) => ({
                     groups,
-                    // `status: false` too: a (re-)train always lands the model in
-                    // Incomplete/Trained — an old-data Complete model that was out of date
-                    // must not silently turn Complete again just because its fingerprint
-                    // now matches; it is marked complete again explicitly.
-                    // A new fit also starts a new verdict (it is written again once the preview of this
-                    // fit lands): the old one described the old fit.
+                    // status:false: a (re-)train lands in Incomplete/Trained, never straight in Complete. A new fit drops the old healthVerdict.
                     models: models.map(x => {
                         if (x.id !== id) return x;
                         const { healthVerdict: dropped, ...rest } = x;
@@ -2217,7 +1672,7 @@ export default function BuildModelWindow() {
             }
             return { ok: true };
         } catch (e) {
-            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true }; // abandoned — see comment above
+            if (workspaceIdRef.current !== capturedWorkspaceId) return { ok: false, abandoned: true };
             setTrainStatus(prev => {
                 const rest = { ...prev };
                 delete rest[id];
@@ -2228,19 +1683,13 @@ export default function BuildModelWindow() {
             if (raw === ENGINE_STOPPED_MESSAGE) return { ok: false, skip: ENGINE_STOPPED_ROW_NOTE };
             // The bundled Relation model engine is too old: show the app's own wording.
             const parsed = parseHealthError(e);
-            // The engine found nothing to train on (a scope the window had not counted —
-            // a Custom model that is not the open one — or a sensor with no value in the
-            // train periods): the named reason and where to fix it, not the raw text.
+            // The engine found nothing to train on (uncounted scope or no value in the train periods): show the named reason, not raw text.
             const noRows = parsed.code === 'SIDECAR_OUTDATED' ? null : noRowsTrainError(raw, merged.runningConditionMode === 'custom');
             const message = parsed.code === 'STALE_SESSION'
                 ? TRAIN_STALE_MESSAGE
                 : parsed.code === 'SIDECAR_OUTDATED' ? parsed.message : noRows ?? raw;
             if (noRows !== null && !opts.persistMeta) {
-                // A SILENT load (opening a trained / Complete model, "Load it again") that
-                // found no row: nobody trained it and nothing about the model changed, so
-                // this is not a failed train. Remembered for this scope and dataset — the
-                // window shows the "No data for this model in the loaded file" board
-                // (`noDataOf`) and does not ask again.
+                // A silent load with no rows is not a failed train: remember it for this scope and dataset for the "No data" board (noDataOf).
                 setNoRowsLoads(prev => ({ ...prev, [id]: noRowsLoadKey(fingerprint) }));
                 return { ok: false, error: message };
             }
@@ -2252,23 +1701,14 @@ export default function BuildModelWindow() {
         }
     };
 
-    /** Forget a model's Mark complete outcome (its refusal banner was dismissed, or the
-     *  user moved on with a new action). */
+    /** Forget a model's Mark complete outcome (its refusal banner was dismissed, or the user moved on with a new action). */
     const dismissSaveInfo = (modelId: string) => setSaveInfo(prev => {
         if (!(modelId in prev) || prev[modelId].phase === 'running') return prev;
         const rest = { ...prev };
         delete rest[modelId];
         return rest;
     });
-    /** The ONE per-model train every Train control goes through — called by the
-     *  train queue (`useTrainQueue`), one model at a time, never two at once
-     *  (one shared Rust session, one sidecar). Looks the model up fresh (it may
-     *  have been deleted, or its settings / the gate changed since the run
-     *  started: then it is SKIPPED, not failed). Commits a pending draft FIRST
-     *  (`commitModel`), so what gets trained and fingerprinted is exactly what
-     *  is saved; with no draft pending, the persisted model is trained
-     *  untouched (re-deriving fields from an empty draft could fingerprint a
-     *  value that is not what is stored). */
+    /** The one per-model train, called by the queue one model at a time (one Rust session, one sidecar). Looks the model up fresh (deleted or changed: skipped); commits a pending draft first, else trains the persisted model. */
     const trainForQueue = async (id: string): Promise<TrainOutcome> => {
         // Captured BEFORE any await: a re-point while waiting abandons this model.
         const ws = workspaceIdRef.current;
@@ -2292,12 +1732,11 @@ export default function BuildModelWindow() {
     };
     queueTrainRef.current = trainForQueue;
 
-    /** A model's plan for a run right now (`classifyTrainPlan`: the window's own
-     *  block rule + the ONE status rule; a failed run this session = ready again). */
+    /** Plan for a run now (classifyTrainPlan); a failed run this session = ready again. */
     const candidateOf = (m: FailureModel): TrainCandidate => ({
         id: m.id,
         kind: m.kind,
-        // Mark complete is writing this model's files (a Relation model re-runs the sidecar): skipped.
+        // Mark complete is running for this model (a Relation model re-runs the sidecar): skipped.
         plan: saveInfo[m.id]?.phase === 'running'
             ? { kind: 'missing', reason: BEING_SAVED_REASON, fix: 'settings' }
             : classifyTrainPlan({
@@ -2318,20 +1757,10 @@ export default function BuildModelWindow() {
         if (queue.stale) return TRAIN_STALE_MESSAGE;
         if (queue.isRunning) return TRAIN_RUN_ACTIVE_REASON;
         if (saveInfo[m.id]?.phase === 'running') return FIT_RELOAD_SAVING_REASON;
-        // A model whose settings (an unsaved draft that cannot be saved) or running
-        // condition block it cannot be loaded: the link is disabled with that reason
-        // instead of doing nothing. (The read gate: loading a trained model again is
-        // not a train — the data guards do not stand in its way.)
+        // Blocked by settings or condition: disable the link with the reason. Read gate, since loading is not a train.
         return awayFromFormText(m, buildBlockReason(m));
     };
-    /** "Load it again" on the "Fit no longer in memory" boards (and the notice line): the
-     *  SAME silent re-fit the window runs by itself the first time a fit is lost
-     *  (`persistMeta: false`), asked for by the user once that automatic try is used up.
-     *  Nothing about the model changed, so NOTHING is written: status, `lastTrainedAt`
-     *  and the fingerprint stay — a Complete model stays Complete (Train sensor never
-     *  trains one, and a re-train would set it back to Incomplete). The board reads
-     *  "Loading the Relation model…" meanwhile; a load that fails comes back to the
-     *  board with its reason (`trainError`). */
+    /** Silent re-fit like the window's automatic one (persistMeta:false), asked by the user once that try is used up. Writes nothing; a Complete model stays Complete. A failed load returns to the board with trainError. */
     const reloadFit = (id: string) => {
         const m = allModels.find(x => x.id === id);
         if (!m || fitReloadBlock(m) !== null) return;
@@ -2348,9 +1777,7 @@ export default function BuildModelWindow() {
                 const out = await executeTrain(m, fp, { persistMeta: false });
                 // Loaded: should this fit be lost again later, it is re-fitted automatically once more.
                 if (out.ok) for (const k of [...refitTriedRef.current]) if (k.startsWith(`${id}::`)) refitTriedRef.current.delete(k);
-                // A Mark complete that was refused ONLY because the fit was gone has nothing
-                // left to fix now: its red card and the notice line's "Not saved" go with the
-                // user's own "Load it again". (Any other refusal stays until it is acted on.)
+                // Mark complete refused only for a gone fit: its red card and "Not saved" clear on "Load it again"; other refusals stay.
                 if (out.ok && workspaceIdRef.current === ws) {
                     setSaveInfo(prev => {
                         const cur = prev[id];
@@ -2367,43 +1794,23 @@ export default function BuildModelWindow() {
         });
     };
 
-    // (`NOT_TRAINED_BLOCK_REASON` — the text shown, and the reason
-    // `runMarkComplete` blocks on, when the gate passes but the model is not
-    // Trained-and-fresh — lives in `utils/modelStatus.ts` so the Workbench's
-    // "✓ Mark complete" title and the health-score Mark complete share one wording.)
 
-    // ---- Set points + Mark complete (health score 3b-2) ----
-    /** The model's PERSISTED set points, brought up to date: the right empty shape
-     *  for its kind, and (Individual) the first-open snapshot of the sensor's
-     *  master-data L/H prefilled - derived here so the very first render already shows
-     *  it; `setPointsSeed` below writes it once. Never overwrites a value the user
-     *  entered. `loading` = metadata not hydrated yet: no snapshot is taken then. */
+    /** Persisted set points brought up to date: the empty shape for the kind and, for Individual, the master L/H snapshot. Derived so the first render shows it; never overwrites user values; no snapshot while loading. */
     const persistedSetPointsOf = (m: FailureModel): HealthSetPoints =>
         ensureHealthSetPoints(m, loading ? undefined : (sensorMetadata ?? [])).healthSetPoints as HealthSetPoints;
     /** What the Health score page shows and previews: the draft being typed, else the persisted ones. */
     const setPointsOf = (m: FailureModel): HealthSetPoints => spDrafts[m.id] ?? persistedSetPointsOf(m);
 
-    /** Every edit of a set point (typing, stepper, quick button, reset to master).
-     *  Updates the draft at once; `commit` also persists right away (a discrete
-     *  action has nothing more to type). Editing never changes status and never makes
-     *  the model stale. */
+    /** Every set-point edit: updates the draft at once; commit also persists (discrete actions). A saved change makes a Complete model Incomplete (central rule) but never stale. */
     const changeSetPoints = (m: FailureModel, next: HealthSetPoints, commit?: boolean) => {
         writeSpDrafts({ ...spDraftsRef.current, [m.id]: next });
-        // The refusal Rust gave for the previous values no longer describes these — and
-        // neither does the "not saved" outcome of that attempt (its red card and the
-        // notice line's "Not saved" would otherwise stay for the rest of the session and
-        // hide the real reason Mark complete is blocked).
+        // Clear the refusal and the "not saved" outcome: they described the previous values and would hide the real block reason.
         setAttemptIssues(prev => (prev[m.id] ? { ...prev, [m.id]: null } : prev));
         dismissSaveInfo(m.id);
         if (commit) void commitSetPointDrafts();
     };
 
-    /** The ONE way a model becomes Complete: `checkModelForComplete` (validate the
-     *  set points — writes NO files; Export results writes them) and only then
-     *  `persistModelComplete` (`status: true` + the validated set points, in one
-     *  write, gate + "trained and fresh" re-checked against what is on disk).
-     *  Returns `null` on success, otherwise the reason it was not marked (also
-     *  shown on the Health score page). Never throws; guarded against a double click. */
+    /** The only way a model becomes Complete: checkModelForComplete (validates set points, writes no files), then persistModelComplete (status:true + set points in one write, gate and freshness re-checked on disk). Returns null or the reason; never throws. */
     const runMarkComplete = async (m: FailureModel): Promise<string | null> => {
         const fg: RunningConditionFg = gateFg;
         const model = effectiveModelFor(m);
@@ -2411,10 +1818,7 @@ export default function BuildModelWindow() {
         if (!ws) return 'No workspace is open.';
         if (completeRunningRef.current.has(m.id)) return 'Mark complete is already being checked.';
         const id = m.id;
-        // `true` while this window still shows the workspace the click was made in. The
-        // run can outlive that (the window is re-pointed at another project meanwhile): the
-        // files and the save always go to `ws`, but window state (banner, drafts, in-memory
-        // workspace slice) is only touched while it still describes `ws`.
+        // The run can outlive this workspace: the save always goes to ws; window state is touched only while it still describes ws.
         const stillHere = (): boolean => workspaceIdRef.current === ws;
         const fail = (message: string, issues: HealthIssue[] | null = null): string => {
             if (!stillHere()) return message; // re-pointed: nothing on screen is about this model any more
@@ -2425,23 +1829,16 @@ export default function BuildModelWindow() {
         // A category on the sensor, and a name no other model of the project uses.
         const projectBlock = markCompleteProjectBlock(allModels, model, categoryOf(m), plainSensorLabel);
         if (projectBlock !== null) return fail(projectBlock);
-        // Nothing is written for a model that is not allowed to be Complete anyway:
-        // the gate, and "trained and still fresh" (the same rules `persistModelComplete`
-        // re-checks against the disk inside its write).
-        // (The gate as it always was: Mark complete is not a train, the data guards
-        // do not block it.)
+        // Write nothing for a model not allowed to be Complete: gate and trained-and-fresh (re-checked on disk by persistModelComplete).
+        // Data guards do not block Mark complete.
         const notAllowed = getBuildBlockReason(model, fg, gateHeaders)
             // At least one valid scoring period.
             ?? markCompleteBlockReason(model, fg)
             ?? (trainedFreshFor(model, fg, specialRecipes) ? null : (isModelStaleFor(model, fg, specialRecipes) ? 'Settings changed — re-train first.' : NOT_TRAINED_BLOCK_REASON));
         if (notAllowed !== null) return fail(notAllowed);
         if (queueRef.current.isRunningNow()) return fail(TRAIN_RUN_ACTIVE_REASON);
-        // Unsaved Model-settings edits (e.g. a Custom model's scoring periods) are SAVED
-        // first, like Train does (`trainForQueue`): the files describe `model` (the
-        // draft-merged one) and the save below re-checks the scoring periods and the
-        // fingerprint against the DISK, so exporting a draft that never reached the
-        // disk would write the files and then refuse the save on every retry. A
-        // draft that cannot be saved (invalid) stops here, before anything is written.
+        // Unsaved Model-settings edits are saved first, like Train: the save re-checks scoring periods and fingerprint against disk,
+        // so an unsaved draft would be refused on every retry. An invalid draft stops here.
         const hasDraft = m.id in drafts;
         if (hasDraft) {
             const draftBlock = modelBlockReason(m, true);
@@ -2450,11 +1847,7 @@ export default function BuildModelWindow() {
         completeRunningRef.current.add(m.id);
         setSaveInfo(prev => ({ ...prev, [id]: { phase: 'running' } }));
         setAttemptIssues(prev => ({ ...prev, [id]: null }));
-        // The model's fingerprint at CLICK time: the files carry exactly this model, so the
-        // save below is refused when the model on disk no longer has it (re-configured and
-        // re-trained during the export).
-        // The scoring periods at click time too: the files' `validation` block describes
-        // exactly these, so a scoring-period edit during the export keeps it Incomplete.
+        // Click-time fingerprint, scoring periods and set points: the save is refused if the model on disk no longer matches.
         const race = {
             fingerprint: computeTrainFingerprint(model, fg),
             setPointsBefore: m.healthSetPoints,
@@ -2476,10 +1869,8 @@ export default function BuildModelWindow() {
                 if (!res.ok) {
                     if (res.reason === 'validation') return fail('Some set points are not valid — fix them in Checks first.', res.issues);
                     if (res.code === 'NOT_FITTED') {
-                        // The page still shows a valid preview, so Mark complete would stay
-                        // enabled and fail the same way on every click: mark the fit as gone
-                        // and ask the preview again (it answers NOT_FITTED too — the fit is
-                        // then loaded again silently once, or the board offers "Load it again").
+                        // The page still shows a valid preview, so Mark complete would fail the same on every click:
+                        // mark the fit gone and ask the preview again (NOT_FITTED, then one silent reload or "Load it again").
                         if (stillHere()) {
                             setNotFittedIds(prev => (prev.has(id) ? prev : new Set(prev).add(id)));
                             setHealthRevision(r => r + 1);
@@ -2489,7 +1880,6 @@ export default function BuildModelWindow() {
                     if (res.code === 'STALE_SESSION') return fail('The data in this window is out of date. Close it and open Build Model again from the Dashboard.');
                     return fail(res.error ?? 'The model could not be marked complete.');
                 }
-                // No export record: Mark complete writes no files.
                 const persisted: { reason: string | null } = { reason: null };
                 await trackPending((async () => {
                     const r = await persistModelComplete(ws, id, res.setPoints, gateHeaders, 'build-model', race);
@@ -2497,8 +1887,7 @@ export default function BuildModelWindow() {
                     if (stillHere()) applyWritten(r.next);
                 })());
                 if (persisted.reason !== null) return fail(`The model was not marked complete: ${persisted.reason}`);
-                // Re-pointed meanwhile: A's Complete is on disk (and was broadcast with A's
-                // id by `persistModelComplete`); this window's own state is B's — leave it.
+                // Re-pointed meanwhile: the old workspace's Complete is on disk and broadcast; leave this window's state alone.
                 if (!stillHere()) return null;
                 // What was typed is now what is on disk.
                 if (spDraftsRef.current[id] !== undefined && sameSetPoints(spDraftsRef.current[id], res.setPoints)) {
@@ -2543,8 +1932,7 @@ export default function BuildModelWindow() {
         if (running) queueRef.current.stopAfterCurrent('close');
         await stopRunningEngine();
     }, []);
-    /** Window.close() comes back through `onCloseRequested`: `leavingRef` lets that pass
-     *  through, so nothing asks or waits twice and the close can never loop. */
+    /** Window.close() re-enters onCloseRequested; leavingRef lets it pass so nothing asks or waits twice. */
     const leaveWindow = useCallback(async () => {
         await stopEngineIfBusy();
         leavingRef.current = true;
@@ -2555,16 +1943,13 @@ export default function BuildModelWindow() {
             tellCloseKept();
         }
     }, [stopEngineIfBusy, tellCloseKept]);
-    /** Model settings or Running condition edits that closing would drop (none when
-     *  the workspace is closing from the Dashboard). */
+    /** Model settings or Running condition edits that closing would drop (none when the workspace is closing from the Dashboard). */
     const unsavedEditsAtClose = useCallback((): boolean => {
         if (closeBypassRef.current) return false;
         const rc = rcDraftRef.current;
         return Object.keys(draftsRef.current).length > 0 || (!!rc && !rcDraftEqual(rc, rcPersistedRef.current));
     }, []);
-    /** The close itself: `flushFocusedInput()` first (a half-typed period date
-     *  settles on blur only), then flush every pending write (and wait for a
-     *  running Mark complete, capped), then close. */
+    /** The close: flushFocusedInput first (a half-typed period date settles only on blur), wait for a running export, flush pending writes (a running Mark complete is waited on, capped), then leave. */
     const closeNow = async () => {
         closeAfterRunRef.current = false;
         flushFocusedInput();
@@ -2592,9 +1977,7 @@ export default function BuildModelWindow() {
         if (mustAskBeforeClose()) { setCloseAsk(true); return; }
         await closeOrAskUnsaved();
     };
-    /** The close dialog's "Stop after this model and close": the run ends after the
-     *  model in training, then the usual close. Past the cap the model keeps training,
-     *  with a notice: only the NEXT close stops the engine (no dialog). */
+    /** "Stop after this model and close": the run ends after the model in training, then the usual close. Past the cap the model keeps training with a notice; only the next close stops the engine. */
     const stopRunAndClose = async () => {
         setCloseAsk(false);
         if (stopClosingRef.current) return;
@@ -2626,9 +2009,7 @@ export default function BuildModelWindow() {
         }
     };
 
-    // A native close (the window's own X button, Alt+F4, or the OS closing the
-    // app) bypasses `handleClose` entirely. Intercepts the close when this
-    // window has a write in flight or unsaved edits to ask about.
+    // A native close (X, Alt+F4, OS) bypasses handleClose: intercept it for a running Train, a write in flight or unsaved edits.
     useEffect(() => {
         let disposed = false;
         let unlisten: (() => void) | undefined;
@@ -2641,8 +2022,7 @@ export default function BuildModelWindow() {
                 event.preventDefault();
                 return;
             }
-            // A training run is active: keep the window and ask (in-window alertdialog) —
-            // unless the workspace is closing or an earlier "stop and close" gave up.
+            // A training run is active: keep the window and ask, unless the workspace is closing or an earlier "stop and close" gave up.
             if (mustAskBeforeClose()) {
                 event.preventDefault();
                 setCloseAsk(true);
@@ -2664,8 +2044,7 @@ export default function BuildModelWindow() {
             // A set-point draft typed but never blurred is a pending write too.
             if (!leaveUnsavedRef.current) void commitSetPointDrafts();
             const pending = pendingSaveRef.current;
-            // A running "Mark complete" (export + save) counts as pending too, and so does
-            // a running Export results.
+            // A running Mark complete counts as pending too, and so does a running Export results.
             if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) {
                 await stopEngineIfBusy();
                 return;
@@ -2678,11 +2057,8 @@ export default function BuildModelWindow() {
         return () => { disposed = true; if (unlisten) unlisten(); };
     }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose, stopEngineIfBusy, tellCloseKept, tellCloseSeen]);
 
-    // The Dashboard that opened this window is going away (Back to Import / another
-    // project): it closes this window right after. A run would hold that close
-    // (the dialog above), so the window would outlive its project. Drop the run and
-    // close without asking. Scoped to this window's workspace and dataset — a late
-    // copy for an earlier project must not close a window already re-pointed.
+    // The Dashboard is closing this window (Back to Import / another project): drop the run and close without asking.
+    // Scoped to this workspace and dataset so a late copy cannot close a re-pointed window.
     const generationRef = useRef<number | undefined>(undefined);
     generationRef.current = generation;
     useEffect(() => {
@@ -2702,10 +2078,7 @@ export default function BuildModelWindow() {
         return () => off();
     }, [queueReset]);
 
-    // Computed above the `if (loading)` guard (and therefore above every hook
-    // below it) so `individualChartQuery`/the auto-recompute effect can read
-    // `activeModel` — every hook in this component must run unconditionally
-    // on every render, so none of them can sit after an early return.
+    // Computed above the loading guard: every hook must run on every render, so none can sit after an early return.
     const sensorGroupsAll = allSensorGroups(allModels);
     const fullSensorMap = new Map(sensorGroupsAll.map(sg => [sg.key, sg]));
     const detailModels = selectedSensorKey !== null ? (fullSensorMap.get(selectedSensorKey)?.models ?? []) : [];
@@ -2715,58 +2088,31 @@ export default function BuildModelWindow() {
     const activeModelIdRef = useRef<string | null>(null);
     activeModelIdRef.current = activeModel?.id ?? null;
 
-    // ---- Auto-recompute on reopen ---
-    // A model that is already Trained-and-fresh (per the WORKSPACE'S
-    // persisted `lastTrainedAt`/`trainedFingerprint`) shows its result
-    // immediately, with no click required — this silently re-runs the same
-    // read-only preview query in the background whenever the Workbench doesn't
-    // yet have a cached result for the CURRENT fingerprint (a fresh session, or
-    // this exact model wasn't open before). It ALSO runs for a Complete model —
-    // the Model fit page shows the charts of a Complete model too, and a
-    // Relationship model's health preview reads the fit that this run re-fills
-    // in Rust's cache after a reload. It never persists anything
-    // (`persistMeta: false` — the fingerprint didn't change, and `status` is
-    // never touched), and never fires while a run for this model is already in
-    // flight.
-    // (The effect itself sits further down, right after the active Custom model's
-    // row count: it must not ask the engine for a model that is known to have no
-    // row in the loaded data — `noDataOf`.)
+    // Auto-recompute on reopen: a Trained-and-fresh or Complete model silently re-runs the preview if none is cached for its fingerprint.
+    // persistMeta:false, never touches status, not during a run; skips a model known to have no rows (noDataOf).
 
-    // ---- Health preview + Sub-models for the ACTIVE model ----
-    // ONE `useHealthPreview` call feeds both pages of the detail pane: the bounded
-    // series/stats Rust returns for the Model fit charts and the score of
-    // the Health score page. It is given the DRAFT-merged model (same as Train),
-    // so an unsaved edit that changes the training inputs makes it idle ("stale")
-    // while the last data stays on screen under the "Out of date" overlay.
+    // One useHealthPreview call feeds both pages, with the draft-merged model (as Train does):
+    // an unsaved training-input edit idles it while old data stays under the "Out of date" overlay.
     const activeEffective = activeModel ? effectiveModelFor(activeModel) : null;
 
-    /** Which page of the detail pane a model shows. The Health score page is only
-     *  ever shown for a model that was trained and is up to date (it reads the
-     *  trained fit); otherwise the stored choice is ignored, not erased. */
+    /** Health score page only for a trained, up-to-date model (it reads the fit); otherwise the stored choice is ignored, not erased. */
     const pageOf = (m: FailureModel): WorkbenchPage => {
         const want = pageByModel[m.id] ?? 'model';
         return want === 'health' && (isModelStale(m) || !m.lastTrainedAt) ? 'model' : want;
     };
 
-    // A Custom model's OWN running condition, as drafted. `activeCustomDraft` keeps
-    // one identity per draft / saved model, so the hook's inputs do not change on
-    // unrelated renders.
+    // activeCustomDraft keeps one identity per draft/saved model, so the hook's inputs do not change on unrelated renders.
     const activeDraftEntry = activeModel ? drafts[activeModel.id] : undefined;
     const activeCustomDraft = useMemo(
         () => (activeModel ? (activeDraftEntry ?? draftFromModel(activeModel)) : null),
         [activeModel, activeDraftEntry],
     );
     const activeIsCustom = !!activeModel && activeCustomDraft?.runningConditionMode === 'custom';
-    // Model settings — and with them a Custom model's own panel — are drawn on the
-    // Model fit page only. On the Health score page NOTHING of it is on screen, so
-    // nothing may be counted or re-read for it there.
+    // Model settings (and a Custom panel) are drawn on the Model fit page only; Health score must not count or re-read for them.
     const activeOnFitPage = !!activeModel && pageOf(activeModel) === 'model';
     const customPanelOpen = activeIsCustom && activeOnFitPage && isSettingsOpen(activeModel);
-    // With the panel closed the train running time still feeds the amber "below
-    // the recommended train time" note on the Model fit charts
-    // (`trainDaysEstimateFor`) and the zero-rows guard — asked only while the model
-    // could train (nothing but the count itself blocks it), and then for the train
-    // periods alone: one call.
+    // With the panel closed, the train running time still feeds the "below the recommended train time" note and the zero-rows guard:
+    // asked only while the model could train, train periods only, one call.
     const activeCustomCanTrain = !!activeEffective && activeEffective.runningConditionMode === 'custom'
         && getBuildBlockReason(activeEffective, gateFg, gateHeaders, { bounds: datasetBounds }) === null;
     const customCountsWanted = activeIsCustom && activeOnFitPage && (customPanelOpen || activeCustomCanTrain);
@@ -2789,18 +2135,14 @@ export default function BuildModelWindow() {
         filter: customCountFilter,
         expectedGeneration: generation,
     });
-    // The zero-rows guard of the active Custom model (see `customNoRowsKey` above):
-    // its own condition is configured, its count is settled, and no row is left —
-    // remembered as the training scope that was counted, so a sibling Custom model
-    // on the very same scope reads the same answer (`customNoRowsOf`).
+    // Zero-rows guard of the active Custom model: condition configured, count settled, no row left.
+    // Remembered as the counted scope so a sibling Custom model on the same scope reads the same answer.
     customNoRowsKey = activeModel && activeEffective && activeCustomDraft && activeIsCustom
         && isRunningConditionConfigured(activeEffective, gateFg, gateHeaders)
         && countedNoTrainRows(customCounts)
         ? customCountKeyOf(activeCustomDraft) : null;
 
-    /** The model on screen has results but no row in the loaded data (`noDataOf`):
-     *  nothing is asked of the engine for it (no silent load, no health preview) and
-     *  nothing is written — both pages show the one "No data…" board. */
+    /** Results but no row in the loaded data (noDataOf): no engine call, nothing written; both pages show the "No data" board. */
     const activeNoData = activeModel ? noDataOf(activeModel) : null;
     const activeGuardHolds = !!activeModel && trainGuardBlockOf(activeModel) !== null;
     // The auto-recompute on reopen (see the block comment above).
@@ -2812,14 +2154,10 @@ export default function BuildModelWindow() {
         const cached = trainResults[activeModel.id];
         if (cached && cached.fingerprint === fp) return;
         if (trainStatus[activeModel.id] === 'loading') return;
-        // No row of the loaded data is in its training scope (no train period inside
-        // the data, a settled count of zero, or the engine already said so for this
-        // scope): a load could only fail — the board says why instead. (A count that
-        // is not settled yet is not known here: the load is attempted, and the
-        // engine's "no rows" answer leads to the same board.)
+        // No row in the training scope (no train period inside the data, zero count, or the engine already said so): a load would only fail.
+        // The board says why. An unsettled count is attempted; the engine's "no rows" leads to the same board.
         if (activeGuardHolds || noRowsLoads[activeModel.id] === noRowsLoadKey(fp)) return;
-        // A training run owns the sidecar: two calls must never run at once. The
-        // effect runs again when the run ends (`queue.isRunning` is a dependency).
+        // A training run owns the sidecar; the effect re-runs when the run ends (queue.isRunning is a dependency).
         if (queue.isRunning) return;
         // Another engine call may be running: this one takes its turn, shown as loading until then.
         const model = activeModel;
@@ -2849,10 +2187,8 @@ export default function BuildModelWindow() {
         && activeEffective.scatterXSensor
         && activeEffective.predictorSensors.includes(activeEffective.scatterXSensor)
         ? activeEffective.scatterXSensor : undefined;
-    // Only a model that was trained, is still current, has nothing blocking it and
-    // whose last run did not fail is asked for a preview. A Relationship preview
-    // ALSO needs its fit in Rust's cache — the Train / reopen run that filled it
-    // under THIS fingerprint must have landed first (`NOT_FITTED` otherwise).
+    // Preview only for a trained, current model with nothing blocking it and no failed last run.
+    // A Relationship preview also needs its fit in Rust's cache, filled by the run under THIS fingerprint (else NOT_FITTED).
     const healthReady = !!activeModel && !!activeEffective?.lastTrainedAt && !activeStale
         && buildBlockReason(activeModel) === null
         && !trainError[activeModel.id]
@@ -2864,10 +2200,7 @@ export default function BuildModelWindow() {
         model: activeEffective,
         fg: gateFg,
         headers: gateHeaders,
-        // The DRAFT set points being typed (else the persisted ones): the charts, the
-        // score and Rust's validation follow typing (the hook debounces ~250 ms).
-        // Set points are NOT part of the train fingerprint, so this never makes the
-        // model stale.
+        // Draft set points (else persisted) drive charts, score and validation (debounced ~250 ms); not in the train fingerprint.
         setPoints: activeModel ? setPointsOf(activeModel) : null,
         enabled: healthReady,
         xPredictor: activeFitKey,
@@ -2875,15 +2208,8 @@ export default function BuildModelWindow() {
         revision: healthRevision,
         inFlightRef: engineCallsRef,
     });
-    // A Relation-model preview that scores scoring periods may have to run the
-    // sidecar for their rows (~15 s, e.g. right after the scoring periods
-    // changed) — say so, but only once it has been loading for a moment:
-    // set-point typing re-scores from Rust's cache in well under a second and must
-    // not flash the hint.
-    // The Relation-model fit is no longer in Rust's cache (NOT_FITTED — e.g. evicted
-    // during a long Train all): forget the session result, so the auto-recompute
-    // above re-fits it once no run is active (once per model and fingerprint), and
-    // plan it as ready for Train sensor / Train all meanwhile.
+    // NOT_FITTED (fit evicted from Rust's cache, e.g. in a long Train all): forget the session result so the auto-recompute re-fits
+    // once per model and fingerprint when no run is active; plan it ready meanwhile.
     useEffect(() => {
         if (!activeModel || !healthPreview.notFitted) return;
         const id = activeModel.id;
@@ -2911,24 +2237,20 @@ export default function BuildModelWindow() {
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, healthPreview.data, healthPreview.notFitted, healthPreview.loading]);
-    // Any Relation-model preview: the engine now predicts the training hours too, so it can
-    // run with no scoring period (the delay keeps the hint off the fast, cached previews).
+    // Any Relation-model preview may run the sidecar (it predicts the training hours too); the delay skips fast cached previews.
     const scoringTestsNow = !!activeEffective && activeEffective.kind === 'relationship' && healthPreview.loading;
     const slowScoring = useDelayedFlag(scoringTestsNow, SLOW_SCORING_HINT_DELAY_MS);
 
-    // The last validate verdict Rust gave for the active model. A stale model's old data
-    // does not count. It drives the step bar live; the "Set points needed" / "Fix set point"
-    // tab pills and dots (here AND on the Dashboard) read the PERSISTED copy of it
-    // (`healthVerdict` on the model), written by the effect below.
+    // Last validate verdict for the active model; a stale model's data does not count.
+    // Drives the step bar live; tab pills and dots read the persisted copy (healthVerdict), written by the effect below.
     const activeVerdict: HealthVerdict | null = activeModel && !activeStale ? healthVerdict(healthPreview.data) : null;
     const verdictToPersist: HealthVerdictValue | null = activeVerdict === 'valid' ? 'valid' : activeVerdict === 'needs' ? 'incomplete' : activeVerdict === 'bad' ? 'invalid' : null;
     const activeHasDraft = !!activeModel && activeModel.id in spDrafts;
     useEffect(() => {
         const ws = workspaceIdRef.current;
         if (!ws || loading || !activeModel || !verdictToPersist || activeModel.healthVerdict === verdictToPersist) return;
-        // Only a verdict that is about the SAVED set points: the answer must be settled (not
-        // loading / failed), nothing typed but unsaved, and what the preview used must equal
-        // what is on disk (an unseeded Individual model previews its master prefill).
+        // Persist a verdict only for SAVED set points: settled (not loading/failed), no unsaved draft,
+        // and the preview's set points equal disk (an unseeded Individual previews its master prefill).
         if (!healthReady || healthPreview.loading || healthPreview.error || activeHasDraft) return;
         if (!sameSetPoints(activeModel.healthSetPoints, persistedSetPointsOf(activeModel))) return;
         void savedOk((async () => {
@@ -2938,15 +2260,12 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loading, activeModel?.id, activeModel?.healthVerdict, activeModel?.healthSetPoints, verdictToPersist, healthReady, healthPreview.loading, healthPreview.error, activeHasDraft]);
 
-    // First time an Individual model's Health score page opens: write the master-data
-    // L/H snapshot (and its prefill) once, so it never moves again when master data
-    // changes. Only when `ensureHealthSetPoints` actually changes something, never over
-    // a value the user entered, never while a draft exists.
+    // First open of an Individual Health score page: write the master L/H snapshot (and prefill) once so it never follows master data.
+    // Only if ensureHealthSetPoints changes something, never over user values or a draft.
     useEffect(() => {
         if (loading || !activeModel || activeModel.kind !== 'individual') return;
         if (pageByModel[activeModel.id] !== 'health' || !activeModel.lastTrainedAt) return;
-        // No data for it in the loaded file: its Health score page is the "No data…"
-        // board — nothing is written for a model in that state.
+        // No data in the loaded file: its page is the "No data" board; write nothing.
         if (activeNoData !== null) return;
         if (setPointsSeededRef.current.has(activeModel.id) || spDraftsRef.current[activeModel.id]) return;
         const ensured = ensureHealthSetPoints(activeModel, sensorMetadata ?? []);
@@ -2957,8 +2276,7 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [loading, activeModel, pageByModel, sensorMetadata, activeNoData !== null]);
 
-    // Leaving the page or the model (page switch, another sensor or kind tab): persist
-    // what was typed. No draft = nothing happens.
+    // Leaving the page or the model (page switch, another sensor or kind tab): persist what was typed. No draft = nothing happens.
     useEffect(() => {
         void commitSetPointDrafts();
     }, [selectedSensorKey, activeTab, pageByModel, commitSetPointDrafts]);
@@ -2987,17 +2305,8 @@ export default function BuildModelWindow() {
         if ((!subModelFits.subModels || subModelFits.stale) && !subModelFits.loading) void subModelFits.run();
     };
 
-    // ---- Clustering cluster-range slider bounds ---------------------------
-    // Fetches `compute_sensor_stats` for the criteria sensor so the slider can
-    // span its REAL data range instead of an abstract 0-100 scale. Draft-aware
-    // (the criteria sensor and the training-scope filter both read through
-    // `draftOf`/`effectiveModelFor`, same as the live fingerprint check above)
-    // so editing the criteria picker or the Workspace/Custom switch before Save
-    // still moves the slider immediately — the scope is the one Train would
-    // use, which for an unsaved draft edit IS the draft's scope.
-    // `criteriaFilterKey` collapses everything that could change the resolved
-    // filter payload into one string so the effect doesn't need a long,
-    // easy-to-miss dependency list of individual draft sub-fields.
+    // Fetches compute_sensor_stats for the criteria sensor so the slider spans its real range; draft-aware via effectiveModelFor.
+    // criteriaFilterKey folds everything that changes the filter payload into one string.
     const criteriaSensorForActive = (activeModel && activeModel.kind === 'clustering') ? draftOf(activeModel).criteria : '';
     const criteriaFilterKey = useMemo(() => {
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) return '';
@@ -3006,14 +2315,8 @@ export default function BuildModelWindow() {
         return JSON.stringify(buildPreviewFilterPayload(eff, gateHeaders));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, drafts, runningConditionFilters, runningConditionCombine, runningConditionTimePeriods, runningConditionAllData, gateHeaders]);
-    // The stats only count for the model + criteria sensor + filter they were fetched for.
-    // The reset below runs in an effect, i.e. AFTER the render that switched the criteria
-    // sensor A -> B, so in that render the state still holds A's stats. Deriving per render
-    // means stats for another key read as "not arrived yet", so the auto-divide waits for
-    // B's own stats instead of dividing B's ranges over A's [min, max].
-    // The workspace id is part of the key: another workspace can hold the SAME model ids (and
-    // often the same criteria sensor + filter), so without it a window re-pointed at it
-    // would keep reading the other workspace's stats as its own and never fetch again.
+    // Stats count only for the model + criteria sensor + filter they were fetched for, so auto-divide never divides B over A's [min, max].
+    // The workspace id is in the key: another workspace can share model ids and criteria.
     const criteriaStatsKey = (activeModel && activeModel.kind === 'clustering' && criteriaSensorForActive)
         ? `${workspaceId ?? ''}::${activeModel.id}::${criteriaSensorForActive}::${criteriaFilterKey}`
         : '';
@@ -3022,11 +2325,7 @@ export default function BuildModelWindow() {
         : null;
     const criteriaStatsError = criteriaStatsFailure?.key === criteriaStatsKey ? criteriaStatsFailure.message : null;
     useEffect(() => {
-        // `criteriaStats` is ONE piece of state shared by every model (scoped to
-        // whichever model is active). Reset unconditionally at the top, before
-        // the early-return AND before kicking off a new fetch, so every
-        // model/sensor change shows the loading state until its OWN stats
-        // resolve — never the previous model's [min, max].
+        // One shared state: reset before the early return and the new fetch, so a switch never shows the previous model's [min, max].
         setCriteriaStatsEntry(null);
         setCriteriaStatsFailure(null);
         if (!activeModel || activeModel.kind !== 'clustering' || !criteriaSensorForActive) {
@@ -3042,19 +2341,8 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, criteriaFilterKey, criteriaStatsKey, criteriaStatsTry]);
 
-    // ---- Clustering auto-divide --------------------------------------------
-    // Divides `clusterRanges` equally across the criteria sensor's REAL
-    // [min, max] whenever the criteria sensor or the cluster count changes, and
-    // keeps `ranges.length` in sync with `numClusters` (so Train never sends
-    // N-1 or N+1 `cluster_ranges` for `n_clusters: N`).
-    //
-    // The "previous key" is anchored on the PERSISTED model's own
-    // (criteria, numClusters) pair, so this only fires once the draft has
-    // actually DIVERGED from what is saved — a real user edit via `patchDraft`
-    // (the criteria picker or the +/- stepper) — or when the array length is
-    // out of sync with `numClusters` (legacy/mismatched data), which self-heals.
-    // Merely opening an already-configured model never creates a phantom draft
-    // ("Unsaved changes") and never overwrites a saved custom (non-equal) split.
+    // Divides clusterRanges equally over the criteria sensor's real [min, max] when it or the cluster count changes.
+    // Keeps ranges.length = numClusters. Anchored on the persisted pair: no phantom draft on open, a saved custom split is never overwritten.
     const persistedClusterKeyForActive = (activeModel && activeModel.kind === 'clustering')
         ? `${activeModel.criteriaSensor ?? ''}::${activeModel.numClusters ?? 3}`
         : '';
@@ -3068,20 +2356,13 @@ export default function BuildModelWindow() {
         const prevKey = prevClusterDivisionKeyRef.current[activeModel.id] ?? persistedClusterKeyForActive;
         const keyChanged = divisionKey !== prevKey;
         const lengthMismatch = clusterRangesLenForActive !== numClustersForActive;
-        // Empty ranges left in the DRAFT by a pending division (below) still need the real
-        // one, even once the key/length look settled (e.g. after a model switch and back).
+        // Empty ranges from a pending division still need the real division even if key and length look settled (model switch and back).
         const pendingInDraft = (drafts[activeModel.id]?.ranges ?? []).some(r => r.min === null || r.max === null);
         // `drafts` is read fresh on each run but is not a dependency: the stats landing is the trigger.
         if (!keyChanged && !lengthMismatch && !pendingInDraft) return;
         if (!criteriaStats) {
-            // The division is PENDING until the criteria sensor's stats arrive.
-            // For 2+ clusters the draft gets EMPTY ranges meanwhile, so the "Fill in the cluster
-            // ranges" check blocks Save and Train: a placeholder range persisted now would
-            // become the saved key and the real division would never happen — a 500-900
-            // sensor would then train clusters with no rows. The stats landing re-runs this
-            // effect and fills them in. One cluster is never blocked: Rust ignores
-            // `cluster_ranges` when `n_clusters == 1`, so a 0-100 placeholder there is
-            // harmless and only re-divided to keep the saved ranges tidy.
+            // Division is pending until stats arrive: for 2+ clusters the draft gets empty ranges, so Save and Train are blocked.
+            // A persisted placeholder would be the saved key and block the real division. One cluster is never blocked: Rust ignores its cluster_ranges.
             if (numClustersForActive > 1) {
                 const current = draftOf(activeModel).ranges;
                 if (current.length === numClustersForActive && current.every(r => r.min === null && r.max === null)) return;
@@ -3091,9 +2372,7 @@ export default function BuildModelWindow() {
             // 1 cluster: only a length mismatch can't wait (no valid range set to show).
             if (!lengthMismatch) return;
         }
-        // Only a division over the REAL [min, max] settles the key. A 1-cluster length fix
-        // made before the stats arrive (0-100 placeholder) leaves it open, so the stats
-        // landing re-divides over the real range and the saved range stays tidy.
+        // Only a division over the real [min, max] settles the key; a 0-100 placeholder fix made before stats is re-divided when they land.
         if (criteriaStats) prevClusterDivisionKeyRef.current[activeModel.id] = divisionKey;
         const lo = criteriaStats?.min ?? 0;
         const hi = criteriaStats?.max ?? 100;
@@ -3106,14 +2385,10 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [activeModel?.id, criteriaSensorForActive, numClustersForActive, clusterRangesLenForActive, criteriaStats, persistedClusterKeyForActive]);
 
-    // A cluster boundary being typed never survives a model switch: a valid one was already
-    // committed to its own model by the box's blur (which fires before the click that switches);
-    // an invalid one (and its error) is dropped, never shown on — or written into — another model.
+    // A boundary being typed does not survive a model switch: a valid one was committed by blur, an invalid one is dropped.
     useEffect(() => { setBoundaryEdit(null); }, [activeModel?.id]);
 
-    // ---- Running condition: row counts of the settings modal ----
-    // (The card's count of the persisted condition and the active Custom model's
-    // own count are asked further up — the gate reads them.)
+    // The card's and the active Custom model's counts are asked further up; the gate reads them.
     const draftCountFilter = useMemo(
         () => buildPreviewFilterPayload(
             rcDraft ?? { filters: runningConditionFilters, combine: runningConditionCombine, allData: runningConditionAllData, periods: runningConditionTimePeriods },
@@ -3122,8 +2397,7 @@ export default function BuildModelWindow() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [rcDraft, runningConditionFilters, runningConditionCombine, runningConditionAllData, runningConditionTimePeriods, allSensors],
     );
-    // The modal's DRAFT (what Apply would commit). The lists are the draft's own
-    // arrays (stable until the draft changes), the filter is memoised above.
+    // The modal's draft (what Apply would commit); the lists are the draft's own stable arrays.
     const rcCountPeriods = rcDraft ? rcDraft.periods : runningConditionTimePeriods;
     const rcCountTests = rcDraft ? rcDraft.testPeriods : runningConditionTestPeriods;
     const rcCounts = usePeriodCounts({
@@ -3134,13 +2408,8 @@ export default function BuildModelWindow() {
         filter: draftCountFilter,
         expectedGeneration: generation,
     });
-    // The modal's zero-rows guard: the count shown is the draft's own (settled), the
-    // condition is configured (else nothing is counted for it), no running row is
-    // left in its train periods — AND the draft changed what is trained on (its
-    // train periods or its condition). Apply is disabled on it (`rcApplyBlock`). A
-    // draft that left the training scope as it was saved (only a scoring period
-    // moved, say) is not blocked by a zero the saved state already had: the red line
-    // under the timeline and the red card say it, and Train is what is blocked.
+    // Modal zero-rows guard: count settled, condition set, no running row, and the draft changed training (periods or condition).
+    // A draft that left the saved scope untouched is not blocked by a zero already there; Train is.
     const rcCountView = rcDraft ?? rcPersisted;
     const rcNoRows = rcFilterOpen
         && isWorkspaceRunningConditionConfigured(
@@ -3151,10 +2420,7 @@ export default function BuildModelWindow() {
         && trainCountKey(rcCountPeriods, draftCountFilter) !== trainCountKey(runningConditionTimePeriods, persistedCountFilter);
     rcGateRef.current = { draft: rcDraft, bounds: datasetBounds, noTrainRows: rcNoRows };
 
-    // The Dashboard may have changed its highlights since this window opened:
-    // re-read them whenever the Running condition settings open — and whenever a
-    // Custom model's own panel is shown (its train-overlap line reads them too).
-    // One cheap read of the workspace file.
+    // Re-read Dashboard highlights when the settings open or a Custom panel shows (its overlap line reads them); one cheap read.
     useEffect(() => {
         if (rcFilterOpen || customPanelOpen) void refreshHighlights();
     }, [rcFilterOpen, customPanelOpen, refreshHighlights]);
@@ -3162,11 +2428,8 @@ export default function BuildModelWindow() {
     // Keyboard focus of the modal: the first field on open, Tab kept inside.
     useModalFocus(rcDialogRef, rcFilterOpen && !unsavedAsk, '[data-testid="rc-panel"]');
 
-    // Esc closes the Running condition modal — through the same dirty-draft
-    // guard as X / backdrop. Registered in the CAPTURE phase and ignored while a
-    // nested sensor picker is open: that picker closes itself on Esc (its own
-    // window listener), and by the time a bubble-phase listener of ours ran,
-    // React may already have unmounted it, so this one Esc would close both.
+    // Esc closes the modal through the dirty-draft guard. Capture phase, ignored while a nested sensor picker is open:
+    // the picker closes itself on Esc and React may unmount it first, so one Esc would close both.
     useEffect(() => {
         if (!rcFilterOpen) return;
         const onKey = (e: KeyboardEvent) => {
@@ -3178,11 +2441,8 @@ export default function BuildModelWindow() {
         return () => window.removeEventListener('keydown', onKey, true);
     }, [rcFilterOpen, requestCloseRc]);
 
-    // ---- Train queue: stable props for the memoised parts ----
-    // A run updates the window ~3 times per model. The run strip (`RunStrip`) and
-    // the Model fit charts (`ModelFitPage`) are memoised, so their props must not
-    // change identity on those renders: labels come from a memo over `allModels`,
-    // and the callbacks forward to `actionsRef`, refreshed on every render.
+    // A run updates the window ~3 times per model; RunStrip and ModelFitPage are memoised, so their props must keep identity:
+    // labels come from a memo over allModels, callbacks forward to actionsRef refreshed each render.
     const runRowsById = useMemo(
         () => new Map<string, TrainRowModel>(allModels.map(m => [m.id, { id: m.id, kind: m.kind, tag: modelTagOf(m), groupNos: m.groupNos, plan: LABEL_ONLY_PLAN }])),
         [allModels],
@@ -3212,10 +2472,7 @@ export default function BuildModelWindow() {
     const onReloadFit = useCallback(() => actionsRef.current?.reloadFit(), []);
     /** "Train sensor ↑": every sentence's link to the ONE place to train. */
     const focusTrainSensor = useCallback(() => { trainSensorBtnRef.current?.focus(); }, []);
-    // The focused "Save changes" disappears once its draft is saved. Move the focus to
-    // the open page tab (no header button takes Save's place: the way on to the Health
-    // score page is page tab ②, next to it); else to the notice line — so it never
-    // falls back to <body>.
+    // The focused Save changes disappears once saved: move focus to the open page tab, else the notice line, never <body>.
     useEffect(() => {
         const id = saveFocusRef.current;
         if (!id) return;
@@ -3226,7 +2483,6 @@ export default function BuildModelWindow() {
         (activePageTabRef.current ?? noticeRef.current)?.focus();
     }, [drafts]);
 
-    // ---- Export results (DESIGN_SYSTEM §4.2): the bottom bar + the dialog ----
     const exportOrder = sensorGroupsAll.flatMap(sg => KIND_ORDER.flatMap(k => sg.models.filter(m => m.kind === k))).map(m => m.id);
     const workspaceExport = useWorkspaceExport(workspaceId, {
         metadata: sensorMetadata,
@@ -3238,8 +2494,7 @@ export default function BuildModelWindow() {
     const exporting = workspaceExport.phase === 'running';
     exportCancelRef.current = workspaceExport.cancel;
     const [exportOpen, setExportOpen] = useState(false);
-    /** "N models exported … · Open folder": for the window's life, until a model's
-     *  status changes or the window is re-pointed at another project. */
+    /** "N models exported · Open folder" line: stays until a model's status changes or the window is re-pointed. */
     const [exportedLine, setExportedLine] = useState<ExportedLine | null>(null);
     /** The models' statuses when the last export finished. */
     const exportedSigRef = useRef<string | null>(null);
@@ -3276,10 +2531,7 @@ export default function BuildModelWindow() {
         void run.finally(() => { if (exportRunRef.current === run) exportRunRef.current = null; });
         return run;
     }, [exportStart]);
-    /** Which call the hook's phase answers: the dry run (`plan`) or the write. The
-     *  hook says `failed` for both; a failed PLAN is not a failed export — the
-     *  dialog keeps its checklist with an inline line, and the bar never says
-     *  "Export failed" for it. */
+    /** Which call the hook's phase answers (dry-run plan or write); a failed plan keeps the dialog's checklist with an inline line. */
     const [exportStep, setExportStep] = useState<'plan' | 'write'>('plan');
     const exportPlanRaw = workspaceExport.plan;
     const planExport = useCallback<UseWorkspaceExport['plan']>(() => {
@@ -3296,27 +2548,22 @@ export default function BuildModelWindow() {
         return <div style={{ background: 'var(--card-bg)', height: '100vh' }} />;
     }
 
-    // Step-1 card / lock message / Train buttons all read the PERSISTED condition
-    // (the plain date rules — a saved period outside the loaded data only warns).
+    // Step-1 card, lock message and Train buttons read the persisted condition (a saved period outside the data only warns).
     const rcStepState: RcStepState = !rcConfigured ? 'unset' : persistedPeriodsInvalid ? 'invalid' : 'set';
 
     const realGroups = [...allGroups].filter(g => g.no !== 0).sort((a, b) => a.no - b.no);
     const totalModelsCount = allModels.length;
     const completeModelsCount = allModels.filter(isModelDone).length;
 
-    /** The status of one model for the left list's dot / the tab pill. A failed
-     *  run of this session overrides an otherwise "trained" model. */
+    /** Status for the left-list dot / tab pill; a failed run this session overrides an otherwise trained model. */
     const dotStateOf = (m: FailureModel): ModelDotState => {
         const st = modelDotState(effectiveModelFor(m), gateFg, gateHeaders, specialRecipes);
-        // A model that still has to train (never trained, or out of date) and has
-        // nothing to train on: "needs fixing" like any other gate block. Display only
-        // — the model's saved status is untouched. A trained or Complete model keeps
-        // its own state (it has results; the guard only stops training it AGAIN).
+        // A model that still has to train with nothing to train on reads "needs fixing"; display only, status untouched.
+        // A trained or Complete model keeps its own state.
         if ((st === 'none' || st === 'stale') && trainGuardBlockOf(m) !== null) return 'blocked';
         return st === 'trained' && trainError[m.id] ? 'stale' : st;
     };
 
-    // ---- Train queue ----
     /** Trained and up to date, not Complete yet: set points (then Mark complete) are next. */
     const needSetPoints = (m: FailureModel): boolean => dotStateOf(m) === 'trained';
     /** Every model in run order: by sensor, I → R → C within a sensor. */
@@ -3330,9 +2577,7 @@ export default function BuildModelWindow() {
         ...realGroups.map(g => ({ no: g.no, name: g.name, color: FG_ACCENT[getFgGroupColor(g.no)] })),
         { no: 0, name: '', color: FG_ACCENT[getFgGroupColor(0)] },
     ];
-    /** Why BOTH Train buttons are disabled (shared rule). A workspace without a
-     *  running condition only blocks when nothing can train anyway (a Custom
-     *  model with its own condition can still train). */
+    /** Why both Train buttons are disabled. A missing workspace condition blocks only if no model can train (Custom ones can). */
     const trainAllReason = exporting ? EXPORT_BUSY_REASON : trainButtonsBlockedReason({
         stale: queue.stale,
         runningConditionSet: rcStepState !== 'unset' || allCounts.ready > 0,
@@ -3378,47 +2623,27 @@ export default function BuildModelWindow() {
         spCommit: () => { void commitSetPointDrafts(); },
         reloadFit: () => { if (activeModel) reloadFit(activeModel.id); },
     };
-    /** The Relation-model fit Rust held for a trained model is gone (NOT_FITTED was
-     *  answered for it in this session and it has not been fitted again since): it
-     *  needs training again — Train sensor / Train all already plan it as ready
-     *  (`candidateOf`). Known for EVERY model the window was told NOT_FITTED about, not
-     *  only the one on screen; a fit dropped for a model that has not been opened since
-     *  is only found out when it is opened (finding out takes a request). Not while it
-     *  is being fitted again. For the model on screen: the LIVE answer, or — until an
-     *  answer for it is there (its tab was just opened again) — its own mark, so a
-     *  fit-gone model never reads "Trained" for the moment the request takes. (Every
-     *  successful fit clears the mark, see `executeTrain`.) */
+    /** Relation-model fit gone: NOT_FITTED seen this session and not fitted since; Train sensor/Train all plan it ready (candidateOf). Not while being fitted. On screen: the live answer, else the window's own mark; other models are found out only when opened. */
     const fitGoneOf = (m: FailureModel): boolean =>
         trainStatus[m.id] !== 'loading'
         && (activeModel?.id === m.id
             ? healthPreview.notFitted || (notFittedIds.has(m.id) && !healthPreview.data)
             : notFittedIds.has(m.id));
-    /** What the "Fit no longer in memory" board of the model ON SCREEN offers: "Load it
-     *  again" for every status, and "Train sensor ↑" only for a model it really trains —
-     *  a Complete model is "up to date" for Train sensor, so that link would do nothing. */
+    /** What the "Fit no longer in memory" board offers: "Load it again" always, "Train sensor" only for a model it trains (a Complete model is up to date for it, so that link would do nothing). */
     const fitGoneActionsOf = (m: FailureModel): FitGoneActions => ({
         onReload: onReloadFit,
         reloadDisabledReason: fitReloadBlock(m) ?? undefined,
         onGoTrainSensor: isModelDone(m) ? undefined : focusTrainSensor,
         // A load (or a train) of it that failed since.
         error: trainError[m.id] ?? null,
-        // The window's own knowledge that the fit is gone: the live answer is not
-        // there any more once the tab was left and opened again after a failed load.
+        // The window's own knowledge that the fit is gone: the live answer is lost once the tab is left and reopened after a failed load.
         gone: fitGoneOf(m),
     });
-    /** A COMPLETE model whose last load (or train) of this session failed, with its fit
-     *  not reported gone: Train sensor never trains it ("up to date"), so every sentence
-     *  about it offers "Load it again" — the same silent load, nothing written — instead
-     *  of "Train sensor ↑". (A model that is not Complete is planned as ready by Train
-     *  sensor after a failure, so it keeps "Training failed · Train sensor ↑".) */
-    /* Only a model WITH a train record has something to load again (`reloadFit`
-     *  returns for one without). */
+    /** A Complete model whose last load/train failed, fit not reported gone: Train sensor never trains it, so offer "Load it again" (silent). A non-Complete model keeps "Training failed · Train sensor ↑". */
+    /* Only a model WITH a train record has something to load again (reloadFit returns for one without). */
     const loadFailedOf = (m: FailureModel): boolean =>
         !!trainError[m.id] && trainStatus[m.id] !== 'loading' && isModelDone(m) && !!m.lastTrainedAt && !fitGoneOf(m);
-    /** A COMPLETE model with NO train record (marked complete before train records
-     *  existed) whose train from the ▾ menu failed in this session: there is nothing
-     *  to "load again" — it says "Training failed" and the way out is the ▾ menu row
-     *  that trains it; its "Marked complete" board carries the reason. */
+    /** A Complete model with no train record whose ▾ menu train failed: nothing to load again; the way out is the ▾ row that trains it. */
     const legacyTrainFailedOf = (m: FailureModel): boolean =>
         !!trainError[m.id] && trainStatus[m.id] !== 'loading' && isModelDone(m) && !m.lastTrainedAt;
     /** The words of a failed run on the tab / list dot. */
@@ -3426,9 +2651,7 @@ export default function BuildModelWindow() {
         !isModelDone(m) ? TRAIN_FAILED_WORDS
             : m.lastTrainedAt ? `Complete · ${LOAD_FAILED_WORDS}`
             : `Complete · ${TRAIN_FAILED_WORDS}`;
-    /** Why "Train sensor ↑" would not train this out-of-date model right now (the stale
-     *  banner then says that instead of offering a link that does nothing): the data is
-     *  not this window's any more, the model itself cannot train, or a run is active. */
+    /** Why Train sensor would not train this out-of-date model now (so the stale banner says so instead of offering a dead link): the data is not this window's, the model cannot train, or a run is active. */
     const staleCantTrainOf = (m: FailureModel): StaleCantTrain | undefined => {
         if (queue.stale) return { kind: 'stale', text: TRAIN_STALE_MESSAGE };
         const own = awayFromFormText(m, trainBlockReason(m));
@@ -3441,8 +2664,7 @@ export default function BuildModelWindow() {
     const showSpChip = !!queue.lastTrained && queue.lastTrained.ids.length > 0 && spCount > 0;
     const listFilter: SidebarFilter = sidebarFilter === 'sp' && !showSpChip ? 'all' : sidebarFilter;
 
-    // "Needs setup": what the red dot says — the gate, or (for a model that still
-    // has to train) nothing to train on. Never a trained or Complete model's guard.
+    // "Needs setup" red dot: the gate, or (if it still has to train) nothing to train on; never a trained or Complete model's guard.
     const sensorBuildBlocked = (sg: SensorModelGroup) => sg.models.some(m => buildBlockReason(m) !== null || shownGuardBlockOf(m) !== null);
     const sensorAllComplete = (sg: SensorModelGroup) => sg.models.length > 0 && sg.models.every(isModelDone);
     const matchesSidebarFilter = (sg: SensorModelGroup) =>
@@ -3462,9 +2684,7 @@ export default function BuildModelWindow() {
     const attnCount = sensorGroupsAll.filter(sensorBuildBlocked).length;
     const doneCount = sensorGroupsAll.filter(sensorAllComplete).length;
 
-    // One left-list row for one sensor (within one grouping bucket — the same
-    // sensor can render under several Failure Group buckets when it belongs
-    // to more than one; selecting any of them shows the SAME detail pane).
+    // One left-list row per sensor per bucket; a sensor in several Failure Groups shows under each, all selecting the same detail pane.
     const renderSensorListRow = (sg: SensorModelGroup, bucketId: string) => {
         if (sg.models.length === 0 || !matchesSearch(sg) || !matchesSidebarFilter(sg)) return null;
         const first = sg.models[0];
@@ -3490,19 +2710,10 @@ export default function BuildModelWindow() {
                 </div>
                 <div className="f4-kinds">
                     {ordered.map(m => {
-                        // Status dot in the badge's corner, straight
-                        // from the ONE status rule (`modelDotState`, draft-aware):
-                        //   green  complete          (marked complete AND up to date)
-                        //   yellow needs input       (trained, waiting for set points / re-train;
-                        //                             incl. a Complete model whose inputs changed)
-                        //   red    needs fixing      (the gate blocks it: no category / running
-                        //                             condition / bad period)
-                        //   none   never trained, nothing wrong yet
-                        // A run that failed in THIS session never reads as "trained": it is
-                        // yellow ("needs input") like any other model that wants a re-train.
+                        // Dot from modelDotState (draft-aware): green = complete; yellow = needs input (set points or re-train, incl. changed Complete);
+                        // red = needs fixing (the gate blocks it); none = never trained.
                         const st = dotStateOf(m);
-                        // A trained model whose SAVED set points Rust rejected reads red ("Fix set
-                        // point") — the persisted verdict, the same one the Dashboard dot reads.
+                        // A trained model whose saved set points Rust rejected reads red ("Fix set point"); same persisted verdict as the Dashboard dot.
                         const fixSetPoint = setPointFlagOf(m, st) === 'fix';
                         // A run that failed in THIS session is red too (same dot as its kind tab).
                         const failedRun = !!trainError[m.id];
@@ -3534,8 +2745,7 @@ export default function BuildModelWindow() {
 
     /** The sensor a list row names ('' = a model with no sensor yet). */
     const listRowTag = (sg: SensorModelGroup): string => (sg.models[0] ? modelTagOf(sg.models[0]) : '');
-    // Search hits are marked only in a project that has long names (a match may sit in a cut-off head); a
-    // project of short names keeps today's plain rows.
+    // Search hits are marked only in a project with long names (a match may sit in a cut-off head); short names keep plain rows.
     const listHasLongNames = sensorGroupsAll.some(sg => displayedName(sensorLookup(listRowTag(sg))).length > NAME_TAIL_MAX);
     const renderLeftList = () => {
         if (leftGroupBy === 'fg') {
@@ -3591,20 +2801,8 @@ export default function BuildModelWindow() {
         });
     };
 
-    // ---- Detail pane ---- `detailModels`/`orderedDetail`/`activeModel` are
-    // computed above (before the `if (loading)` guard — every hook needs them,
-    // see the comment there).
 
-    /** Cluster-range slider — colored `CLUSTER_PALETTE` segments spanning the
-     *  criteria sensor's REAL [min, max] (`criteriaStats`, fetched by the
-     *  effect above), N-1 draggable boundary handles, value pills below. Drag
-     *  reads/writes through `patchDraft` — `startSplitDrag` re-reads
-     *  `draftOf(m).ranges` on every mousemove rather than closing over a stale
-     *  `d.ranges` snapshot from the render that started the drag, since a drag
-     *  session outlives any single render. Only ever called for the CURRENTLY
-     *  ACTIVE model (via `renderModelSettingsFields` below), so `criteriaStats`
-     *  (scoped to `activeModel`) is always the right sensor's stats for
-     *  whichever `m`/`d` this renders. */
+    /** Cluster-range slider: CLUSTER_PALETTE segments over the criteria sensor's [min, max] (criteriaStats), N-1 draggable boundaries, value pills. startSplitDrag re-reads draftOf(m).ranges on every mousemove (a drag outlives any render). Active model only, so criteriaStats fits. */
     const renderClusterRangeSlider = (m: FailureModel, d: ModelDraft) => {
         const disabled = d.numClusters <= 1 || !d.criteria;
         if (disabled) {
@@ -3657,15 +2855,12 @@ export default function BuildModelWindow() {
         };
         const edit = boundaryEdit && boundaryEdit.modelId === m.id ? boundaryEdit : null;
         const errorId = `cluster-bound-error-${m.id}`;
-        /** Typed boundary `idx` (between cluster idx+1 and idx+2): Enter / blur commit, Esc reverts.
-         *  Must stay strictly between its neighbours and inside the criteria sensor's [min, max];
-         *  anything else shows the inline error and is not committed. */
+        /** Typed boundary idx (between cluster idx+1 and idx+2): Enter/blur commits, Esc reverts. It must lie strictly between its neighbours and inside the criteria sensor's [min, max], else an inline error and no commit. */
         const commitBoundary = (idx: number) => {
             if (!edit || edit.idx !== idx) return;
             const text = edit.text.trim();
             if (text === edit.initial.trim()) { setBoundaryEdit(null); return; }
-            // A comma is only a thousands separator ("1,234.5"); anything else ("33,6") is a
-            // decimal comma and would silently become 336 if stripped — refuse it instead.
+            // A comma is only a thousands separator ("1,234.5"); "33,6" would silently become 336 if stripped, so refuse it.
             if (text.includes(',') && !THOUSANDS_GROUPED.test(text)) {
                 setBoundaryEdit({ ...edit, error: 'Use . for decimals (e.g. 33.6).' });
                 return;
@@ -3763,9 +2958,7 @@ export default function BuildModelWindow() {
                         );
                     })}
                 </div>
-                {/* Value pills: every inner boundary is typeable — the upper bound of
-                    clusters 1..N-1 is an input (the next pill's lower bound mirrors it); the
-                    outer bounds are the criteria sensor's own min / max and stay read-only. */}
+                {/* Value pills: each inner boundary is typeable (the next pill's lower bound mirrors it); the outer bounds are read-only. */}
                 <div className="pm-cluster-slider-values">
                     {ranges.map((r, i) => {
                         const color = CLUSTER_PALETTE[i % CLUSTER_PALETTE.length];
@@ -3812,9 +3005,7 @@ export default function BuildModelWindow() {
 
     const renderModelSettingsFields = (m: FailureModel, d: ModelDraft) => (
         <>
-            {/* Model settings is ONE grid of three equal columns for all three kinds (SPEC
-                docs/design/handoff/model-settings-layout): row 1 is always Model name · the
-                kind's own setting · Training data; every control is 30 px high. */}
+            {/* Model settings: one three-column grid for all kinds; row 1 is Model name, the kind's setting, Training data. */}
             <div className="f4-fld f4-fld--name">
                 <label>Model name</label>
                 <input
@@ -3845,11 +3036,7 @@ export default function BuildModelWindow() {
                 })()}
             </div>
 
-            {/* Row 1, middle column: the kind's own "how" setting — Boundary (Individual),
-                Stiffness (Relation model) or Clusters (Clustering). `.bmw-sets-kind` is
-                `display: contents`: a grouping with no box, so its field is a cell of the
-                form's grid. The DOM order is the order on screen (name · how · training
-                data, then the sensors), so Tab walks the form as it reads. */}
+            {/* Row 1 middle: Boundary (Individual), Stiffness (Relation model) or Clusters (Clustering). .bmw-sets-kind is display: contents; DOM order is screen order, so Tab follows the reading order. */}
             <div className="bmw-sets-kind">
             {m.kind === 'individual' && (
                 <div className="f4-fld">
@@ -3908,15 +3095,12 @@ export default function BuildModelWindow() {
                 )}
             </div>
 
-            {/* Row 2 on: the kind's sensors. Wide fields (predictors, cluster ranges) take a
-                full row (`.f4-fld--grow`). An Individual model has none. */}
+            {/* Row 2 on: the kind's sensors; wide fields (predictors, cluster ranges) take a full row (.f4-fld--grow). Individual has none. */}
             <div className="bmw-sets-kind">
             {m.kind === 'relationship' && (
                 <div className="f4-fld f4-fld--grow">
                     <span className="f4-lbl">Predictor sensors (≥ 1)</span>
-                    {/* Predictors as chips (× removes one) + a dashed
-                        "Add…" that opens the multi modal; the target is excluded and the
-                        scope line says so. */}
+                    {/* Predictors as chips (× removes one) plus a dashed "Add…" that opens the multi modal; the target is excluded. */}
                     {/* The card's target counts in the chips' set, so no chip reads like the sensor printed above it. */}
                     <SensorSetExtraContext.Provider value={m.targetSensor ? [m.targetSensor] : NO_TAGS}>
                         <SensorPickerModal
@@ -3967,18 +3151,14 @@ export default function BuildModelWindow() {
                             single
                             allowNone
                             value={d.criteria}
-                            // Cleared (None or the trigger's ×): without a criteria
-                            // sensor there is only one cluster (every row) — Rust rejects 2+ — so
-                            // the count drops to 1 in the same draft edit and the model stays
-                            // trainable. Its ranges are dropped on Save (`draftFields`).
+                            // A cleared criteria sensor means one cluster (Rust rejects 2+ without it): the count drops to 1 in the same draft edit.
+                            // Ranges are dropped on Save (draftFields).
                             onSelect={criteria => patchDraft(m, criteria ? { criteria } : { criteria: '', numClusters: 1 })}
                             noun="criteria sensor"
                             placeholder="None"
                         />
                     </div>
-                    {/* Always shown: `renderClusterRangeSlider` covers every empty
-                        state (no criteria sensor, N<=1, loading, constant-value
-                        sensor) itself. */}
+                    {/* Always shown: renderClusterRangeSlider covers every empty state itself. */}
                     <div className="f4-fld f4-fld--grow">
                         <span className="f4-lbl">
                             Cluster ranges
@@ -3992,10 +3172,7 @@ export default function BuildModelWindow() {
             )}
             </div>
 
-            {/* A Custom model's OWN running condition: the same
-                panel as the workspace settings — timeline, rows and states — bound to
-                the model's DRAFT (saved with Save changes, never on its own). A sibling
-                of `.f4-fld--traindata`, on its own full-width row (`.rc-custom`). */}
+            {/* A Custom model's own running condition: the workspace panel bound to its draft (saved with Save changes), full-width (.rc-custom). */}
             {d.runningConditionMode === 'custom' && (
                 <div className="rc-custom" data-testid="custom-rc-editor">
                     {seedNoteFor[m.id] && (
@@ -4057,8 +3234,7 @@ export default function BuildModelWindow() {
                     {missing.length > 0 && <span data-testid="settings-to-fix" className="f4-pill f4-pill--warn">{missing.length} to fix</span>}
                 </button>
                 {isOpen && (
-                    // A fieldset, so `disabled` reaches every field of the settings while
-                    // Export results is writing (the notice line says why).
+                    // A fieldset so disabled reaches every field while Export results is writing (the notice line says why).
                     <fieldset
                         data-testid="add-model-form"
                         className="bmw-sets-body"
@@ -4072,10 +3248,7 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** "Fix set point" / "Set points needed" for a TRAINED model: the persisted verdict
-     *  (`modelSetPointFlag`, the one the Dashboard dot reads), except that the model on
-     *  screen follows its live verdict as soon as Rust has answered for what is typed
-     *  (the persisted copy catches up once the set points are saved). */
+    /** "Fix set point"/"Set points needed" for a TRAINED model: the persisted verdict (modelSetPointFlag, same as the Dashboard dot), except the model on screen follows its live verdict once Rust has answered for what is typed. */
     const setPointFlagOf = (m: FailureModel, st: ModelDotState): SetPointFlag => {
         if (st !== 'trained') return null;
         if (activeModel && m.id === activeModel.id && activeVerdict !== null) {
@@ -4084,29 +3257,14 @@ export default function BuildModelWindow() {
         return modelSetPointFlag(effectiveModelFor(m), gateFg, gateHeaders, st, specialRecipes);
     };
 
-    /** The state of a kind tab — ONE rule for its dot, the words shown beside it and
-     *  its tooltip / accessible name: the central status (`modelDotState`), refined for
-     *  a trained model by the verdict on its set points, by the gate badge, and red for
-     *  a model whose run failed in this session.
-     *   - `dot`:   the dot's colour (the sensor list's colours);
-     *   - `words`: the status in words, with every suffix ("· no data in the loaded
-     *              file", "· unsaved changes") — shown on the tab
-     *              uncut, and the same string in the tooltip and the tab's name;
-     *   - `tone`:  the colour of those words — the dot's colour, except that a plain
-     *              "Trained" asks for nothing and stays neutral grey.
-     *   - `flag`:  the set-point flag the words say ("Set points needed" → 'needed',
-     *              "Fix set point" → 'fix'), else null — page tab ② reads THIS for its
-     *              cue, so the tab and page tab ② can never disagree. */
+    /** One rule for a kind tab's dot, words and tooltip: modelDotState refined by set-point verdict, gate badge, and a failed run. dot = colour; words = status with every suffix, uncut; tone = words' colour (plain "Trained" stays grey); flag = what page tab ② reads too. */
     const tabDotOf = (m: FailureModel, st: ModelDotState): { dot: TabDot; tone: TabDot; words: string; flag: SetPointFlag } => {
-        // Unsaved Model-settings edits are said for EVERY tab of the sensor, not only
-        // the one that is open.
+        // Unsaved Model-settings edits are said for EVERY tab of the sensor, not only the open one.
         const tail = m.id in drafts ? ' · unsaved changes' : '';
         const toneOf = (dot: TabDot, plain = false): TabDot => (plain ? null : dot);
         if (trainError[m.id]) return { dot: 'bad', tone: 'bad', words: `${failedWordsOf(m)}${tail}`, flag: null };
         const badge = gateBadge(m);
-        // Results, but no row of the loaded data: nothing about the model changed — its
-        // own dot and words ("Complete", "Trained", its set-point flag), plus why there
-        // are no charts.
+        // Results but no row in the loaded data: keep the model's own dot and words, plus why there are no charts.
         if (noDataOf(m)) {
             const flag = setPointFlagOf(m, st);
             const own = flag === 'fix' ? 'Fix set point' : flag === 'needed' ? 'Set points needed' : TAB_WORDS[st];
@@ -4141,22 +3299,18 @@ export default function BuildModelWindow() {
     };
 
     const setPage = (m: FailureModel, page: WorkbenchPage) => setPageByModel(prev => (prev[m.id] === page ? prev : { ...prev, [m.id]: page }));
-    /** Why the Health score page (and the "Health set points" / "Complete" steps)
-     *  cannot be opened right now, or null. */
+    /** Why the Health score page (and the "Health set points" / "Complete" steps) cannot be opened right now, or null. */
     const healthPageBlock = (m: FailureModel): string | null =>
         isModelStale(m) ? 'Re-train first'
             : !m.lastTrainedAt ? 'Train the model first'
             : buildBlockReason(m) !== null ? 'Fix the settings first'
-            // The last run of THIS session failed: the numbers on screen are not trustworthy.
-            // (A Complete model is never trained by Train sensor: its way back is "Load it again".)
+            // The last run this session failed, so the numbers on screen are untrustworthy; a Complete model's way back is "Load it again".
             : trainError[m.id] ? (isModelDone(m) ? 'Load the model again first' : 'Re-train first')
             : null;
 
-    /** "Train sensor ↑": the text link every sentence uses to point at the ONE place
-     *  to train (it focuses the header's Train sensor button). */
+    /** "Train sensor ↑": the text link every sentence uses to point at the one place to train (focuses the header's Train sensor button). */
     const trainSensorLink = (testId: string) => <TrainSensorLink testId={testId} onClick={focusTrainSensor} />;
-    /** "Train sensor ▾": opens the menu next to Train sensor — the only place that
-     *  trains a model that is up to date (a Complete one), with its "<Kind> only" row. */
+    /** "Train sensor ▾": opens the menu; the only place that trains an up-to-date (Complete) model, via its "<Kind> only" row. */
     const trainMenuLink = (testId: string) => (
         <button
             type="button"
@@ -4172,25 +3326,18 @@ export default function BuildModelWindow() {
             Train sensor ▾
         </button>
     );
-    /** "the Train sensor ▾ menu" in a sentence. While nothing can be started from the
-     *  menu (a run is active, or the data is not this window's any more) its ▾ is
-     *  disabled, so a link there would do nothing: the phrase is plain text then and
-     *  says when — or why not. */
+    /** "the Train sensor ▾ menu" in a sentence; while nothing can start from it, plain text says when or why not (a link would do nothing). */
     const trainMenuPhrase = (testId: string, m?: FailureModel): ReactNode => {
         const why = queue.stale ? 'not available: the data in this window is out of date'
             : queue.isRunning ? 'when the training run finishes'
-            // The menu row that trains THIS model is disabled (and with nothing to
-            // train on the sensor's ▾ itself is): no link to it either.
+            // The menu row for this model is disabled (and the sensor's ▾ itself when nothing can train): no link to it either.
             : m && trainBlockReason(m) !== null ? "not available: it can't be trained yet"
             : null;
         return why === null
             ? <>the {trainMenuLink(testId)} menu</>
             : <>the Train sensor ▾ menu <span data-testid={`${testId}-blocked`}>({why})</span></>;
     };
-    /** "Train sensor ↑" in a sentence about ONE model: the link — or, while Train
-     *  sensor would not train it (the data is not this window's any more, a run is
-     *  active, the model cannot train), plain text that says so. Never a link to a
-     *  control that does nothing. */
+    /** "Train sensor ↑" in a sentence about one model: the link, or plain text saying why it would not train. Never a link that does nothing. */
     const trainSensorPhrase = (testId: string, m: FailureModel): ReactNode => {
         const cant = staleCantTrainOf(m);
         if (!cant) return trainSensorLink(testId);
@@ -4199,13 +3346,7 @@ export default function BuildModelWindow() {
             : "it can't train yet";
         return <>Train sensor ↑ <span data-testid={`${testId}-blocked`} title={cant.text}>({why})</span></>;
     };
-    /** The ONE board of a model that has results but no row in the loaded data
-     *  (`noDataOf`), on BOTH pages: what is true (nothing about the model changed —
-     *  its charts are computed from the loaded data, and there is none for it), the
-     *  cause as the data guard found it, and ONE link to where it is fixed — the
-     *  Running-condition settings for a model on the workspace condition, its own
-     *  Model settings for a Custom one. Never "Load it again" / "Train sensor":
-     *  neither can work. */
+    /** The one board for a model with results but no row in the loaded data (noDataOf), on both pages: the cause plus one fix link. The link goes to the workspace condition or the model's own Model settings. Never "Load it again"/"Train sensor": neither can work. */
     const noDataBoard = (m: FailureModel, nd: ModelNoData) => board('results-no-data', 'plain', NO_MODEL_DATA_TITLE,
         <>
             <span data-testid="no-data-cause">{noModelDataCauseText(nd.cause, datasetBounds, nd.hasCondition)}</span> Fix it in{' '}
@@ -4226,26 +3367,15 @@ export default function BuildModelWindow() {
             {' '}to see its charts.
         </>,
         `${isModelDone(m) ? 'Complete' : 'Trained'} · nothing about the model changed`);
-    /** The ONE board shape of every chart-less state: a
-     *  title, one sentence and an optional mono line. Its actions are text links to
-     *  the one place for them ("Train sensor ↑", "Model settings", "Running
-     *  condition ↑") — never a button of its own. */
+    /** The one board shape for every chart-less state: title, one sentence, optional mono line. Actions are text links, never buttons. */
     const board = (testId: string, tone: 'plain' | 'bad' | 'run', title: ReactNode, text?: ReactNode, detail?: ReactNode) => (
         <div className="bmw-stage">
             <StateBoard testId={testId} tone={tone} title={title} text={text} detail={detail} />
         </div>
     );
-    /** The Model fit page body — a state machine ending in the charts of `ModelFitPage`:
-     *  Complete without a train record -> placeholder · incomplete config/gate ->
-     *  "N items to fix" list with jump-to-field links (reuses `missingItems`'
-     *  wording) · running -> progress · never trained -> "Not trained yet" ·
-     *  stale -> "Out of date" charts (or a message when there is nothing to
-     *  draw) · Relationship fit gone from memory -> the "Fit no longer in memory"
-     *  board ("Load it again") · otherwise the charts. */
+    /** Model fit body, a state machine ending in ModelFitPage's charts: Complete without train record -> placeholder; bad config/gate -> "N items to fix"; running -> progress; never trained; stale -> "Out of date" charts; fit gone -> "Fit no longer in memory" board; else charts. */
     const renderModelFitBody = (m: FailureModel) => {
-        // The read gate — plus "nothing to train on" for a model that has no result at
-        // all yet (never trained): its board is the place that says why Train will not
-        // start. A model with results keeps them (charts, or the "Out of date" view).
+        // Read gate plus, for a never-trained model, "nothing to train on" (its board explains Train's refusal). A model with results keeps them.
         const reason = buildBlockReason(m)
             ?? (!m.lastTrainedAt && !isModelDone(m) ? shownGuardBlockOf(m)?.reason ?? null : null);
         const qItem = queue.isRunning ? queue.itemOf(m.id) : undefined;
@@ -4266,16 +3396,10 @@ export default function BuildModelWindow() {
             );
         }
         if (isModelDone(m) && (reason !== null || !m.lastTrainedAt)) {
-            // A Complete model is "up to date" for Train sensor, which therefore never trains
-            // it (and is disabled when nothing else needs training): only the ▾ menu's
-            // "<Kind> only" row does — the board points there. A model that cannot train at
-            // all gets its reason instead of a link that would do nothing.
-            // A train from that menu that FAILED in this session (a model with no train
-            // record has nothing to "load again"): the board turns red and its mono line
-            // carries the reason — the menu row is still the way out.
+            // Complete is up to date for Train sensor, which never trains it: only the ▾ menu's "<Kind> only" row does, so the board points there.
+            // A model that cannot train gets its reason instead; a failed ▾ train with no train record turns the board red.
             const failed = legacyTrainFailedOf(m) ? trainError[m.id] : undefined;
-            // (Its menu row is disabled by the data guards too — nothing to train on —
-            // so those are a reason here as well, never a link to that row.)
+            // The menu row is also disabled by the data guards, so those are a reason here, never a link to the row.
             const cantTrain = reason ?? trainBlockReason(m);
             return cantTrain !== null
                 ? board('results-placeholder', 'plain', 'Marked complete',
@@ -4286,11 +3410,8 @@ export default function BuildModelWindow() {
                     failed ? <span data-testid="board-train-error">{`Training failed: ${failed}`}</span> : undefined);
         }
         if (reason !== null) {
-            // No running condition yet: a model that FOLLOWS the workspace
-            // condition is locked until the workspace running condition is
-            // set / fixed — say that first, with a link straight into the
-            // settings. A model on its own Custom condition is not affected by
-            // the workspace one, so it keeps the plain list below.
+            // A model that follows the workspace condition is locked until it is set/fixed: say so first, with a link into the settings.
+            // A Custom model is unaffected and keeps the plain list.
             const gr = gateReasonOf(m);
             const wsLocked = gr !== null && categoryOf(m) !== null
                 && effectiveModelFor(m).runningConditionMode !== 'custom'
@@ -4332,21 +3453,18 @@ export default function BuildModelWindow() {
             );
         }
         if (trainStatus[m.id] === 'loading') {
-            // "Training" is said only about a model IN THE RUN; a trained model whose
-            // result is being worked out again (reopening it) is "Loading" — no time estimate.
+            // "Training" only for a model in the run; a trained model whose result is being worked out again is "Loading", no time estimate.
             return qItem?.state === 'running'
                 ? board('results-loading', 'run', `Training the ${kindModelName(m.kind)} · about ${formatTrainSeconds(ROUGH_TRAIN_SECONDS[m.kind])}`,
                     'Its settings are locked until it finishes. The charts appear here when it is done.')
                 : board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`, 'The charts appear here when it is ready.');
         }
-        // Results, but no row of the loaded data for it: say that — before any
-        // "fit gone" / "couldn't load" board, whose links could not work here.
+        // Results but no row of the loaded data: say that before any "fit gone"/"couldn't load" board, whose links could not work here.
         const noData = noDataOf(m);
         if (noData) return noDataBoard(m, noData);
         const err = trainError[m.id];
-        // The fit is gone: ONE board, whatever came after it — a load that failed is its
-        // reason line, never the "Training failed" board (whose "Train sensor ↑" cannot
-        // train a Complete model).
+        // Fit gone: ONE board whatever came after; a failed load is its reason line, never the "Training failed" board
+        // (its "Train sensor ↑" cannot train a Complete model).
         if ((healthPreview.notFitted || (!!err && fitGoneOf(m))) && m.lastTrainedAt && !isModelStale(m)) {
             return (
                 <div className="bmw-stage">
@@ -4361,10 +3479,7 @@ export default function BuildModelWindow() {
             );
         }
         if (err && isModelDone(m)) {
-            // A Complete model is "up to date" for Train sensor, which never trains it: a
-            // "Train sensor ↑" link here would be a dead end. The ways out that work are
-            // "Load it again" (the same silent load: nothing written, it stays Complete)
-            // and the ▾ menu row that really trains it.
+            // Train sensor would be a dead end for a Complete model; the ways out are "Load it again" (silent) and the ▾ row that trains it.
             return (
                 <div className="bmw-stage">
                     <LoadFailedBoard
@@ -4375,8 +3490,7 @@ export default function BuildModelWindow() {
                         error={err}
                         onReload={onReloadFit}
                         reloadDisabledReason={fitReloadBlock(m) ?? undefined}
-                        // Only while that row can really train it: a model that cannot train
-                        // (e.g. nothing to train on) gets no pointer to a disabled menu.
+                        // Only while that row can train it; a model that cannot train gets no pointer to a disabled menu.
                         trainMenu={trainBlockReason(m) === null
                             ? <>, or train it from {trainMenuPhrase('board-train-menu', m)} (it then needs Mark complete again)</>
                             : undefined}
@@ -4404,9 +3518,7 @@ export default function BuildModelWindow() {
                 <>Settings or running condition changed — train it again with {trainSensorLink('board-train-sensor')} to see the charts.</>);
         }
         if (healthPreview.error && !healthPreview.data) {
-            // The trained model itself is fine: only its charts could not be worked out.
-            // The way out is asking again (a text link — the board has no button of its
-            // own); after the dataset was replaced asking again cannot help, so no link.
+            // Only the charts failed, the trained model is fine: a link asks again, except after the dataset was replaced (it cannot help).
             return board('results-health-error', 'bad', "Couldn't load the charts",
                 healthPreview.errorCode === 'STALE_SESSION'
                     ? 'The trained model is kept, but its charts can only be loaded from the data it was trained on.'
@@ -4414,9 +3526,7 @@ export default function BuildModelWindow() {
                 healthPreview.error);
         }
         if (!healthPreview.data) {
-            // Trained-and-fresh per the workspace's persisted fields, but the
-            // auto-recompute / preview has not landed its first result in THIS
-            // session yet.
+            // Trained-and-fresh per the persisted fields, but no first result has landed this session yet.
             return board('results-loading', 'run', `Loading the ${kindModelName(m.kind)}…`,
                 slowScoring ? <span data-testid="slow-test-scoring">{SLOW_TEST_SCORING_TEXT}</span> : 'The charts appear here when it is ready.');
         }
@@ -4427,12 +3537,7 @@ export default function BuildModelWindow() {
         );
     };
 
-    /** Train running days of a model as Rust counted them (`count_period_rows`):
-     *  the card's count of the persisted workspace condition for a Workspace-mode
-     *  model, the active Custom model's own count for a Custom one — the SAME
-     *  figure the Running-condition caption prints ("about N d running time").
-     *  Only feeds the amber "below the recommended train time" note until the
-     *  health preview's own figure exists (it does once a scoring period is scored). */
+    /** Train running days as Rust counted them (count_period_rows): the card's count for Workspace mode, the active model's own for Custom. Same figure as the caption; feeds the amber "below the recommended train time" note until the health preview's own figure exists. */
     const trainDaysEstimateFor = (m: FailureModel): number | null => {
         if (effectiveModelFor(m).runningConditionMode === 'custom') {
             return activeModel?.id === m.id ? countedTrainRunningDays(customCounts) : null;
@@ -4440,14 +3545,11 @@ export default function BuildModelWindow() {
         return countedTrainRunningDays(cardCounts);
     };
 
-    /** Why Mark complete is not possible right now (the FIRST blocking reason), or
-     *  null. Only the active model has a health preview, so this is for the active
-     *  model. Rust's validation is the source of "set points not valid". */
+    /** Why Mark complete is not possible now (the first blocking reason), or null. Only the active model has a health preview; Rust's validation is the source of "set points not valid". */
     const markCompleteBlock = (m: FailureModel): string | null => {
         // Export results is writing: nothing about a model changes meanwhile.
         if (exporting) return EXPORT_BUSY_REASON;
-        // A category on the sensor, and a model name no other model of the project uses
-        // (the export writes it as the model's display name).
+        // A category on the sensor and a model name no other model uses (the export writes it as the display name).
         const projectBlock = markCompleteProjectBlock(allModels, m, categoryOf(m), plainSensorLabel);
         if (projectBlock !== null) return projectBlock;
         // A training run owns the sidecar: wait for the run.
@@ -4465,8 +3567,7 @@ export default function BuildModelWindow() {
         const noTest = markCompleteBlockReason(effectiveModelFor(m), gateFg);
         if (noTest !== null) return noTest;
         if (!trainedFreshFor(effectiveModelFor(m), gateFg, specialRecipes)) return NOT_TRAINED_BLOCK_REASON;
-        // The model is being loaded (or trained) again right now — also while an earlier
-        // answer is still on screen under it: nothing may be saved from that one.
+        // Loading or training again: nothing may be saved from an earlier answer still on screen.
         if (trainStatus[m.id] === 'loading') return CHECKING_SET_POINTS;
         // The fit is gone (a load of it that failed included): its own reason, which names
         // only what works for this model.
@@ -4477,9 +3578,7 @@ export default function BuildModelWindow() {
         if (!data) {
             // Being worked out (the model is loaded again, or Rust is answering): a moment.
             if (healthPreview.loading || trainStatus[m.id] === 'loading' || !healthPreview.error) return CHECKING_SET_POINTS;
-            // It failed: the red card on the page has the reason and the Retry; the notice line
-            // says what to do. After the dataset was replaced there is no Retry (asking again
-            // cannot help): the notice line says what does.
+            // It failed: the red card has the reason and Retry; after the dataset was replaced there is no Retry.
             return healthPreview.errorCode === 'STALE_SESSION' ? PREVIEW_STALE_BLOCK_REASON : PREVIEW_FAILED_BLOCK_REASON;
         }
         if (healthPreview.loading) return CHECKING_SET_POINTS;
@@ -4489,34 +3588,19 @@ export default function BuildModelWindow() {
                 const n = Math.max(1, buildCheckLines(data.kind, issues).filter(l => !l.warning).length);
                 return `${n} set point${n > 1 ? 's' : ''}${SET_POINTS_NOT_VALID_TAIL}`;
             }
-            // Empty set points are counted from Rust's `required` issues (one per empty set
-            // point), not from the Checks lines: a Relation model's 4 empty points collapse
-            // into ONE line there.
+            // Count Rust's `required` issues (one per empty point); the Checks lines merge a Relation model's 4 empty points.
             const empty = Math.max(1, issues.filter(i => isBlockingIssue(i) && i.code === 'required').length);
             return `${empty} set point${empty > 1 ? 's' : ''} still empty`;
         }
         return null;
     };
 
-    /** What the Health score page says about this model's Mark complete: running,
-     *  failed, or nothing (Mark complete writes no files — Export results does). */
+    /** What the Health score page says about Mark complete: running, failed, or nothing (it writes no files). */
     const saveInfoFor = (m: FailureModel): SaveInfo => {
         return saveInfo[m.id] ?? { phase: 'idle' };
     };
 
-    /** THE one filled button of the detail pane right now (at most ONE filled button
-     *  on screen; all of them sit in the header's right side — Train sensor and the
-     *  state buttons of `renderStateParts`). Every other button is a ghost or a text button:
-     *   - the running condition is not set / not valid -> none here (its own card has it)
-     *   - Model fit:    Save changes while a draft exists · else Train sensor while a
-     *                   model of this sensor needs training · else none (a trained,
-     *                   up-to-date model has no filled button here: the way on is page
-     *                   tab ②, which carries the "set points needed" cue — navigation
-     *                   is never dressed as a required action)
-     *   - Health score: Train sensor when THIS model must train again · else Mark
-     *                   complete · a Complete model has none, unless a sibling model
-     *                   needs training
-     *  Presentation only: it never enables, disables or hides anything. */
+    /** The one filled button of the detail pane (presentation only); none while the running condition is unset/invalid. Model fit: Save changes with a draft, else Train sensor. Health score: Train sensor, else Mark complete until Complete. */
     const primaryActionOf = (m: FailureModel, page: WorkbenchPage, cands: readonly TrainCandidate[]): PrimaryAction => {
         if (rcStepState !== 'set') return null;
         const sensorNeedsTrain = cands.some(c => c.plan.kind === 'ready');
@@ -4525,26 +3609,13 @@ export default function BuildModelWindow() {
             return sensorNeedsTrain ? 'train' : null;
         }
         if (cands.find(c => c.id === m.id)?.plan.kind === 'ready') return 'train';
-        // ...and Mark complete could only fail.
+        // No row in the loaded data: Mark complete could only fail.
         if (noDataOf(m)) return sensorNeedsTrain ? 'train' : null;
         if (!isModelDone(m)) return 'mark';
         return sensorNeedsTrain ? 'train' : null;
     };
 
-    /** What a model's state asks for, in TWO parts (Workbench detail v2 §1 + §4 — there
-     *  is no footer bar and no status pill; the kind tab says the status in words):
-     *   - `actions`: the state buttons of the header's right side, next to Train sensor.
-     *     Model fit: "Save changes" (only while a draft exists) — nothing else: the way
-     *     on to the Health score page is page tab ② (always visible; it says why it is
-     *     closed, and carries the "set points needed" / "fix set point" cue).
-     *     Health score: Mark complete ("Mark incomplete", a text button, once Complete).
-     *     At most one of them is filled (`primary`).
-     *     A disabled Save changes / Mark complete has ONE short reason line under it,
-     *     in the same slot and style as Train sensor's line.
-     *   - `notice`: ONE line at the bottom of the pane, ONLY while there is something to
-     *     fix or wait for — a warning (amber), an error (red; a rejected set point is
-     *     one), checking, an unsaved draft, queued / training. Otherwise null: no line
-     *     at all. It never says a train date or "scored on N periods". */
+    /** State parts: header `actions` (Save changes on Model fit with a draft; Mark complete / Mark incomplete on Health score) and `notice`, a one-line bottom message shown only while something needs fixing or waiting. */
     const renderStateParts = (m: FailureModel, page: WorkbenchPage, primary: PrimaryAction): { notice: ReactNode; actions: ReactNode } => {
         // Save changes is an action: the draft's data guards apply to it.
         const saveReason = modelBlockReason(m, true);
@@ -4554,17 +3625,11 @@ export default function BuildModelWindow() {
         const trainedFresh = isModelTrainedFresh(m);
         const stale = isModelStale(m);
         const done = isModelDone(m);
-        // A run that failed IN THIS SESSION — whether an explicit Re-train or
-        // the silent auto-recompute on reopen — overrides the happy-path
-        // notice / Mark-complete-enabled state even though the PERSISTED
-        // fields still say "fresh" (nothing is written back on failure).
+        // A run that failed this session overrides the happy-path notice and Mark complete: persisted fields still say fresh.
         const hasSessionError = !!trainError[m.id];
-        // The fit Rust held is gone: trained on paper (or Complete — `trainedFresh` is
-        // only said of a model that is not), but the fit must be loaded or trained again.
+        // Fit gone: trained (or Complete) but the fit must be loaded or trained again; trainedFresh is only said of a non-Complete model.
         const fitGone = (trainedFresh || done) && fitGoneOf(m);
-        // Results, but no row of the loaded data for it: nothing about the model changed
-        // (its tab keeps its own word, "Complete" / "Trained") — the sentence says what
-        // the charts need.
+        // Results but no row of the loaded data: the tab keeps its own word; the sentence says what the charts need.
         const noData = noDataOf(m);
         const noDataLine: ReactNode = noData
             ? <span data-testid="footer-no-data">{noModelDataFooter(done ? 'Complete' : 'Trained', noData.mode)}</span>
@@ -4578,12 +3643,8 @@ export default function BuildModelWindow() {
         const hasDraft = m.id in drafts;
         // The header's Train sensor is the one place to train. This link focuses it.
         const goTrainSensor = trainSensorLink('footer-train-sensor');
-        // (No train date and no "scored on N periods" anywhere on the page — user decision
-        // 2026-10-12: the periods are in the running-condition line. A successful Mark
-        // complete is the green "Complete" on the kind tab: no confirmation line.)
 
-        // The fit-gone sentence of BOTH pages: "load it again" as a link, and — only for a
-        // model Train sensor really trains (not Complete) — "Train sensor ↑".
+        // Fit-gone sentence: a "load it again" link, plus "Train sensor ↑" only for a model Train sensor can train (not Complete).
         const reloadBlock = fitReloadBlock(m);
         const fitGoneLine: ReactNode = (
             <>
@@ -4601,8 +3662,7 @@ export default function BuildModelWindow() {
                 {!done && <>, or re-train with {goTrainSensor}</>}
             </>
         );
-        // A Complete model whose load failed (not a lost fit): the same "load it again" link
-        // — never "Train sensor ↑", which does not train a Complete model.
+        // Complete model whose load failed (not a lost fit): the same "load it again" link, never "Train sensor ↑".
         const loadFailed = loadFailedOf(m);
         const loadFailedLine: ReactNode = (
             <>
@@ -4619,10 +3679,7 @@ export default function BuildModelWindow() {
                 </button>
             </>
         );
-        // Why Mark complete is disabled, as the sentence shows it: the fit-gone reason gets
-        // its links; the moment Rust is still checking what was typed is not
-        // a reason worth replacing a Complete model's sentence for.
-        // A name twin names the other model's sensor with its label (description first).
+        // Why Mark complete is disabled, as a sentence: the fit-gone reasons get links; a name twin names the other model's sensor.
         const twin = findWorkspaceNameTwin(allModels, m, m.name ?? '');
         const twinLine: ReactNode = twin ? (
             <span data-testid="name-twin-reason">
@@ -4644,28 +3701,21 @@ export default function BuildModelWindow() {
         } else if (page === 'health') {
             // Checking is said HERE only (no card on the page unless it is slow).
             if (saving) line = <><Loader2 size={11} className="pm-spin" aria-hidden="true" /> Checking the set points…</>;
-            // No data for it in the loaded file: the same sentence on both pages (it is
-            // also why Mark complete / Mark complete again is disabled — the button's tooltip).
+            // No data in the loaded file: the same sentence on both pages (also why Mark complete is disabled, as tooltip).
             else if (noDataLine) { line = noDataLine; tone = 'warn'; }
-            // Why Mark complete (again) is disabled comes before everything else: a failed
-            // attempt's "Not saved" must never hide the reason that blocks the next one.
-            // (Not the moment Rust is still checking what was typed: that is neither a
-            // warning nor something to fix, and a line that came and went on every keystroke
-            // would make the page jump — it is the neutral line under the button only.)
+            // Why Mark complete is disabled comes first, so a failed attempt's "Not marked complete" cannot hide it.
+            // Not while Rust is still checking typed values: a line per keystroke would make the page jump.
             else if (!done && markBlock !== null && markBlock !== CHECKING_SET_POINTS) { line = blockWhy ?? markBlock; tone = 'warn'; lineId = 'mark-block-reason'; }
-            // (A refusal for a lost fit that was loaded again since — by itself — has
-            // nothing left to "fix": only the second click is missing.)
+            // A refusal for a lost fit that was loaded again since has nothing left to fix; only the second click is missing.
             else if (savePhase === 'error') {
                 line = (saveInfo[m.id] as { message?: string }).message === FIT_GONE_SAVE_MESSAGE
                     ? 'Not marked complete · the Relation model is loaded again — Mark complete'
                     : 'Not marked complete · fix it, then Mark complete';
                 tone = 'bad';
             }
-            // A Complete model whose fit is gone stays Complete — but the page cannot score
-            // until the fit is loaded again: say that, not only "Files saved …".
+            // A Complete model whose fit is gone stays Complete, but the page cannot score until it is loaded again: say that.
             else if (done && fitGone) { line = fitGoneLine; tone = 'warn'; }
-            // ...and so does one whose load failed — whether or not an earlier answer is
-            // still on screen: the tab's red dot and this sentence always agree.
+            // Same for a failed load, whether or not an earlier answer is on screen: the tab's red dot and this sentence agree.
             else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
             // A Model-settings draft is waiting on the other page.
             else if (hasDraft) line = 'Unsaved changes in Model settings';
@@ -4684,10 +3734,8 @@ export default function BuildModelWindow() {
         else if (fitGone) { line = fitGoneLine; tone = 'warn'; }
         // A Complete model whose load failed: its board has the reason; the way out is the same link.
         else if (loadFailed) { line = loadFailedLine; tone = 'bad'; }
-        // A Complete model with no train record whose ▾ train failed: nothing to load
-        // again — the menu row that trains it is the way out (the board has the reason).
+        // Complete model with no train record whose ▾ train failed: train again from the menu; the board has the reason.
         else if (legacyTrainFailedOf(m)) { line = <>{TRAIN_FAILED_WORDS} · train it again from {trainMenuPhrase('footer-train-menu', m)}</>; tone = 'bad'; }
-        // (A Complete model with nothing wrong: no line.)
         else if (done) line = null;
         else if (hasSessionError) { line = <>Training failed · fix the problem, then {trainSensorPhrase('footer-train-sensor', m)}</>; tone = 'bad'; }
         // Trained, but its charts could not be loaded (the board above says so): there
@@ -4702,8 +3750,7 @@ export default function BuildModelWindow() {
         // and its "set points needed" cue — no line.)
         else if (trainedFresh) line = null;
         else if (stale) { line = <>Settings or running condition changed · train again with {goTrainSensor}</>; tone = 'warn'; }
-        // (Never trained: its board says so, with the "Train sensor ↑" link; page tab ②
-        // says why the Health score page is closed — no line.)
+        // Never trained: its board and page tab ② say why, so no line here.
 
         // A REJECTED set point is an error (red), an empty one a warning (amber): the
         // notice has the strength of the ruler above it.
@@ -4723,25 +3770,19 @@ export default function BuildModelWindow() {
                 </span>
             </div>
         );
-        // (No "Next: Health score →" here, in any state: it went to the same place as page
-        // tab ②, and a filled copy beside a ghost Train sensor read as a required action.
-        // Tab ② says why it is closed and carries the "set points needed" cue.)
         const saveShown = page === 'model' && hasDraft;
         const saveDisabled = saveReason !== null || locked || exporting;
         const saveTitle = exporting ? EXPORT_BUSY_REASON : locked ? 'Settings are locked while this model is in the run' : saveReason ?? undefined;
         // A Mark complete button is on screen (a Complete model has "Mark incomplete").
         const markShown = page === 'health' && !done;
-        // The reason of the DISABLED state button, in ONE short line under it (the button's
-        // own tooltip, in words on screen): Save changes on Model fit, Mark complete on
-        // Health score. Never while saving — the notice line says that.
+        // Why a state button is disabled, in one short line under it; Mark complete's is hidden while saving (the notice says that).
         const stateWhy: { text: string; tone: TrainReasonTone } | null =
             saveShown && saveDisabled && saveTitle ? { text: saveTitle, tone: locked ? 'neutral' : 'warn' }
             : markShown && !saving && markBlock !== null
                 ? { text: markBlock, tone: spRejected ? 'danger' : markBlock === CHECKING_SET_POINTS ? 'neutral' : 'warn' }
             : null;
         const whyLine = stateWhy && <div className={`tq-why tq-why--${stateWhy.tone}`} data-testid="state-why">{stateWhy.text}</div>;
-        // Each button that can be disabled is a column with its reason line under IT (never
-        // under a neighbour that works): Save changes on Model fit, the Mark buttons on Health score.
+        // Each button that can be disabled is a column with its reason under it, never under a neighbour that works.
         const actions = (
             <div className="wb3-actions" data-testid="wb-actions" data-primary={primary ?? 'none'}>
                 {saveShown && (
@@ -4790,14 +3831,7 @@ export default function BuildModelWindow() {
         return { notice, actions };
     };
 
-    /** The detail header's sensor-level Train: one primary
-     *  "▶ Train sensor · n of m" that trains every model of the sensor that needs
-     *  it (I → R → C, up-to-date ones skipped), a ▾ menu ("Train all N models" /
-     *  "<Kind> only" — "Re-train …" once trained before, see `sensorTrainMenuCopy`)
-     *  and ONE short line under it saying what it will do. The reason a model can't
-     *  train is said once, on its own board — this line only points there (the
-     *  button's tooltip keeps the full reason). Filled only while it is the pane's
-     *  primary action (`primaryActionOf`), a ghost otherwise. */
+    /** Sensor-level Train in the detail header: trains every model of the sensor that needs it (I -> R -> C, up-to-date skipped). A ▾ menu (sensorTrainMenuCopy) and one line say what it will do; filled only as the primary action. */
     const renderSensorTrain = (cands: readonly TrainCandidate[], filled: boolean) => {
         const plans = new Map(cands.map(c => [c.id, c.plan]));
         const ready = orderedDetail.filter(m => plans.get(m.id)?.kind === 'ready');
@@ -4817,12 +3851,9 @@ export default function BuildModelWindow() {
         const inRun = orderedDetail.filter(m => queue.isLocked(m.id));
         // A model on its OWN (Custom) running condition does not wait for the workspace one.
         const usesOwnRc = (m: FailureModel): boolean => effectiveModelFor(m).runningConditionMode === 'custom';
-        // No workspace running condition at all (an invalid period has its own, more specific
-        // reason per model) — and a model of this sensor really waits for it.
+        // No workspace running condition, and a model of this sensor waits for it (an invalid period has its own per-model reason).
         const rcBlocks = rcStepState === 'unset' && ready.length === 0 && cant.some(m => !usesOwnRc(m));
-        // The workspace condition is not set / not valid, so its card holds the only filled
-        // button — but the models this line is about run on their own condition: say that
-        // nothing is blocked for them (Train sensor is a ghost then, and works).
+        // Workspace condition unset/invalid, but these models use their own: say nothing is blocked for them (Train sensor works).
         const ownRcNote = (list: FailureModel[]): string =>
             rcStepState !== 'set' && list.length > 0 && list.every(usesOwnRc) ? ` · ${OWN_RC_NOT_BLOCKED}` : '';
         let why: string;
@@ -4833,9 +3864,7 @@ export default function BuildModelWindow() {
         else if (rcBlocks) { why = TRAIN_NEEDS_RUNNING_CONDITION; tone = 'warn'; }
         else if (ready.length === 0 && cant.length === 0) why = `${up.length} model${up.length === 1 ? '' : 's'} up to date — nothing to train${ownRcNote(up)}`;
         else if (ready.length === 0) {
-            // A trained or Complete model that only the data guard stops keeps its charts
-            // and its own notice sentence — there is no board "below" that says why, so
-            // the reason is named HERE (the one place its Train is offered).
+            // Stopped only by the data guard, a trained or Complete model has no board saying why: name the reason here.
             const named = cant.find(m => {
                 const guard = trainGuardBlockOf(m);
                 return guard !== null && shownGuardBlockOf(m) === null && trainBlockReason(m) === guard.reason;
@@ -4858,10 +3887,8 @@ export default function BuildModelWindow() {
             : ready.length === 0 ? (cant.length ? cantDetail : why)
             : cant.length ? cantDetail
             : undefined;
-        // Menu copy: "Re-train" is only said about a model that has a train record
-        // (`lastTrainedAt` — what `isModelStale` / the up-to-date rule read as "was trained").
-        // Each row's state line: where the model stands ("Not trained yet", "Failed last
-        // run", "Fit no longer in memory", …) or why it can't train.
+        // "Re-train" is said only for a model with a train record (lastTrainedAt).
+        // Each row's state line: where the model stands ("Not trained yet", "Failed last run", ...) or why it cannot train.
         const copy = sensorTrainMenuCopy(orderedDetail.map((m, i) => ({
             kind: m.kind,
             plan: cands[i].plan,
@@ -4946,26 +3973,19 @@ export default function BuildModelWindow() {
         // the one-filled-button rule both read it.
         const cands = orderedDetail.map(candidateOf);
         const primary = primaryActionOf(activeModel, page, cands);
-        // Page tab ② is closed by two rules: `healthPageBlock`, and this model's fit still
-        // being worked out (the Health score page reads that fit) — and only while it is
-        // not the page that is open: the open page's tab is never shown as closed. Its
-        // reason takes the caption's place; the "still loading / training" moment has no
-        // reason text (the page body says it).
+        // Page tab ② is closed by healthPageBlock or while this model's fit is being worked out; never shown closed on the open page.
+        // Its reason replaces the caption; loading/training has no reason text (the page body says it).
         const healthBlock = healthPageBlock(activeModel);
         const healthTabClosed = page !== 'health' && (healthBlock !== null || training);
         const healthTabWhy = healthTabClosed ? healthBlock : null;
-        // The "next step" cue of tab ② (it replaced "Next: Health score →"): trained and
-        // fresh (tab ② open) but the set points are missing / not valid — the SAME flag
-        // the kind tab says ("Set points needed" / "Fix set point"), in its dot colours.
-        // A Complete model has none (its flag is null), and a closed tab keeps its reason.
+        // Tab ②'s next-step cue: trained and fresh (tab open) but set points missing/not valid, same flag as the kind tab dot.
+        // A Complete model has none; a closed tab keeps its reason.
         const healthCue: SetPointFlag = healthTabClosed ? null : tabDotOf(activeModel, dotStateOf(activeModel)).flag;
         const healthCueWords = healthCue === 'fix' ? 'fix set point' : healthCue === 'needed' ? 'set points needed' : null;
         const parts = renderStateParts(activeModel, page, primary);
         return (
             <>
-                {/* The header is arranged by function (v2 §1): identity on the left — label,
-                    unit, tag, component, FG chips, then the category switch in the same meta
-                    row — and ACTIONS only on the right. */}
+                {/* Header by function: identity on the left (label, unit, tag, component, FG chips, category switch); actions only on the right. */}
                 <div className="bmw-dhead">
                     <button
                         type="button"
@@ -5021,11 +4041,7 @@ export default function BuildModelWindow() {
                             </div>
                         </div>
                     </div>
-                    {/* Actions only: Train sensor (a ghost unless training is the next step) and
-                        the state buttons — Save changes / Mark complete (again) / Mark
-                        incomplete — of which at most ONE is filled (`primaryActionOf`). No
-                        page switch here, no "Next": the two pages are the tab row under the
-                        kind tabs (v2 §3), and tab ② carries the next-step cue. */}
+                    {/* Actions only: Train sensor (ghost unless training is next) and the state buttons, at most one filled (primaryActionOf). */}
                     <div className="wbx-dh-ctl" data-testid="detail-controls">
                         {renderSensorTrain(cands, primary === 'train')}
                         {parts.actions}
@@ -5041,8 +4057,7 @@ export default function BuildModelWindow() {
                 <div role="tablist" className="f4-tabs wb3-kindtabs">
                     {orderedDetail.map(m => {
                         const selected = m.id === activeModel.id;
-                        // ONE dot in the list's colours + the status in words beside it (v2 §2).
-                        // The same words are the tooltip and part of the tab's name.
+                        // One dot in the list's colours plus the status in words; the same words are the tooltip and part of the tab's name.
                         const { dot, tone, words } = tabDotOf(m, dotStateOf(m));
                         return (
                             <button
@@ -5080,8 +4095,7 @@ export default function BuildModelWindow() {
                     })}
                     <span className="f4-tabs-spacer" />
                 </div>
-                {/* The two pages of a model: a second tab row under the kind tabs (v2 §3). The
-                    numbers are an order, not progress — no ticks, and ① is always open. */}
+                {/* The two pages of a model: a second tab row under the kind tabs. Numbers are an order, not progress; ① is always open. */}
                 <nav className="wb3-pages" aria-label="Model pages" data-testid="page-tabs">
                     <button
                         type="button"
@@ -5095,8 +4109,7 @@ export default function BuildModelWindow() {
                         <span className="wb3-page-t">Model fit</span>
                         <span className="wb3-page-s">settings · train · check the fit</span>
                     </button>
-                    {/* Closed = aria-disabled, never `disabled`: it stays focusable and its
-                        reason is always readable, in place of the caption. */}
+                    {/* Closed = aria-disabled, never `disabled`: it stays focusable and its reason is always readable in place of the caption. */}
                     <button
                         type="button"
                         ref={page === 'health' ? activePageTabRef : undefined}
@@ -5128,8 +4141,7 @@ export default function BuildModelWindow() {
                 </nav>
 
                 <div role="tabpanel" data-testid={`model-tab-panel-${activeModel.id}`} style={{ display: 'contents' }}>
-                    {/* One scroll area for settings + banner + the page body, so the
-                        notice line below (when there is one) stays in view however tall the charts are. */}
+                    {/* One scroll area for settings, banner and page body, so the notice line below stays in view. */}
                     <WorkbenchScroll resetKey={`${activeModel.id}:${page}`} page={page}>
                         {page === 'model' && renderModelSettings(activeModel)}
                         {stale && (
@@ -5147,8 +4159,7 @@ export default function BuildModelWindow() {
                             />
                         )}
                         {page === 'health' && renderRunSetPointsBanner(activeModel)}
-                        {/* No data for it in the loaded file: the Health score page is the same
-                            ONE board as the Model fit page (the score is computed from that data too). */}
+                        {/* No data in the loaded file: Health score shows the same one board as Model fit (the score uses that data too). */}
                         {page === 'model' ? renderModelFitBody(activeModel) : activeNoData ? noDataBoard(activeModel, activeNoData) : (
                             <HealthScorePage
                                 key={activeModel.id}
@@ -5174,19 +4185,12 @@ export default function BuildModelWindow() {
     };
 
 
-    // The settings modal's own view: its draft once edited, else the persisted
-    // values. Only the modal reads these — everything above (Step-1 card, gate,
-    // models) stays on the persisted state.
+    // The modal's own view: its draft once edited, else persisted; the card, gate and models stay on persisted state.
     const rcView = rcDraft ?? rcPersisted;
     const rcDirty = rcDraft !== null && !rcDraftEqual(rcDraft, rcPersisted);
     const rcViewInvalid = validatePeriods(rcView.periods, datasetBounds, rcPersisted.periods).some(s => s.invalid);
-    // Apply gate: an invalid train period, NO train period, an invalid scoring
-    // period (a missing date, an end before its start), a train or scoring period
-    // that was added / changed in this draft and lies entirely outside the loaded
-    // data, or — once this draft's count is settled and it changed what is trained
-    // on — no running row in its train periods. A period that is exactly as it was
-    // saved never blocks (its row warns); scoring periods overlapping train time and
-    // train periods overlapping a highlight never block either.
+    // Apply gate: invalid/missing train period, invalid scoring period, a new/changed period outside the data, or no running row
+    // (once the count is settled and training changed). A period as saved, or overlaps with train time or highlights, never blocks.
     const rcApplyBlock = runningConditionApplyBlock(rcView.periods, rcView.testPeriods, 'applying', {
         bounds: datasetBounds,
         savedPeriods: rcPersisted.periods,
@@ -5194,13 +4198,8 @@ export default function BuildModelWindow() {
         noTrainRows: rcNoRows,
         hasCondition: !rcView.allData,
     });
-    // Apply writes the DRAFT, and a typed date is in the draft as soon as it is
-    // complete — so "dirty" is the whole condition, and the impact line below is on
-    // screen whenever Apply is enabled. A half-typed date changes nothing (it
-    // never reaches the draft): it only shows the neutral line.
-    // The one condition is required: Apply waits for a half-filled line and never
-    // removes a condition that was set. Applying periods while it was never set is
-    // allowed (the footer says the models still can't train).
+    // A complete typed date is already in the draft, so dirty is the whole condition; a half-typed date only shows the neutral line.
+    // The one condition is required: Apply waits for a half-filled line and never removes a set condition. Applying periods while it was never set is allowed.
     const rcDraftCond = rcView.filters[0];
     const rcDraftSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcView.filters, runningConditionAllData: rcView.allData }, gateHeaders);
     const rcWasSet = isWorkspaceRunningConditionConfigured({ runningConditionFilters: rcPersisted.filters, runningConditionAllData: rcPersisted.allData }, gateHeaders);
@@ -5225,10 +4224,7 @@ export default function BuildModelWindow() {
         gateHeaders,
     );
 
-    // ---- Export results: what the bar and the checklist say ----
-    // The window's own view of the workspace (kept in step with the disk by every
-    // write and broadcast); the dialog's dry run (`plan_workspace_export`) reads the
-    // disk itself.
+    // The window's own view of the workspace (kept in step by writes and broadcasts); the dialog's dry run reads the disk itself.
     const exportWorkspace = {
         id: workspaceId ?? '',
         name: projectInfo?.name ?? '',
@@ -5250,24 +4246,20 @@ export default function BuildModelWindow() {
         order: runOrder.map(m => m.id),
         labelOf: tag => sensorPlainLabel(sensorLookup(tag)),
     });
-    // At most ONE filled button on screen: Export is filled only when nothing in the
-    // detail pane / Step-1 card is (every model Complete, no draft, the condition set).
+    // At most one filled button on screen: Export is filled only when every model is Complete, no draft is open and the condition is set.
     const exportFilled = readiness.counts.allReady && rcStepState === 'set' && Object.keys(drafts).length === 0;
     // What Export writes comes from the disk, so a pending edit would not be in it.
     const exportUnsavedWhy = Object.keys(drafts).length > 0 ? 'Save the changes in Model settings first'
         : Object.keys(spDrafts).length > 0 ? 'Set points are not saved yet'
         : null;
     const exportApi: UseWorkspaceExport = { ...workspaceExport, plan: planExport, start: writeExport };
-    /** Opens the Export dialog. `plan` = ask Rust for the dry run (a fresh look at the
-     *  disk) — only once the checklist says everything is there; until then the
-     *  dialog just shows the checklist ("Show which"). */
+    /** Opens the Export dialog. plan = ask Rust for the dry run (a fresh look at disk), only when the checklist is all ready and nothing is unsaved; otherwise just the checklist ("Show which"). */
     const openExport = (plan: boolean) => {
         workspaceExport.show();
         setExportOpen(true);
         if (plan && !exporting && readiness.counts.allReady && exportUnsavedWhy === null) void planExport();
     };
 
-    // ---- The one-time conversion of an old running condition ----
     // Sensor names in sans (SensorInline), numbers + units in mono.
     const condText = (f: WorkspaceSensorFilter) => (
         <span className="rc1-cond"><SensorInline tag={f.sensor} size="sm" /> <span className="rc1-mono">{conditionChipParts(f, getDesc, getUnit).rest}</span></span>
@@ -5413,8 +4405,7 @@ export default function BuildModelWindow() {
                         onTrainNotStarted={onRunNotStarted}
                     />
                 )}
-                {/* After Apply (session-only): the models an Apply sent back to training
-                    that are still not trained again. It goes away by itself once they are. */}
+                {/* Models an Apply sent back to training and still untrained (session-only); disappears once they are. */}
                 {rcRetrainLeft.length > 0 && (() => {
                     const n = retrainNoticeParts(rcRetrainLeft.length);
                     return (
@@ -5433,9 +4424,7 @@ export default function BuildModelWindow() {
                 })()}
 
                 {categoryNotice && categoryNotice.length > 0 && (() => {
-                    // One entry per sensor (the change list is per model). The
-                    // "taken from" model is the first one, in Individual ->
-                    // Relationship -> Clustering order, that was NOT changed.
+                    // One entry per sensor; the "taken from" model is the first unchanged one in Individual -> Relationship -> Clustering order.
                     const bySensor = new Map<string, CategoryChange[]>();
                     for (const c of categoryNotice) bySensor.set(c.sensorKey, [...(bySensor.get(c.sensorKey) ?? []), c]);
                     const changedIds = new Set(categoryNotice.map(c => c.modelId));
@@ -5477,8 +4466,7 @@ export default function BuildModelWindow() {
                     );
                 })()}
 
-                {/* Hidden list: the <aside> is not rendered at all, so the detail pane must be the
-                    ONLY column (a leftover "0 1fr" template would put it in the 0px track). */}
+                {/* Hidden list: no aside, so the detail pane must be the only column (a leftover "0 1fr" template would trap it in 0px). */}
                 <div className={`bmw-wb${sidebarCollapsed ? ' bmw-wb--nolist' : ''}`} style={{ gridTemplateColumns: sidebarCollapsed ? 'minmax(0,1fr)' : `${listWidth}px minmax(0,1fr)` }}>
                     {!sidebarCollapsed && (
                         <PaneResizeHandle
@@ -5562,12 +4550,8 @@ export default function BuildModelWindow() {
             </div>
 
             {rcFilterOpen && (
-                // Edits go to a local draft; only Apply writes (see `applyRcDraft`).
-                // X / backdrop / Esc go through `requestCloseRc`, which
-                // `flushFocusedInput()`s first (a half-typed period date settles on
-                // blur only) and then asks before discarding a dirty draft.
-                // Focus goes to the first field on open and Tab stays inside
-                // (`useModalFocus`); Esc is `requestCloseRc` (see the effect above).
+                // Edits go to a local draft; only Apply writes. X/backdrop/Esc go through requestCloseRc (flush the focused input, then ask before discarding a dirty draft).
+                // Focus goes to the first field on open and Tab stays inside (useModalFocus).
                 <div className="bmw-modal-backdrop" role="presentation" onClick={requestCloseRc}>
                     <div ref={rcDialogRef} tabIndex={-1} className="bmw-modal bmw-modal--rc" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Running condition">
                         <div className="bmw-modal-head rcm-head">
@@ -5634,9 +4618,7 @@ export default function BuildModelWindow() {
                                             <span>{rcCondWhy ?? rcStillUnset}</span>
                                         </span>
                                     ) : rcApplyBlock ? (
-                                        // Why Apply is disabled: "Fix P2 before applying" (red),
-                                        // "Add a train period" (amber), "Fix S1 before applying" (red),
-                                        // "No rows to train on" (red).
+                                        // Why Apply is disabled: red for a bad period or no rows to train on, amber for a missing train period.
                                         <span
                                             data-testid="rc-apply-block"
                                             data-kind={rcApplyBlock.kind}
@@ -5646,18 +4628,14 @@ export default function BuildModelWindow() {
                                             <span>{rcApplyBlock.footer}</span>
                                         </span>
                                     ) : rcImpact ? (
-                                        // What applying the draft does to the models (never blocks
-                                        // Apply). Apply is only ever enabled with this line on screen.
-                                        // A date still half-typed is not part of the draft: one more
-                                        // quiet line says so.
+                                        // What applying does to the models (never blocks Apply); Apply is enabled only with this line shown.
                                         <span data-testid="rc-impact" data-tone={rcImpact.tone} role="status" className={`rc-impact rc-impact--${rcImpact.tone}`}>
                                             <span>{rcImpact.text}</span>
                                             {rcImpact.quiet && <span data-testid="rc-impact-quiet">{rcImpact.quiet}</span>}
                                             {rcPendingName && <span data-testid="rc-pending-date">{pendingDateText(rcPendingName)}</span>}
                                         </span>
                                     ) : rcPendingName && (
-                                        // Nothing edited yet but a date is half-typed: nothing of it is
-                                        // in the draft, so there is no impact to show — only how to get it.
+                                        // Nothing edited yet but a date is half-typed: it is not in the draft, so no impact to show, only how to get it.
                                         <span data-testid="rc-pending-date" role="status" className="rc-impact rc-impact--grey">
                                             <span>{pendingDateText(rcPendingName)}</span>
                                         </span>
@@ -5752,8 +4730,7 @@ export default function BuildModelWindow() {
                 />
             )}
 
-            {/* "Compare predictors": the shared Sub-models comparison (one fit per
-                cumulative predictor subset) for the active Relationship model. */}
+            {/* Compare predictors: the Sub-models comparison (one fit per cumulative predictor subset) of the active Relationship model. */}
             {compareOpen && activeModel && activeModel.kind === 'relationship' && (
                 <SubModelsModal
                     fits={subModelFits}

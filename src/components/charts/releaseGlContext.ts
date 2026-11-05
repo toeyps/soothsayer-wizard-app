@@ -4,11 +4,7 @@ interface GlInstance {
     destroy: () => void;
 }
 
-/**
- * destroy() leaves the WebGL context alive until garbage collection, so rebuilds
- * can pass Chromium's ~16 context limit and evict a live chart. Release it now.
- * Remove any context-lost listener first: this fires that event.
- */
+/** destroy() keeps the WebGL context until GC, so rebuilds can pass Chromium's ~16-context limit; release it now. Callers remove their context-lost listener first (this fires it). */
 export function destroyReleasingContext(inst: GlInstance): void {
     const canvas = inst.get?.('renderer')?.canvas;
     inst.destroy();

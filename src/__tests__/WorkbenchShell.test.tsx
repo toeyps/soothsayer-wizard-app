@@ -74,8 +74,7 @@ describe('WorkbenchScroll', () => {
     });
 });
 
-// SPEC workbench-redesign §6: the banner has NO button of its own — the one place to
-// train is the header's Train sensor, and the sentence links there.
+// The banner has no button of its own: the header's Train sensor is the one place to train, and the sentence links there.
 describe('StaleBanner', () => {
     const SENTENCE = 'Settings or running condition changed — this model is Incomplete again. Train it again with Train sensor ↑ to update the charts. Your set points are kept.';
 
@@ -86,7 +85,7 @@ describe('StaleBanner', () => {
         expect(b.getAttribute('role')).toBe('status');
         expect(b.getAttribute('data-state')).toBe('stale');
         expect(b.textContent).toBe(SENTENCE);
-        // the old Re-train button is gone
+        // no Re-train button
         expect(screen.queryByTestId('stale-retrain')).toBeNull();
         expect(b.querySelector('.rcx-btn')).toBeNull();
         expect(b.querySelectorAll('button')).toHaveLength(1);
@@ -97,8 +96,7 @@ describe('StaleBanner', () => {
         expect(onGo).toHaveBeenCalledTimes(1);
     });
 
-    // "Train sensor ↑" was a dead link whenever Train sensor
-    // would not train THIS model — the sentence now says why (or when) instead.
+    // 'Train sensor ↑' would be a dead link when Train sensor won't train THIS model, so the sentence says why (or when) instead.
     it('when the model itself cannot train, the sentence says why and offers no link', () => {
         const onGo = vi.fn();
         render(<StaleBanner cantTrain={{ kind: 'reason', text: 'Add at least 1 predictor.' }} onGoTrainSensor={onGo} />);
@@ -140,8 +138,7 @@ describe('StaleBanner', () => {
     });
 });
 
-// A Complete model whose load failed: "Train sensor ↑" would be a dead end (Train sensor
-// never trains an up-to-date Complete model) — the board offers "Load it again".
+// A Complete model whose load failed: 'Train sensor ↑' would be a dead end, so the board offers 'Load it again'.
 describe('LoadFailedBoard', () => {
     it('the ONE board shape in red: title, a sentence with "Load it again" as a text link, the reason as the mono line', () => {
         const onReload = vi.fn();

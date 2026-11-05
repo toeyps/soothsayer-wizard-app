@@ -37,3 +37,7 @@ You make the decisions that set how good everything else will be. You work rarel
 - Open questions for the user: <≤5, with defaults>
 - Needs ui-design-reviewer at the end: yes
 ```
+
+## Leave nothing running
+
+Everything you start must be gone before you report: scripts, servers, shells, watchers. Give any throwaway script a time limit (`timeout 60 node x.js`), and never start a watch mode. Before your report, check that nothing you started is still running and stop it. A run that leaves a process behind has not finished.

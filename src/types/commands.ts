@@ -1,21 +1,6 @@
 import type { HealthPreview } from './health';
 
-/**
- * Response shape from the Python sidecar's `preview_relationship` action.
- *
- * The cumulative-feature scores live in `r2_per_step` / `rmse2_per_step`
- * (last entry is the full-model score). `rmse2_per_step[i]` is `2 * RMSE`
- * — divide by 2 for plain RMSE.
- *
- * **Bounded rows.** Every frontend call passes `max_points`, and
- * then `predicted` / `target_raw` / `predictor_raw` are ONE aligned, evenly
- * strided SAMPLE (at most `max_points` rows, ascending row order, the min and
- * max of the target and of the prediction always included) — NOT every row of
- * the (NaN-dropped, projected) fit. Entry `j` of all three describes the same
- * row. `n_rows` is the real number of rows the fit used: read N from it, never
- * from `.length`. The Rust cache behind `cache_key` still holds every row (the
- * health preview scores them all). `residual` is not sent in that case.
- */
+/** Sidecar `preview_relationship` response. `rmse2_per_step[i]` is 2 * RMSE; the last entry of the `*_per_step` arrays is the full model. With `max_points`, predicted/target_raw/predictor_raw are one aligned strided sample: read N from `n_rows`, not `.length`. `residual` is not sent. */
 export interface RelationshipPreviewResult {
   request: string;
   r2_per_step: number[];
@@ -26,29 +11,14 @@ export interface RelationshipPreviewResult {
   predicted: (number | null)[];
   /** Only sent when the call does NOT pass `max_points` (legacy). Nobody reads it. */
   residual?: (number | null)[];
-  /**
-   * Raw target values (`y`) at the sampled rows — same length / order as
-   * `predicted`. Attached by the Rust command (NOT the sidecar) so the UI can
-   * build (predictor, target) scatter pairs without re-fetching the dataset.
-   */
+  /** Raw target values at the sampled rows, same order as `predicted`; attached by the Rust command, not the sidecar. */
   target_raw?: number[];
-  /**
-   * Raw predictor matrix at the sampled rows — `predictor_raw[row][predictorIndex]`.
-   * Outer length matches `predicted`. Inner length matches the
-   * `predictors` array order passed to `preview_relationship_model`.
-   */
+  /** Raw predictor matrix at the sampled rows, `[row][predictorIndex]`, in the order of the `predictors` argument. */
   predictor_raw?: number[][];
   /** Present only on failure. */
   error?: string;
   trace?: string;
-  /**
-   * Health score: present only when the caller passed `cache_key`.
-   * `cache_key` echoes it; `cached` says the full-resolution fit was kept in
-   * Rust's session (false = it did not fit the byte budget or the dataset was
-   * reloaded meanwhile, so `compute_health_preview` will answer `NOT_FITTED`);
-   * `health_preview` is the bounded Relationship preview with NO set points
-   * applied (`valid:false`, no score yet), ready to draw right after Train.
-   */
+  /** Health score fields, present only when `cache_key` was passed. `cached: false` = the fit missed the byte budget or the dataset was reloaded (compute_health_preview then answers NOT_FITTED). */
   cache_key?: string;
   cached?: boolean;
   health_preview?: HealthPreview;
@@ -63,13 +33,7 @@ interface EllipseFit {
   angle_deg: number;
 }
 
-/**
- * Half-open `(min, max]` range (min < v <= max) over the criteria sensor's value used to
- * assign rows to a cluster. `null` on either bound means "unbounded in
- * that direction" — matches Rust's `Option<f64>` (which is how
- * `wizard.py`'s `-inf` / `+inf` round-trips through JSON without
- * relying on non-finite floats).
- */
+/** Half-open (min, max] range over the criteria sensor (min < v <= max); a null bound = unbounded, matching Rust's Option<f64>. */
 interface ClusterRange {
   min: number | null;
   max: number | null;
@@ -98,17 +62,12 @@ export interface ClusteringPreview {
   clusters: ClusterDetail[];
 }
 
-/**
- * Shared dashboard filter shape (sensor projection + timestamp window +
- * value gates) accepted by `get_chart_data` and
- * `get_scatter_sample`.
- */
+/** Dashboard filter shape (sensors, time window, value gates) for get_chart_data and get_scatter_sample. */
 export interface DashboardDataFilter {
   sensors: string[];
   timestamp_start: string | null;
   timestamp_end: string | null;
-  /** Multiple training periods: a row is kept if it falls in ANY
-   *  range. `null` = open end. Send this OR the legacy start/end pair, never both. */
+  /** Multiple training periods: a row is kept if it falls in any range; null = open end. Send this or the legacy start/end pair, never both. */
   timestamp_ranges?: { start: string | null; end: string | null }[];
   value_filters: {
     sensor: string;
@@ -121,13 +80,7 @@ export interface DashboardDataFilter {
 /** Hourly-bucket aggregation mode for the dashboard's "Sampling (1 hr)" select. */
 export type ChartSamplingMethod = 'raw' | 'avg' | 'max' | 'min' | 'first' | 'last';
 
-/**
- * Bounded, columnar chart payload from `get_chart_data`. The Rust side runs
- * the whole pipeline (filter → operation transform → optional hourly
- * aggregation → min/max decimation), so `timestamps.length <= max_points`
- * no matter how many rows the dataset holds — the WebView never receives or
- * retains the full dataset.
- */
+/** Bounded columnar payload from get_chart_data; `timestamps.length <= max_points` however large the dataset. */
 export interface ChartViewData {
   /** Output column names; `["Result (op)"]` in multi-op mode. */
   headers: string[];
@@ -142,29 +95,13 @@ export interface ChartViewData {
   ts_max: string | null;
 }
 
-/**
- * True first/last timestamp across the WHOLE loaded dataset, from
- * `get_dataset_time_bounds` — ignores whatever time filter is currently
- * applied, unlike `ChartViewData.ts_min`/`ts_max` (which reflect only the
- * filtered population). The one source of truth for "what does this dataset
- * span": labels the Time Range panel and anchors the Y/M/W/D/H relative-range
- * buttons to the data itself instead of the machine's clock. Both null when
- * every row's timestamp failed to parse (or the dataset is empty).
- */
+/** True first/last timestamp of the whole dataset from get_dataset_time_bounds, ignoring any time filter; anchors the relative-range buttons. Both null if no timestamp parsed. */
 export interface DatasetTimeBounds {
   min: string | null;
   max: string | null;
 }
 
-/**
- * Bounded sample of the (filtered) dataset for scatter / pair-plot rendering,
- * returned by `get_scatter_sample`. `rows.length <= max_points`, so the IPC
- * payload, JS heap, and WebGL buffers stay bounded regardless of how large
- * the underlying dataset is.
- *
- * `headers` lists the resolved sensors in the SAME column order as each row's
- * `values` — `headers.length === rows[i].values.length`.
- */
+/** Bounded sample for scatter/pair plot from get_scatter_sample, `rows.length <= max_points`. `headers` are in the same order as each row's `values`. */
 export interface ScatterSample {
   headers: string[];
   /** Each row mirrors the Rust `CsvRecord` shape: timestamp + value columns. */

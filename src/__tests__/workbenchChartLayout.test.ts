@@ -20,20 +20,7 @@ import { CHART } from '../components/windows/workbench/chartTheme';
 import { makeClusterStat, makeHealthPreview } from './helpers/healthPreviewFixture';
 import type { ClusteringSeries, IndividualSeries, IndividualStats, RelationshipSeries } from '../types/health';
 
-/*
- * WHERE the labels of the Workbench charts end up.
- *
- * The other chart tests read the option objects. That cannot see two labels
- * printed on top of each other, a tick added at a raw axis end, or a name left
- * behind by a zoom — those only exist once ECharts has laid the chart out. So
- * these tests render the REAL options with the installed ECharts in its
- * server-side SVG mode (no DOM, no canvas: this file runs in the node
- * environment) and read the coordinates of the <text> elements.
- *
- * Text is not measured by a real font here, so a label's size is taken from its
- * font: 9.5 px mono labels are ~11.5 px tall on their chip and ~5.7 px per
- * character wide; the 9 px strip names ~5.4 px per character.
- */
+/* Where the Workbench chart labels end up: real options rendered with ECharts' SVG server mode, reading `<text>` coordinates (option tests can't see overlapping labels or extra ticks). No real font: 9.5px mono ~11.5px tall, ~5.7px/char; 9px strip names ~5.4px/char. */
 
 interface Txt { text: string; x: number; y: number; fill: string; anchor: string; rotated: boolean }
 
@@ -97,8 +84,7 @@ const xTicks = (ts: Txt[]) => {
     const best = [...byY.values()].sort((a, b) => b.length - a.length)[0] ?? [];
     return best.sort((a, b) => a.x - b.x);
 };
-/** Round, evenly spaced ticks: every value a whole multiple of ONE 1 / 2 / 5 × 10ⁿ step, the
- *  same distance apart in value AND in pixels — no extra tick squeezed in at a raw axis end. */
+/** Round, evenly spaced ticks: every value a multiple of ONE 1/2/5 × 10ⁿ step, equal in value and pixels, no extra tick at a raw axis end. */
 function expectRoundEvenTicks(ticks: Txt[], axis: 'x' | 'y') {
     expect(ticks.length).toBeGreaterThanOrEqual(3);
     const v = ticks.map(t => toNumber(t.text));
@@ -117,9 +103,6 @@ function expectRoundEvenTicks(ticks: Txt[], axis: 'x' | 'y') {
 
 const TS5 = ['2026-01-01 00:00:00', '2026-01-01 01:00:00', '2026-01-01 02:00:00', '2026-01-01 03:00:00', '2026-01-01 04:00:00'];
 
-// ---------------------------------------------------------------------------
-// "Actual" / "Predicted" must not be left behind by a zoom
-// ---------------------------------------------------------------------------
 
 describe('Target vs predicted: no name is drawn on the plot, so none can be left beside the wrong line by a zoom', () => {
     // a long series whose two lines cross: after a zoom each line ends at a different height than before
@@ -166,9 +149,6 @@ describe('Target vs predicted: no name is drawn on the plot, so none can be left
     });
 });
 
-// ---------------------------------------------------------------------------
-// Ring-level names must not print on each other for a cluster tilted up-right
-// ---------------------------------------------------------------------------
 
 describe('Clusters: the ring-level names never print on top of each other', () => {
     const series = makeHealthPreview({ kind: 'clustering', n_clusters: 3 }).series as ClusteringSeries;
@@ -244,7 +224,6 @@ describe('Clusters: the ring-level names never print on top of each other', () =
         }
     });
 
-    // Review item 8.
     it('a degenerate extent — every point at one value, rings of no size — still draws two real axes', () => {
         const dot = makeClusterStat(1, { x_center: 5, y_center: 7, x_sd: 0, y_sd: 0 });
         const ts = textsFor(buildClusterOption({ x: [5, 5, 5], y: [7, 7, 7], cluster: [1, 1, 1], total: 3 }, [dot], { x: 'X', y: 'Y' }));
@@ -269,9 +248,6 @@ describe('Clusters: the ring-level names never print on top of each other', () =
     });
 });
 
-// ---------------------------------------------------------------------------
-// Item 3 — round ticks, no tick added at a raw axis end
-// ---------------------------------------------------------------------------
 
 describe('value axes tick on the step their range was rounded to', () => {
     it('Distribution X (it read 0, 3, 6, 9, 12, 15, 16) and Y', () => {
@@ -311,7 +287,6 @@ describe('value axes tick on the step their range was rounded to', () => {
         expectRoundEvenTicks(yTicks(textsFor(line([-0.00031, 0.00042, 0.0001, -0.0002, 0.0003]), 620, 250)), 'y');
     });
 
-    // Review item 7.
     it('an EMPTY Distribution (no bins, no lines) renders: no NaN / Infinity anywhere, a plain 0-based Y axis', () => {
         const empty = { bin_edges: [], counts: [], curve: [], bin_width: 0, n: 0 };
         const m = mount(buildDistributionOption(empty, [], '°C'), 420, 250);
@@ -329,9 +304,7 @@ describe('value axes tick on the step their range was rounded to', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Item 11 — the time axis shows the stamp's OWN clock, whatever zone it names
-// ---------------------------------------------------------------------------
+// Time axis shows the stamp's OWN clock, whatever zone it names.
 
 /** A time-axis tick in the app's one date format: date, then the time when the tick is not a midnight. */
 const TICK_RE = /^(\d{4})\/(\d{2})\/(\d{2})(?: (\d{2}):(\d{2})(?::\d{2}(?:\.\d{3})?)?)?$/;
@@ -361,9 +334,7 @@ describe('the time axis of an offset-stamped CSV shows the clock the file wrote'
         expect(plain.length).toBeGreaterThanOrEqual(3);
         // the ticks of one day carry their time — more than the two midnights are labelled
         expect(plain.filter(l => / \d{2}:\d{2}$/.test(l.text)).length).toBeGreaterThanOrEqual(2);
-        // The plot starts at its fixed left edge. Its width is the grid's, minus the few
-        // pixels ECharts takes off the right so that a date label on the last tick is not
-        // cut at the card's edge (a date is wider than the "06:00" ECharts printed before).
+        // The plot starts at its fixed left edge; its width is the grid's minus the few pixels ECharts takes off the right so a date label on the last tick isn't cut.
         const last = plain[plain.length - 1];
         const plotWidth = ((last.x - plotLeft) / hourOf(last.text)) * 24;
         expect(plotWidth).toBeLessThanOrEqual(fullWidth + 0.5);
@@ -382,11 +353,7 @@ describe('the time axis of an offset-stamped CSV shows the clock the file wrote'
     });
 });
 
-// ---------------------------------------------------------------------------
-// One date format in the whole app (2026-10-12) — the time-axis ticks are dates
-// like the Dashboard's ("2025/03/14"), never ECharts' own month names; zoomed in
-// to less than a day, the ticks of one day must not all read the same date.
-// ---------------------------------------------------------------------------
+// Ticks use the app's date format ("2025/03/14"), never month names; zoomed under a day they must not all read the same date.
 
 describe('the time axis ticks are in the one date format at every zoom', () => {
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -447,9 +414,6 @@ describe('the time axis ticks are in the one date format at every zoom', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Item 4 — "+1SD" printed on "+3SD" when L / H are far from the data
-// ---------------------------------------------------------------------------
 
 describe('Individual: the ±SD names with set points far from the data', () => {
     const p = makeHealthPreview({ kind: 'individual' }); // ±1SD 4..6, ±3SD 2..8
@@ -531,9 +495,6 @@ describe('Individual: the ±SD names with set points far from the data', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// Item 5 — "TRAIN P1" … "TRAIN P20" printed on each other
-// ---------------------------------------------------------------------------
 
 describe('the scope strip with many periods', () => {
     const pad = (n: number) => String(n).padStart(2, '0');
@@ -585,8 +546,6 @@ describe('the scope strip with many periods', () => {
         expectNoOverlap(names);
     });
 
-    // Since "Workbench detail pages v2" this chart is the upper half of a full-width card (it
-    // used to sit beside a side card and was spaced for a narrow plot).
     it('the Health score set-point chart (a full-width card): "TRAIN" once, spaced for the narrowest full-width plot', () => {
         // with the reference-label gutter: 58 px left, 52 px right
         const width = STRIP_PLOT_WIDTH.full + 58 + 52;
@@ -599,7 +558,7 @@ describe('the scope strip with many periods', () => {
         expectNoOverlap(names);
     });
 
-    // User decision 2026-10-12: only the train periods are highlighted.
+    // Only train periods are highlighted.
     it('train and scoring periods together: the strip prints the train names only (one lane, no overlap) — no scoring name, nothing magenta', () => {
         const width = STRIP_PLOT_WIDTH.full + 58 + 18;
         const ts = textsFor(option([...train, ...score]), width, 250);

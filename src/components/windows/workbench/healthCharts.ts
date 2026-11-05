@@ -16,39 +16,8 @@ import { formatDataStamp, parseLocal } from '../periodDisplay';
 import { CHART, CHART_MONO, CLUSTER_COLORS, FONT, axisValueFormatter, fmtAxisValue, fmtNum } from './chartTheme';
 import { withFollowY } from '../../charts/followYAxis';
 
-/*
- * Pure ECharts option builders for the Build Model Workbench's health charts.
- * Every function takes ONLY the bounded
- * payload `compute_health_preview` returns (`HealthPreview.series` / `.stats` /
- * `.histogram` / `.fit_scatter` / `.cluster_scatter`) — never a full row array —
- * and returns a plain option object, so they are unit-testable without ECharts.
- *
- * The generic building blocks (`buildTimeSeriesOption`, `ellipseSeries`) are
- * exported so the Health score page can draw the same charts with the
- * extra set-point lines / score colouring on top instead of re-implementing
- * the axes: pass more `hLines`, more `bands`, or append to `series`.
- *
- * How a Workbench chart reads (DESIGN_SYSTEM §4
- * "Time scopes on charts" / "Quiet charts"):
- *   - the TRAIN periods are named in a thin strip above the plot (plain coloured
- *     mono text) and are only a faint fill inside it. A scoring period is NOT
- *     drawn — no band, no frame, no name (user decision, 2026-10-12) — but its
- *     rows are: the line runs through it exactly as through a train period;
- *   - the hover tooltip is headed by the point's own date AND time in the app's
- *     one date format ("2026/02/09 23:50:00" — `timeHeadingFormatter`), and the
- *     time axis' ticks are dates in the same format (`TIME_AXIS_LABEL`);
- *   - reference lines (±1SD, ±3SD, ±2RMSE, 80) are labelled OUTSIDE the plot on
- *     its right edge, so they need no legend row under the chart. A DATA line is
- *     never named on the plot — ECharts does not move an end label with its line
- *     through a zoom — so a chart with two of them (Target vs predicted) keeps a
- *     two-item colour key on its card;
- *   - only the score-100 band is filled; ±3SD is a dashed line;
- *   - the user's own set points are the strongest lines (`HLine.inside`).
- */
+/* Pure ECharts option builders for the health charts; they take only the bounded `compute_health_preview` payload, never full rows. */
 
-// ---------------------------------------------------------------------------
-// Shared pieces
-// ---------------------------------------------------------------------------
 
 /** Cursor of `readDigits` (module-level, so the scan allocates nothing per stamp). */
 let scanAt = 0;
@@ -68,14 +37,10 @@ function readDigits(s: string, min: number, max: number): number {
 
 /** The local day (y × 10000 + month × 100 + day) `dayOffsetMs` belongs to. */
 let offsetDay = NaN;
-/** What to add to `Date.UTC(fields)` for the epoch ms of those LOCAL fields on
- *  `offsetDay`; NaN on a day the PC's clock changes (DST) — then `Date` decides
- *  per stamp. */
+/** Added to Date.UTC(fields) for the local epoch ms on offsetDay; NaN on a DST-change day, then Date decides per stamp. */
 let dayOffsetMs = 0;
 
-/** Epoch ms of local wall-clock fields — `new Date(y, mo - 1, d, h, mi, s, ms)`
- *  without building a `Date` per stamp: the PC's UTC offset is looked up once per
- *  calendar day (consecutive rows share it) and the rest is arithmetic. */
+/** Epoch ms of local wall-clock fields; looks up the UTC offset once per calendar day instead of building a Date per stamp. */
 function localFieldsMs(y: number, mo: number, d: number, h: number, mi: number, sec: number, milli: number): number {
     const day = y * 10000 + mo * 100 + d;
     if (day !== offsetDay) {
@@ -89,16 +54,7 @@ function localFieldsMs(y: number, mo: number, d: number, h: number, mi: number, 
         : Date.UTC(y, mo - 1, d, h, mi, sec, milli) + dayOffsetMs;
 }
 
-/**
- * Epoch ms of a CSV stamp read as its OWN wall clock — the same reading as
- * `formatDataStamp` (`periodDisplay.ts`), which prints the read-outs beside these
- * charts: `YYYY-MM-DD[ T]HH:MM[:SS[.fff]]` with an optional `Z` / `+07:00`, whose
- * offset is IGNORED. "2026-02-09T23:50:00+07:00" sits at 23:50 on the axis of a
- * PC in any time zone (`new Date(text)` would move it by the difference between
- * the file's zone and the PC's). NaN for any other shape: the caller falls back.
- * A hand-written scan — no regex, no substring, no `Date` per stamp — so reading
- * a series costs less than the `new Date(text)` per point it replaces.
- */
+/** Epoch ms of a CSV stamp read as its own wall clock (any Z or +07:00 offset is ignored, same as formatDataStamp); NaN for other shapes. */
 export function wallClockMs(s: string): number {
     const n = s.length;
     scanAt = 0;
@@ -175,11 +131,7 @@ export function wallClockMs(s: string): number {
     return localFieldsMs(y, mo, d, h, mi, sec, milli);
 }
 
-/** Epoch ms of every timestamp, or `null` if ANY of them does not parse (the
- *  chart then falls back to a category axis showing the raw text). Each stamp is
- *  placed at its own wall-clock time (`wallClockMs`); text in another shape is
- *  read by `Date`, as it always was. The server already normalised the text
- *  (Buddhist-Era years are Gregorian by now). */
+/** Epoch ms of every timestamp, or null if any fails to parse (the chart then uses a category axis). */
 export function parseTimestamps(ts: string[]): number[] | null {
     const out = new Array<number>(ts.length);
     for (let i = 0; i < ts.length; i++) {
@@ -198,10 +150,7 @@ export type NiceRange = [min: number, max: number, step?: number];
 /** Drops the float noise of `k × step` (0.1 × 3 = 0.30000000000000004); -0 is 0. */
 const cleanTick = (v: number): number => Number(v.toPrecision(12)) || 0;
 
-/** Rounds a value range out to "nice" axis ends (1, 2, 5 x 10^n steps), so the
- *  axis never starts at 62.884400945773835 — and returns that step, which the
- *  axis must use as its `interval`: left to itself ECharts picks another step and
- *  then adds the two ends as extra, unevenly spaced ticks (0, 3, 6 … 15, 16). */
+/** Rounds a range out to nice axis ends (1, 2, 5 x 10^n) and returns the step; the axis must use it as `interval`. */
 export function niceExtent(lo: number, hi: number): NiceRange {
     const span = hi - lo;
     if (!(span > 0) || !Number.isFinite(span)) return [lo, hi];
@@ -218,8 +167,7 @@ const tooltipBase = {
     textStyle: { color: CHART.textPrimary },
     // Never cut off at the card's edge, and a number reads like everywhere else on the page.
     confine: true,
-    // The box sits AT the pointer, like the Dashboard chart's: by default it eases toward the
-    // cursor over 0.4 s (so it always trails a moving mouse) and lingers after the mouse left.
+    // The box sits at the pointer: ECharts' default easing trails the mouse and lingers after it leaves.
     transitionDuration: 0,
     hideDelay: 0,
     enterable: false,
@@ -231,27 +179,15 @@ const axisCommon = {
     axisLine: { lineStyle: { color: CHART.gridLine } },
     axisTick: { show: false },
 };
-/**
- * Tick labels of a TIME axis, in the app's one date format (`formatAxisTick`):
- * "2025/03/14" like the Dashboard line chart's axis — never ECharts' own labels,
- * which print month names and bare day numbers ("Mar", "14"). Zoomed in so far
- * that several ticks fall on one day, a tick that is not a midnight also shows
- * its time ("2025/03/14 06:00"), so no two ticks read the same; `hideOverlap`
- * drops a label that would be printed over its neighbour.
- */
+/** Time-axis tick labels in the app's date format, not ECharts' month names; a tick that is not a midnight also shows its time. */
 export const TIME_AXIS_LABEL = { ...axisCommon.axisLabel, formatter: formatAxisTick, hideOverlap: true };
-/** `axisCommon` for a VALUE axis: tick labels through the app's number formatter, so a
- *  computed min/max never shows float noise ("1,713.8000000000002" on the Distribution chart). */
-/** Axis line of a scatter's value axis: on the plot's EDGE. ECharts' default draws it
- *  through the other axis' zero, which reads as a stray x = 0 / y = 0 line across the
- *  points whenever the data straddles zero. */
+/** Scatter axis line on the plot edge; the default onZero draws a stray x = 0 / y = 0 line when data straddles zero. */
 export const EDGE_AXIS_LINE = { ...axisCommon.axisLine, onZero: false };
 export const valueAxisCommon = {
     ...axisCommon,
     axisLabel: { ...axisCommon.axisLabel, formatter: fmtAxisValue },
 };
-/** `valueAxisCommon` for a value axis whose min/max the chart sets: label decimals follow the
- *  tick step, so a narrow axis keeps distinct labels and a long bin edge reads short. */
+/** valueAxisCommon for a chart-set min/max: label decimals follow the tick step. */
 export function fixedValueAxisCommon(min: number, max: number) {
     return { ...axisCommon, axisLabel: { ...axisCommon.axisLabel, formatter: axisValueFormatter(min, max) } };
 }
@@ -273,16 +209,9 @@ export interface HLine {
     label?: string;
     /** Line width; a reference line is 1 px. */
     width?: number;
-    /** One of the USER'S set points: the label goes INSIDE the plot at the right
-     *  end, above (`'top'`) or below (`'bottom'`) the line, in bold. */
+    /** A user set point: label inside the plot at the right end, above ('top') or below ('bottom') the line, bold. */
     inside?: 'top' | 'bottom';
-    /** A reference line of a +/− pair: its outside label sits just above
-     *  (`'above'`, the + side) or below (`'below'`, the − side) the line's end
-     *  instead of centred on it, so "+2RMSE" and "−2RMSE" never print on top of
-     *  each other when the two lines are only a few pixels apart (a wide Y range).
-     *  Two lines of the SAME side that close together share one stacked label,
-     *  anchored on the inner line so each name stays by its own line
-     *  (`stackedEdgeLabels`). */
+    /** Side of the line end an outside label sits on, so +/- pairs don't overlap; close same-side lines share a stacked label (stackedEdgeLabels). */
     edge?: 'above' | 'below';
 }
 
@@ -293,13 +222,8 @@ export interface HBand {
     color: string;
 }
 
-// ---------------------------------------------------------------------------
-// Train / scoring time scopes (a scoring period is only start → end)
-// ---------------------------------------------------------------------------
 
-/** One period of a time chart. `start`/`end` `null` = open (runs to the
- *  edge of the data). Every period keeps its rows ON the line (`scopeIslands`);
- *  only a train period is DRAWN as a band with a name (`scopeSeries`). */
+/** One period of a time chart; null start/end = open. Only train periods are drawn as a band. */
 export interface TimeScope {
     /** `'score'` = a scoring period: its rows are on the line, nothing else is drawn. */
     kind: 'train' | 'score';
@@ -312,31 +236,14 @@ export interface TimeScope {
     short: string;
 }
 
-/** The periods of a Workbench time chart: which rows the line shows (train AND
- *  scoring) and which bands it draws (train only). Built from
- *  `HealthPreview.test_validation` by `scopesOf`
- *  and passed in explicitly through `TimeSeriesSpec.scopes`. */
+/** Periods of a time chart, built by scopesOf and passed via TimeSeriesSpec.scopes. */
 export interface TimeScopes {
     ranges: TimeScope[];
     /** A half-width chart: print the short names (numbers only, no "TRAIN"). */
     compact?: boolean;
 }
 
-/**
- * The scopes of one health preview: every train range (none sent = the train
- * period is open at both ends, i.e. the whole time axis) and every scoring
- * period with its S-number. `null` when the preview carried no scoring
- * periods: the chart is then drawn exactly as before.
- *
- * The scoring ranges MUST stay in the result although no chart draws a band for
- * them: `scopeIslands` reads every range to decide where the line is cut, so
- * dropping them here would cut the scoring periods' rows off the line.
- *
- * S-numbers are the period's POSITION in the user's full list (invalid periods
- * included — they are not sent): `numbers` is `testPeriodsWirePlan(...).numbers`
- * of the list that was sent, looked up with each result's 1-based wire `index`
- * (`testNumberFor`). Without `numbers` the result's position is used (S1, S2 …).
- */
+/** Scoring ranges must stay in the result: scopeIslands reads every range. S-numbers are positions in the user's full list (`numbers`, testNumberFor). */
 export function scopesOf(v: ValidationResult | null | undefined, numbers?: readonly number[] | null): TimeScopes | null {
     if (!v) return null;
     const tn = (t: ValidationResult['tests'][number], i: number) => testNumberFor(numbers, t.index, i);
@@ -361,14 +268,7 @@ export function scopesOf(v: ValidationResult | null | undefined, numbers?: reado
     return { ranges };
 }
 
-/**
- * The scopes for a chart of HOURLY points (the Health score page): every range starts at the
- * start of its clock hour. An hourly point is drawn at its hour start, so a period that begins
- * inside an hour (04:30) has its first point at 04:00 — just before the period's own start,
- * outside every range, where the line would be cut on both sides and the point not drawn at all.
- * Only the range the chart reads moves (where the line is cut, and where a train band starts);
- * the period itself (and every number) is unchanged.
- */
+/** Hourly points sit at their hour start, so each range start is floored to its hour (04:30 would lose its 04:00 point). */
 export function hourlyScopes(s: TimeScopes | null | undefined): TimeScopes | null {
     if (!s) return null;
     const floor = (t: string | null) => (t == null ? t : t.replace(/^(\d{4}-\d{2}-\d{2}[T ]\d{2}):\d{2}(:\d{2}(\.\d+)?)?/, '$1:00:00'));
@@ -380,29 +280,18 @@ export function compactScopes(s: TimeScopes | null | undefined): TimeScopes | nu
     return s ? { ...s, compact: true } : null;
 }
 
-/** Height of the strip above the plot that names the train periods. It is two text
- *  lanes tall: the names sit on the upper one; the lower one (where the scoring
- *  names were until 2026-10-12) is kept empty so the plot does not move. */
+/** Strip above the plot naming train periods: two text lanes tall; the lower stays empty so the plot doesn't move. */
 export const SCOPE_STRIP = 26;
-/** Distance of a scope name from the top of the plot, per lane. No chart prints on
- *  the `score` lane any more (a scoring period is not drawn). */
+/** Distance of a scope name from the plot top, per lane; nothing prints on the `score` lane. */
 export const SCOPE_LANE = { train: 15, score: 3 } as const;
 /** Room right of the plot for the reference-line labels ("+2RMSE"). */
 export const REF_LABEL_GUTTER = 52;
-/** Outside labels on the same side of their lines need about one line of text
- *  between the lines. As a share of the Y range: ~12 px of the shortest Workbench
- *  plot (a 250 px card with the scope strip, ~185 px). The builder is pure and
- *  never knows the real height, so a taller chart merges a little early. */
+/** Minimum gap between same-side outside labels, as a share of the Y range (~12 px on the shortest plot). */
 export const REF_LABEL_MIN_GAP = 0.07;
 /** Line height of a stacked reference label. */
 const REF_LABEL_LINE = 11;
 
-/** The plot width (px) the strip names must stay apart on. The builder is pure and
- *  never knows the real width, so it spaces the names for the narrowest plot the
- *  Workbench layout gives that kind of chart: a card across the whole board
- *  (`full`), or a half-width card (`narrow` — ~230 px at the narrowest two-column
- *  layout). On a wider chart a name that would have fitted may stay hidden; names
- *  do not print on each other. */
+/** Plot width (px) the strip names must stay apart on: the narrowest plot for a full or half-width card. */
 export const STRIP_PLOT_WIDTH = { full: 420, narrow: 200 } as const;
 /** Advance of one character of the 9 px mono strip text, and the air between two names. */
 const STRIP_CHAR = 5.6;
@@ -410,9 +299,7 @@ const STRIP_NAME_GAP = 6;
 
 const scopeMs = (s: string | null | undefined): number | null => parseLocal(s);
 
-/** The union of every scope range, merged, as sorted [start, end] intervals
- *  (open ends = ±Infinity). A point outside all of them is "outside every
- *  period". */
+/** Union of all scope ranges as sorted merged [start, end] intervals (open ends = +-Infinity). */
 export function scopeIslands(scopes: TimeScopes): [number, number][] {
     const ivs: [number, number][] = [];
     for (const r of scopes.ranges) {
@@ -431,9 +318,7 @@ export function scopeIslands(scopes: TimeScopes): [number, number][] {
     return out;
 }
 
-/** `[ms, value]` pairs with a `null` inserted wherever the line would cross
- *  time outside every period (between two islands, or into / out of
- *  unscored time), so the chart shows a gap there instead of a bridge. */
+/** Inserts null where the line would cross time outside every period, so it shows a gap, not a bridge. */
 export function withScopeGaps(points: [number, number | null][], islands: [number, number][]): [number, number | null][] {
     const islandOf = (x: number) => islands.findIndex(([a, b]) => x >= a && x <= b);
     const out: [number, number | null][] = [];
@@ -449,23 +334,10 @@ export function withScopeGaps(points: [number, number | null][], islands: [numbe
     return out;
 }
 
-/** One scope band as it is drawn: clamped to the data's time range. The charts
- *  hand `scopeStripNames` train bands only (`scopeSeries`). */
+/** A scope band as drawn, clamped to the data's time range. */
 export interface StripBand { kind: TimeScope['kind']; label: string; short: string; a: number; b: number }
 
-/**
- * What each band prints in the strip above the plot — `null` = its name is left
- * out (the band itself is still drawn).
- *
- *  - The word "TRAIN" is printed ONCE: the first train band reads its full name
- *    ("TRAIN", or "TRAIN P1"), every later one only its number ("P2", "P3").
- *    A half-width chart (`short`) prints numbers only.
- *  - Names never print on each other. Each sits centred over its band; going left
- *    to right on a lane, a name that would touch the one before it (on a plot
- *    `plotWidth` px wide) is left out — so 20 short periods read
- *    "TRAIN P1 · P3 · P5 …" instead of a smear. Train and scoring names are on
- *    separate lanes and are thinned separately.
- */
+/** Strip name per band (null = left out): train bands after the first use the short name; a name touching the previous one is dropped. */
 export function scopeStripNames(
     bands: readonly StripBand[],
     xMin: number,
@@ -492,13 +364,7 @@ export function scopeStripNames(
     return out;
 }
 
-/** The carrier series of the scope bands (no data of its own, drawn under the
- *  data). Each band carries its NAME in the strip above the plot — plain
- *  coloured text, never a pill and never inside the plot.
- *
- *  ONLY THE TRAIN PERIODS are drawn (user decision, 2026-10-12): a scoring period
- *  gets no band, no dashed frame and no "S1" name. Its rows stay on the line —
- *  that is `scopeIslands`, which still reads every range. */
+/** Carrier series of the train bands; each band's name goes in the strip above the plot. */
 function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<string, unknown> {
     const name = { fontSize: 9, fontWeight: 600, fontFamily: CHART_MONO, padding: 0 };
     const bands: StripBand[] = scopes.ranges.flatMap(r => {
@@ -517,8 +383,7 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
             xAxis: band.a,
             // A faint blue fill, no frame.
             itemStyle: { color: CHART.trainFill, borderWidth: 0 },
-            // The name sits in the strip ABOVE the plot, on the train lane (the lane
-            // under it, once the scoring names', stays empty: the layout is unchanged).
+            // Name sits in the strip above the plot, on the train lane.
             label: { ...name, show: names[i] !== null, color: CHART.train, position: 'top', distance: SCOPE_LANE.train, formatter: names[i] ?? band.short },
         },
         { xAxis: band.b },
@@ -535,25 +400,7 @@ function scopeSeries(scopes: TimeScopes, xMin: number, xMax: number): Record<str
     };
 }
 
-/**
- * Reference lines whose OUTSIDE labels would print on each other: two lines on
- * the same side (`edge`) closer than `minGap` (in Y units). Normal data keeps
- * ±1SD and ±3SD far apart; with set points far from the data (a master alarm
- * limit) the whole ±3SD band is a few pixels tall and "+1SD" lands on "+3SD".
- * Such a run shares ONE label, stacked in the order the lines have on screen and
- * each name in its own line's colour, carried by the INNERMOST line (the lowest
- * of a run above the lines, the highest of a run below them). The stack grows
- * AWAY from the band from there, so every name ends up beside its own line: the
- * inner name sits right on its line exactly as an unstacked label would, and the
- * outer name one text line further out, where the outer line is. (It used to
- * hang on the OUTERMOST line: the whole stack then sat beyond that line, "+1SD"
- * read as the name of the +3SD line and "+3SD" floated over nothing — real-app
- * report 2026-10-12.)
- *
- * Returns, per index of `hLines`: the lines a carrier prints (top to bottom), or
- * `null` for a line whose name its neighbour carries. Lines not in the map keep
- * their own label.
- */
+/** Same-side lines closer than minGap share one stacked label; per hLines index: the lines a carrier prints, or null if a neighbour carries them. */
 export function stackedEdgeLabels(hLines: readonly HLine[], minGap: number): Map<number, HLine[] | null> {
     const out = new Map<number, HLine[] | null>();
     if (!(minGap > 0)) return out;
@@ -605,45 +452,17 @@ export interface TimeSeriesSpec {
     /** Fixed Y range (the Health score chart is always 0-100); overrides the
      *  data-driven one. */
     yRange?: [number, number];
-    /** The train / scoring periods (`scopesOf`): the line shows the rows of all of
-     *  them, a band + name is drawn for the train ones only. Absent / null = no
-     *  scopes (the chart is drawn as before). Only on a time axis. */
+    /** Train/scoring periods: the line shows rows of all, a band and name only for train. Time axis only. */
     scopes?: TimeScopes | null;
     /** The hover box says which colour is which line (no key row beside the chart). */
     lineRowsTooltip?: boolean;
 }
 
-/** Value(s) over time with horizontal reference lines and shaded bands. The
- *  Y range always includes every `hLine` / `band`, so a ±3SD line outside the
- *  data is still on screen. With `scopes`, the train periods are faint bands
- *  named in the strip above the plot, and time outside every period (train or
- *  scoring) is a gap in the line. Reference-line labels sit outside the plot on
- *  its right edge (the grid keeps a gutter for them), set-point labels inside it.
- *  The hover tooltip is headed by the point's date and time (`timeHeadingFormatter`). */
-/** The hover crosshair of every time chart: on its own canvas layer, and it never asks the
- *  series to "emphasise". Without both, every mousemove re-strokes every line of the chart
- *  (same fix, same reason, as the Dashboard's LineChart). An option that sets its own
- *  top-level `axisPointer` (the Health score page's linked cursor) must spread this in. */
+/** Value(s) over time with reference lines and bands; the Y range includes every line and band. */
+/** Hover crosshair on its own canvas layer, without series emphasis; an option with its own top-level axisPointer must spread this in. */
 export const HOVER_AXIS_POINTER = { zlevel: 1, triggerEmphasis: false } as const;
 
-/**
- * The heading of the hover tooltip on a TIME axis: the hovered point's own date and
- * time in the app's one date format — "2026/02/09 23:50:00", always with seconds
- * (`formatDataStamp`, the same text as the read-outs beside the charts). Goes on
- * the X axis as `axisPointer.label.formatter`.
- *
- * Why it is needed: left alone, ECharts heads an axis tooltip with the time axis'
- * DEFAULT pointer label, whose precision follows the axis' tick unit — a chart
- * showing months or days has day ticks, so the heading read "2025-03-14" with no
- * time at all (it only gained one after zooming in to hour ticks).
- *
- * `value` is the X value the pointer snapped to: one of `ms`, the wall-clock ms of
- * a row (`parseTimestamps`). The heading is printed from that ROW'S OWN TEXT, so
- * it is never shifted to another time zone and agrees with the read-out to the
- * second. An X value that is no row (the `null` the line carries across a gap
- * between two periods) is printed from the ms themselves — the same wall clock.
- * The ms → row lookup is built at the first hover, not per chart build.
- */
+/** Tooltip heading on a time axis: the row's own date and time with seconds. An X that is no row (the null across a gap) is printed from the ms. */
 export function timeHeadingFormatter(timestamps: readonly string[], ms: readonly number[]): (p: { value?: unknown }) => string {
     let rowAt: Map<number, number> | null = null;
     return ({ value }) => {
@@ -741,8 +560,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         return base;
     });
     if (scopes && ms && series.length > 0) {
-        // Its own (empty) carrier series, so the scope bands sit under the data and
-        // never mix with the Y bands / reference lines of the first series.
+        // Own empty carrier series so scope bands sit under the data and don't mix with the first series' bands/lines.
         series.push(scopeSeries(scopes, ms[0], ms[ms.length - 1]));
     }
 
@@ -764,8 +582,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         grid: { left: 58, right, top: scopes ? 10 + SCOPE_STRIP : 14, bottom: 28, containLabel: false },
         dataZoom: [{ type: 'inside', xAxisIndex: 0, filterMode: 'none' }],
         xAxis: ms
-            // The pointer label itself stays hidden (a tooltip's axis shows none); its
-            // formatter is what heads the tooltip — the value rows under it are ECharts' own.
+            // The pointer label stays hidden; its formatter heads the tooltip.
             ? { type: 'time', ...axisCommon, axisLabel: TIME_AXIS_LABEL, splitLine: { show: false }, axisPointer: { label: { formatter: timeHeadingFormatter(timestamps, ms) } } }
             : { type: 'category', data: timestamps, boundaryGap: false, ...axisCommon, axisLabel: { ...axisCommon.axisLabel, hideOverlap: true }, splitLine: { show: false } },
         yAxis: {
@@ -783,9 +600,7 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
         },
         series,
     };
-    // Zoomed in, the Y axis follows what is visible — the values inside the window plus every
-    // reference line (user decision 2026-10-16; `followYAxis.ts`). Not for a fixed range (the
-    // Health score chart is always 0-100) nor without a time axis.
+    // Zoomed in, the Y axis follows the visible values plus every reference line; not for a fixed range or without a time axis.
     if (spec.yRange || !ms) return option;
     return withFollowY(option, {
         xs: ms,
@@ -798,12 +613,8 @@ export function buildTimeSeriesOption(spec: TimeSeriesSpec) {
     });
 }
 
-// ---------------------------------------------------------------------------
-// Individual
-// ---------------------------------------------------------------------------
 
-/** "Sensor value over time" with the ±1SD band (green — the only fill, the
- *  score-100 band) and the ±3SD lines (amber, dashed, no fill). */
+/** Sensor value over time: +-1SD band (the only fill, score 100) and dashed +-3SD lines. */
 export function buildValueOverTimeOption(series: IndividualSeries, stats: IndividualStats, unit: string, scopes: TimeScopes | null = null) {
     const [l1, u1] = stats.boundary_1sd;
     return buildTimeSeriesOption({
@@ -816,8 +627,7 @@ export function buildValueOverTimeOption(series: IndividualSeries, stats: Indivi
     });
 }
 
-/** Individual's four reference lines on a value-over-time chart: ±1SD solid green
- *  (the edges of the score-100 band), ±3SD dashed amber (score 80, no fill). */
+/** Individual's reference lines: +-1SD solid green (score-100 band edges), +-3SD dashed amber (score 80, no fill). */
 export function sdReferenceLines(stats: IndividualStats): HLine[] {
     const [l1, u1] = stats.boundary_1sd;
     const [l3, u3] = stats.boundary_3sd;
@@ -841,11 +651,7 @@ export function rmseReferenceLines(twoRmse: number): HLine[] {
 
 export interface VLine { x: number; color: string; label?: string; dashed?: boolean }
 
-/** Histogram (bars = rows per bin) with the fitted normal curve and vertical
- *  reference lines (±1SD / ±3SD for Individual). `h.curve` is already in rows
- *  per bin, so it sits on the same Y axis as the bars. Both axes end on round
- *  ticks — never a raw extreme such as a bin edge 36.1987 or a count 942.7 —
- *  and the X axis always holds every reference line. */
+/** Histogram with the fitted normal curve and vertical reference lines; `h.curve` is already rows per bin. */
 export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], unit?: string) {
     const bars = h.counts.map((c, i) => [h.bin_edges[i], h.bin_edges[i + 1], c]);
     const curve = h.curve.map((c, i) => [(h.bin_edges[i] + h.bin_edges[i + 1]) / 2, c]);
@@ -854,8 +660,7 @@ export function buildDistributionOption(h: HealthHistogram, vLines: VLine[], uni
     // `min: Infinity, max: -Infinity`.
     const xRange: NiceRange | null = xs.length > 0 ? niceExtent(Math.min(...xs), Math.max(...xs)) : null;
     const xFixed = xRange && xRange[2] !== undefined ? { min: xRange[0], max: xRange[1], interval: xRange[2] } : null;
-    // 10 % headroom, rounded up to a nice tick so the top label is a round count (a raw
-    // max × 1.1 would print float noise such as "1,713.8000000000002").
+    // 10% headroom rounded to a nice tick so the top label isn't float noise.
     const top = Math.max(1, ...h.counts.filter(Number.isFinite), ...h.curve.filter(Number.isFinite));
     const [, yMax, yStep] = niceExtent(0, top * 1.1);
     return {
@@ -941,10 +746,7 @@ export function individualVLines(stats: IndividualStats): VLine[] {
     ];
 }
 
-/** Approximate rows outside ±3SD, estimated from the histogram (the series is
- *  downsampled, so it cannot be counted from there; `stats` has no such field).
- *  Bins fully outside count whole, the bin an edge falls in counts in
- *  proportion. `null` when there is no histogram. */
+/** Approximate rows outside +-3SD from the histogram (the series is downsampled): outside bins count whole, the edge bin proportionally; null without a histogram. */
 export function estimateRowsOutside3sd(h: HealthHistogram | null, stats: IndividualStats): number | null {
     if (!h || h.counts.length === 0) return null;
     const [lo, hi] = stats.boundary_3sd;
@@ -960,13 +762,7 @@ export function estimateRowsOutside3sd(h: HealthHistogram | null, stats: Individ
     return Math.round(n);
 }
 
-// ---------------------------------------------------------------------------
-// Relationship
-// ---------------------------------------------------------------------------
 
-/** "Fit": predictor (X) against the target — actual (blue) vs the Relation
- *  model's prediction (red). `yName` is the Y title (the unit, or description · unit when the target has
- *  none, then `yInfo` lets the title wrap); the X title is the predictor's description · unit, never its tag. */
 export function fitTooltipFormatter(p: { seriesName?: string; color?: string; value?: unknown }) {
     const y = Array.isArray(p.value) ? (p.value[1] as number) : NaN;
     return lineRowHtml(p.seriesName ?? '', p.color ?? '', fmtNum(y));
@@ -990,7 +786,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInf
         backgroundColor: 'transparent',
         textStyle: { fontFamily: FONT },
         animation: false,
-        // The hover box says which colour is which (user decision 2026-11-03: no key row).
+        // The hover box says which colour is which; no key row.
         tooltip: { ...tooltipBase, trigger: 'item', formatter: fitTooltipFormatter },
         legend: { show: false },
         grid: { left: 58, right: 18, top: 14, bottom: 40, containLabel: false },
@@ -1004,11 +800,7 @@ export function buildFitScatterOption(fit: HealthFitScatter, yName: string, xInf
     }, yInfo ? { x: xInfo, y: yInfo } : { x: xInfo });
 }
 
-/** "Target vs predicted" over time: the Actual (blue) and Predicted (red) lines.
- *  Which is which is in the hover box (user decision 2026-11-03: no key row) — the
- *  lines are NOT named on the plot: ECharts places a line's end label only while
- *  it animates the line in, so after a wheel-zoom or a drag a name would stay where
- *  its line used to end and could sit beside the OTHER line. */
+/** Target vs predicted over time. Lines aren't named on the plot: ECharts places end labels only while animating, so after a zoom a name could sit beside the other line. */
 export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
@@ -1022,8 +814,7 @@ export function buildTargetVsPredictedOption(series: RelationshipSeries, unit: s
     });
 }
 
-/** "Residual over time" (actual − predicted) with the ±2RMSE band (green) and
- *  a zero line. No set-point lines here — those belong to the Health score page. */
+/** Residual (actual - predicted) with the +-2RMSE band and a zero line; set-point lines belong to the Health score page. */
 export function buildResidualOption(series: RelationshipSeries, twoRmse: number, unit: string, scopes: TimeScopes | null = null) {
     return buildTimeSeriesOption({
         timestamps: series.timestamps,
@@ -1035,14 +826,8 @@ export function buildResidualOption(series: RelationshipSeries, twoRmse: number,
     });
 }
 
-// ---------------------------------------------------------------------------
-// Clustering
-// ---------------------------------------------------------------------------
 
-/** One σ-ellipse of a cluster as an ECharts `custom` series. `sigma` is the
- *  multiple of the cluster's own SD (1×, 3×, and N× on the Health score page);
- *  `x_sd` is the major axis, rotated by `angle_deg` — the same convention Rust
- *  scores against. */
+/** One sigma-ellipse of a cluster as a custom series: `sigma` multiplies the cluster's own SD; `x_sd` is the major axis rotated by `angle_deg`, the convention Rust scores against. */
 export function ellipseSeries(
     c: Pick<ClusterStat, 'x_center' | 'y_center' | 'x_sd' | 'y_sd' | 'angle_deg'>,
     sigma: number,
@@ -1077,8 +862,7 @@ export function ellipseSeries(
     };
 }
 
-/** `x` / `y`: the axis titles. `xInfo` / `yInfo`: the sensors they name; with them the titles are fitted to
- *  the chart (`withAxisNames`) and the tooltip prints each value with its unit. Use `clusterChartNames`. */
+/** `x`/`y` are axis titles; with `xInfo`/`yInfo` the titles are fitted to the chart and the tooltip prints units. Use clusterChartNames. */
 export interface ClusterChartNames { x: string; y: string; xInfo?: SensorInfo; yInfo?: SensorInfo }
 
 /** The names of a Clusters chart from its two sensors. */
@@ -1091,9 +875,7 @@ export function withClusterAxisNames<T extends object>(option: T, names: Cluster
     return names.xInfo && names.yInfo ? withAxisNames(option, { x: names.xInfo, y: names.yInfo }) : option;
 }
 
-/** Title of a scatter axis: the sensor's description and unit ("GENERATOR ACTIVE
- *  POWER · MW"), or the tag when it has no description. The tag itself is in the
- *  card's subtitle, so the axis is not a second place that repeats it. */
+/** Scatter axis title: description and unit, or the tag when there is no description; the tag is in the card subtitle. */
 export function sensorAxisTitle(info: Pick<SensorInfo, 'tag' | 'description' | 'unit'>): string {
     return [info.description || info.tag, info.unit].filter(Boolean).join(' · ');
 }
@@ -1101,9 +883,7 @@ export function sensorAxisTitle(info: Pick<SensorInfo, 'tag' | 'description' | '
 type RingShape = Pick<ClusterStat, 'x_center' | 'y_center' | 'x_sd' | 'y_sd' | 'angle_deg'>;
 type RingCluster = RingShape & Pick<ClusterStat, 'cluster_id'>;
 
-/** Half-width / half-height of the box around the ellipse `sigma` × SD of a
- *  cluster (rotated by its angle) — so a ring that lies outside the data is
- *  still inside the axes. */
+/** Half-width/height of the box around the rotated `sigma` x SD ellipse, so a ring outside the data stays inside the axes. */
 export function ringBox(c: RingShape, sigma: number) {
     const rx = c.x_sd * sigma;
     const ry = c.y_sd * sigma;
@@ -1130,9 +910,7 @@ export interface RingLevel { sigma: number; text: string; color: string }
 /** Height of one ring-label line (9.5 px text + its chip padding + air). */
 export const RING_LABEL_LINE = 13;
 
-/** Every ring LEVEL is named once — at the right edge of the ring that reaches
- *  furthest right ("1× · 100", "3× · 80", "5× · 0") — instead of once per
- *  cluster or in a legend row under the chart. */
+/** Each ring level is named once, at the right edge of the ring reaching furthest right, not per cluster or in a legend. */
 export function ringLabelSeries(clusters: RingShape[], levels: RingLevel[]) {
     const named = levels.flatMap(l => {
         let best: [number, number] | null = null;
@@ -1143,14 +921,8 @@ export function ringLabelSeries(clusters: RingShape[], levels: RingLevel[]) {
         }
         return best ? [{ level: l, at: best }] : [];
     });
-    // The rings of one cluster reach furthest right at nearly the same height, and on a wide
-    // axis only a few pixels apart — so the names are staggered one text line each around that
-    // height. The stagger FOLLOWS THE DATA: the name whose ring edge is highest goes up, the
-    // lowest goes down, so the stagger only ever adds to the distance the points already have
-    // and two names are always at least one line apart. (A fixed "first level up, last level
-    // down" pushed the names of a cluster tilted up to the right — positively correlated
-    // sensors, the usual shape — INTO each other: there the 1× edge is the lowest.) Rings that
-    // end at the same height (a flat cluster) keep the level order: first up, last down.
+    // Names are staggered one text line each, following the data: the highest ring edge goes up, the lowest down.
+    // A fixed first-up/last-down order collides for clusters tilted up to the right; equal heights keep level order.
     const order = named.map((_, i) => i).sort((i, j) => named[j].at[1] - named[i].at[1] || i - j);
     const mid = (named.length - 1) / 2;
     const rank = new Array<number>(named.length);
@@ -1200,9 +972,7 @@ export function centreLabelSeries(clusters: RingCluster[], colorOf: (id: number)
 /** Share of the X span kept free right of the furthest ring, for the ring labels. */
 const RING_LABEL_ROOM = 0.1;
 
-/** Axis extents of a Clusters chart: the points AND every ring drawn (a ring is
- *  never cut by the plot's edge), rounded out to nice ticks, with room on the
- *  right for the ring labels. */
+/** Axis extents of a Clusters chart: the points and every ring, rounded to nice ticks, with room on the right for ring labels. */
 export function clusterExtent(xs: readonly number[], ys: readonly number[], clusters: RingShape[], sigmas: readonly number[]) {
     let xLo = Infinity; let xHi = -Infinity; let yLo = Infinity; let yHi = -Infinity;
     const n = Math.min(xs.length, ys.length);
@@ -1225,8 +995,7 @@ export function clusterExtent(xs: readonly number[], ys: readonly number[], clus
     }
     const ext = (lo: number, hi: number, room = 0): NiceRange => {
         if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [0, 1];
-        // Everything at one value (a constant sensor, rings of no size): open the axis around
-        // it like the time charts do — never `min === max`.
+        // Everything at one value: open the axis around it, never min === max.
         const flat = hi > lo ? 0 : Math.abs(hi) * 0.05 || 1;
         const a = lo - flat;
         const b = hi + flat;
@@ -1235,9 +1004,7 @@ export function clusterExtent(xs: readonly number[], ys: readonly number[], clus
     return { x: ext(xLo, xHi, RING_LABEL_ROOM), y: ext(yLo, yHi) };
 }
 
-/** The two value axes of a Clusters chart (Model fit and Health score draw the
- *  same ones): fixed to `clusterExtent` and stepped by the step it was rounded
- *  to, the axis lines on the plot's edge. */
+/** The two value axes of a Clusters chart (shared by Model fit and Health score): fixed to clusterExtent, axis lines on the plot edge. */
 export function clusterAxes(names: ClusterChartNames, ex: { x: NiceRange; y: NiceRange }) {
     const title = { nameLocation: 'middle' as const, nameTextStyle: { color: CHART.textSecondary, fontSize: 10 } };
     const axis = ([min, max, interval]: NiceRange) => {
@@ -1252,11 +1019,7 @@ export function clusterAxes(names: ClusterChartNames, ex: { x: NiceRange; y: Nic
 
 const escHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** Hover text of a Clusters chart point: a heading (the point's cluster, or the
- *  series name) and one row per axis — the axis title (description · unit) and
- *  the X / Y value — plus the health score when the point has one. A ring shows
- *  its own name ("Cluster 1 · 3× SD"). Left to ECharts, a scatter point showed a
- *  single bare number nobody could read as X or Y. */
+/** Hover text of a Clusters point: heading, one row per axis (title, value) and the health score when present; a ring shows its own name. */
 export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreIndex?: number; clusterIndex?: number } = {}) {
     return (p: { seriesType?: string; seriesName?: string; value?: unknown }): string => {
         const v = p.value;
@@ -1267,8 +1030,7 @@ export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreI
         const heading = opts.clusterIndex !== undefined
             ? (Number.isFinite(cid) ? `Cluster ${cid}` : 'No cluster')
             : (p.seriesName ?? '');
-        // One grid: key, name (the tags are in the card's subtitle), value + unit. A start both names share
-        // is printed once on top when a row would otherwise pass the box's limit (rule 4).
+        // One grid: key, name (tags are in the card's subtitle), value + unit.
         const axis = (info: SensorInfo | undefined, title: string): SensorInfo => {
             if (!info) return { tag: title, description: title, tagHidden: true };
             return info.description ? { ...info, tagHidden: true } : info;
@@ -1284,10 +1046,7 @@ export function clusterTooltipFormatter(names: ClusterChartNames, opts: { scoreI
     };
 }
 
-/** Cluster scatter (points coloured by cluster) with the 1× (green, solid) and
- *  3× (amber, dashed) SD ellipse of every cluster, a "Cluster N" label at each
- *  centre and each ring level named once at the right edge. `names` are the
- *  axis titles (description + unit; the tag is in the card's subtitle). */
+/** Cluster scatter coloured by cluster, with SD ellipses, a 'Cluster N' label at each centre and each ring level named once at the right edge. */
 export function buildClusterOption(scatter: HealthClusterScatter, clusters: ClusterStat[], names: ClusterChartNames) {
     const byCluster = new Map<number | null, [number, number][]>();
     const n = Math.min(scatter.x.length, scatter.y.length);

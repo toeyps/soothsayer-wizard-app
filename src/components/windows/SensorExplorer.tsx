@@ -12,8 +12,7 @@ interface SensorExplorerProps {
     sensorMetadata: SensorMetadata[] | null;
     selectedSensors: string[];
     onToggleSensor: (sensor: string) => void;
-    /** Formula editor: the row's small `$` button inserts `$TAG` at the editor's caret
-     *  instead of picking the row. Omitted = no button. */
+    /** Formula editor: the row's `$` button inserts `$TAG` at the caret instead of picking the row. Omitted = no button. */
     onInsertSensor?: (sensor: string) => void;
     searchTerm: string;
     onSearchChange: (term: string) => void;
@@ -40,14 +39,7 @@ type ListLine =
 const lineKey = (l: ListLine) => (l.k === 'header' ? `h:${l.component}` : l.k === 'prefix' ? `p:${l.id}` : `r:${l.sensor}`);
 const estimateLine = (l: ListLine) => (l.k === 'header' ? HEADER_EST_PX : l.k === 'prefix' ? PREFIX_EST_PX : ROW_EST_PX);
 
-/**
- * Left column of the Create tab — search + a per-component list of every
- * sensor. A click PICKS the row for Quick build (a "Picked" pill, the group
- * header counts the picks); the small `$` button on the row inserts `$TAG` at
- * the formula editor's caret instead.
- * Memoised: the window re-renders on every keystroke in the editor, and the
- * list only needs to when its own props change.
- */
+/** Left column of the Create tab: search + per-component sensor list. A click PICKS the row for Quick build; the `$` button inserts `$TAG` at the formula caret. Memoised because the window re-renders on every editor keystroke. */
 function SensorExplorer({
     sensors,
     sensorMetadata,
@@ -58,8 +50,7 @@ function SensorExplorer({
     onSearchChange
 }: SensorExplorerProps) {
     const [expandedComponents, setExpandedComponents] = useState<Set<string>>(new Set());
-    // Rows use the stacked SensorLabel from this list's own metadata (O(1) per
-    // row, layered on the window's provider so the ƒ / Σ badges come through).
+    // Stacked SensorLabel from this list's own metadata (O(1) per row), layered on the window's provider so ƒ / Σ badges come through.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
 
     const toggleComponent = (comp: string) => {
@@ -72,7 +63,6 @@ function SensorExplorer({
         setExpandedComponents(newSet);
     };
 
-    // Group sensors by component
     const groupedSensors = useMemo(() => {
         const groups: Record<string, string[]> = {};
         const noComponent: string[] = [];
@@ -89,7 +79,6 @@ function SensorExplorer({
             }
         });
 
-        // Sort keys
         const sortedKeys = Object.keys(groups).sort();
 
         return { groups, sortedKeys, noComponent };
@@ -102,9 +91,8 @@ function SensorExplorer({
     const listRef = useRef<HTMLDivElement>(null);
     const getList = useCallback(() => listRef.current, []);
 
-    // Rule 2: consecutive rows whose names share a start are one set, measured together on the list. A group holds
-    // several families, so the run is what shares a start, not the group. While a row of a run is cut, its start
-    // prints once on a line of its own and the rows print the rest; a list over 150 lines reads the same as one under.
+    // Rule 2: consecutive rows whose names share a start form one set, measured together (the run shares the start, not the group).
+    // While a row of a run is cut, its start prints once on its own line and the rows print the rest; a list over 150 lines reads the same.
     const allLines = useMemo<ListLine[]>(() => {
         const nameOf = (t: string) => displayedName(sensorLookup(t));
         const out: ListLine[] = [];

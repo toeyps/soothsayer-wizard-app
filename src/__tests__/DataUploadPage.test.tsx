@@ -20,12 +20,8 @@ vi.mock('../errorReporter', async (importOriginal) => {
   return { ...actual, logToFile: (...args: Parameters<typeof actual.logToFile>) => mockLogToFile(...args) };
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// Mocks
-// ─────────────────────────────────────────────────────────────────────────
 
-// Deleting a project confirms IN THE ROW now, not through a Tauri
-// `ask` dialog -- so no `ask` mock here (A6/A6b assert the in-row flow).
+// Deleting a project confirms in the row, not through a Tauri `ask` dialog, so no `ask` mock here (A6/A6b assert the row flow).
 const mockDialogMessage = vi.fn();
 vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: vi.fn(),
@@ -66,8 +62,7 @@ vi.mock('@tauri-apps/api/app', () => ({
   getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }));
 
-// The step-0 illustration runs a canvas animation (requestAnimationFrame + 2D
-// context), which jsdom cannot do -- stand in a marker element.
+// jsdom has no canvas or requestAnimationFrame; stand in a marker element.
 vi.mock('../components/upload/MachineMorphCanvas', () => ({
   default: (props: { variant?: string; style?: React.CSSProperties }) => (
     <div data-testid="machine-canvas" data-variant={props.variant} style={props.style} />
@@ -91,9 +86,7 @@ vi.mock('../workspaceManager', () => ({
   saveLegacyFormulaConversion: (...args: unknown[]) => mockSaveLegacyConversion(...args),
 }));
 
-// Stub both hooks so we drive page state via mock return values. The hooks
-// themselves are unit-tested separately in useDataUpload.test.ts /
-// useMappingData.test.ts — here we only care about how the page reacts.
+// Drive page state through hook mock returns; the hooks have their own tests.
 const useDataUploadMock = vi.fn();
 const useMappingDataMock = vi.fn();
 const buildSensorMetadataMock = vi.fn();
@@ -120,9 +113,6 @@ vi.mock('../hooks/useMappingData', () => ({
   buildSensorMetadataFromMapping: (...args: unknown[]) => buildSensorMetadataMock(...args),
 }));
 
-// ─────────────────────────────────────────────────────────────────────────
-// Fixtures
-// ─────────────────────────────────────────────────────────────────────────
 
 const FAKE_REPORT: CsvLoadReport = {
   headers: ['timestamp', 'sensor_a', 'sensor_b'],
@@ -186,9 +176,7 @@ const makeMapping = (overrides: Partial<UseMappingDataReturn> = {}): UseMappingD
 
 const onDataReady = vi.fn();
 
-/** Walk up the DOM from a text node until we find an ancestor that has a
- *  button child — useful for "find the row that contains this filename and
- *  click its remove button". */
+/** Walks up from a text node to the nearest ancestor containing a button (the row's remove button). */
 function rowFor(text: string): HTMLElement {
   let el: HTMLElement | null = screen.getByText(text);
   while (el && !el.querySelector('button')) {
@@ -198,17 +186,7 @@ function rowFor(text: string): HTMLElement {
   return el;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Onboarding navigation helpers
-//
-// The page boots into step 0 ("Get started" — new project vs. recent). The
-// dataset UI every group below asserts against lives on step 2 ("Add your sensor
-// data"), reached via:
-//   step 0 ──"New project"──▶ step 1 ──name + Continue──▶ step 2
-// so the groups that only care about the upload/mapping surface walk the flow
-// first and then assert exactly as before. The step 0 / step 1 screens have
-// their own coverage in group J.
-// ─────────────────────────────────────────────────────────────────────────
+// Helpers walk step 0 -> 1 -> 2 to reach the upload/mapping surface (step 2); steps 0/1 are covered in group J.
 
 const PLANT_PLACEHOLDER = 'e.g. Bang Pakong';
 const MACHINE_PLACEHOLDER = 'e.g. Gas Engine Generator 4';
@@ -224,7 +202,7 @@ const newProjectButton = () => screen.getByRole('button', { name: /New project/ 
 const continueButton = () =>
   screen.getByText('Continue').closest('button') as HTMLButtonElement;
 
-/** Step 3's primary button (it was step 2's until step 3 existed). */
+/** Step 3's primary button. */
 const openDashboardButton = () =>
   screen.getByText('Open Dashboard').closest('button') as HTMLButtonElement;
 
@@ -262,9 +240,7 @@ function renderAtStep1() {
   return utils;
 }
 
-/** Render and advance to step 2 ("Add your sensor data"), filling the
- *  required machine fields on the way (step 1's Continue is gated on them).
- *  The project is then named "plant · machine". */
+/** Render and advance to step 2, filling the required machine fields; project name = 'plant · machine'. */
 function renderAtStep2({
   plant = 'Test plant',
   machine = 'Test machine',
@@ -277,9 +253,7 @@ function renderAtStep2({
   return utils;
 }
 
-/** Render and advance to step 3 ("Which failures should Wizard look for?").
- *  The data hook must already report a ready dataset (step 2's Continue is
- *  gated on it). */
+/** Render and advance to step 3; the data hook must report a ready dataset (step 2's Continue is gated on it). */
 const matchingMapping = () => makeMapping({
   mappingFilePath: '/lookup/tags.csv', keyColumn: 'tag', mappingData: FAKE_MAPPING_DATA,
   mappingResult: { matched: ['sensor_a'], not_in_dataset: [], not_in_mapping: [] },
@@ -292,9 +266,6 @@ function renderAtStep3(opts: MachineInput = {}) {
   return utils;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Default setup — each test overrides only what it needs
-// ─────────────────────────────────────────────────────────────────────────
 
 // Capture the most recent focus-change handler so tests can simulate
 // `tauri://focus` events without going through the IPC layer.
@@ -307,13 +278,9 @@ beforeEach(() => {
   mockDeleteWorkspace.mockResolvedValue(undefined);
   mockEnsureOffset.mockResolvedValue(420);
   mockSaveProjectDetails.mockResolvedValue(null);
-  // `listen` must return a Promise<unlisten>; the page chains `.then()` on it
-  // (e.g. the `upload-page-resumed` subscription). Default to a no-op.
+  // `listen` must return a Promise<unlisten>; the page chains `.then()` on it.
   mockListen.mockResolvedValue(() => {});
-  // `getCurrentWindow()` is called for: (a) onFocusChanged subscription,
-  // (b) destroy() in handleLoadWorkspace's FG-route branch, (c) hide() in the
-  // same branch. Return a stub covering all three. The focus handler is
-  // captured so I43 can fire it manually.
+  // `getCurrentWindow()` is used by handleLoadWorkspace's FG-route branch; the captured focus handler lets I43 fire it.
   lastFocusHandler = null;
   mockGetCurrentWindow.mockReturnValue({
     onFocusChanged: vi.fn(async (handler: (e: { payload: boolean }) => void) => {
@@ -333,9 +300,6 @@ afterEach(() => {
   cleanup();
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// A. Recent projects (step 0 cards; the old step 1-2 sidebar no longer exists)
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('A. Recent projects', () => {
   it('A1. fetches and renders recent workspaces on mount', async () => {
@@ -429,9 +393,6 @@ describe('A. Recent projects', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// B. File selection
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('B. File selection', () => {
   it('B9. clicking "browse" calls selectFiles', () => {
@@ -477,7 +438,7 @@ describe('B. File selection', () => {
       'Fri, 31 Jan 2025 13:05:00 +0700', '20250131130500', '31 ม.ค. 2568 13:05', '45688.5451389',
     ]);
     expect(shapes[shapes.length - 1]).toBe('and more');
-    // 2026-10-19: the order rule is stated; 2-digit and Buddhist-era years are explained
+    // The order rule, 2-digit years and Buddhist-era years are explained.
     expect(note.textContent).toMatch(/a number over 12 is the day/);
     expect(note.textContent).toMatch(/2-digit year is read as 20YY/);
   });
@@ -504,9 +465,6 @@ describe('B. File selection', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// C. Dataset parse
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('C. Dataset parse', () => {
   it('C13. clicking "Parse files" calls uploadDataset', () => {
@@ -583,9 +541,6 @@ describe('C. Dataset parse', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// D. Mapping card
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('D. Tag names panel', () => {
   it('D17. Tag names is locked with an explanation when the dataset is not parsed', () => {
@@ -598,8 +553,7 @@ describe('D. Tag names panel', () => {
     expect(screen.queryByText('Select tag-name CSV')).toBeNull();
   });
 
-  // The Tag names panel opens only when isReady — which now requires hasFiles too,
-  // not just a loadReport. Every "ready" fixture sets both.
+  // Tag names opens only when isReady, which also needs hasFiles; every ready fixture sets both.
   const readyUpload = () =>
     makeDataUpload({ selectedFiles: ['/x.csv'], loadReport: FAKE_REPORT });
 
@@ -696,9 +650,6 @@ describe('D. Tag names panel', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// E. Open Dashboard
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('E. Open Dashboard button', () => {
   it('E24. step 2 Continue is disabled until the dataset is ready (and there is no Open Dashboard on step 2)', () => {
@@ -707,7 +658,7 @@ describe('E. Open Dashboard button', () => {
     renderAtStep2();
 
     expect(continueButton().disabled).toBe(true);
-    // Open Dashboard moved to step 3
+    // Open Dashboard is on step 3, not here.
     expect(screen.queryByText('Open Dashboard')).toBeNull();
   });
 
@@ -723,8 +674,7 @@ describe('E. Open Dashboard button', () => {
     );
     mockSaveWorkspace.mockResolvedValue(undefined);
 
-    // Name + description come from step 1 and the groups from step 3; Open
-    // Dashboard on step 3 is the only place any of them get written to disk.
+    // Open Dashboard on step 3 is the only place name, description and groups are written to disk.
     renderAtStep3({ plant: 'Line 3', machine: 'Baseline', tag: 'U-3', notes: 'Q3 compressor run' });
     expect(mockSaveWorkspace).not.toHaveBeenCalled();
     addGroup('Bearing overheating');
@@ -753,8 +703,7 @@ describe('E. Open Dashboard button', () => {
       selectedSensors: [],
       visibleSensors: [],
       operationConfig: null,
-      // The project IS the machine: "Plant · Machine", described "tag · notes",
-      // plus the data's time zone picked on step 2 (default: this PC's).
+      // Project = machine: name 'Plant · Machine', description 'tag · notes', plus the step-2 time zone (default: this PC's).
       name: 'Line 3 · Baseline',
       description: 'U-3 · Q3 compressor run',
       machine: { plant: 'Line 3', name: 'Baseline', tag: 'U-3', notes: 'Q3 compressor run' },
@@ -762,10 +711,7 @@ describe('E. Open Dashboard button', () => {
     });
     expect(saved.id).toMatch(/^ws_\d+$/);
 
-    // Drain the rest of handleContinue before finishing. Its 500 ms
-    // MIN_TRANSITION_MS floor outlives the save, so bailing out here would
-    // fire onDataReady during the NEXT test (after beforeEach cleared the
-    // mocks) and be miscounted as that test's own call.
+    // Drain handleContinue: its 500 ms MIN_TRANSITION_MS floor would fire onDataReady during the next test.
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1), { timeout: 3000 });
   });
 
@@ -796,9 +742,6 @@ describe('E. Open Dashboard button', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// S. Step 3 "Failure groups"
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('S. Step 3 "Failure groups"', () => {
   beforeEach(() => {
@@ -1114,9 +1057,6 @@ describe('S. Step 3 "Failure groups"', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// F. Load workspace flow
-// ═════════════════════════════════════════════════════════════════════════
 
 const baseLoadedWs: WorkspaceState = {
   id: 'ws_1',
@@ -1223,8 +1163,7 @@ describe('F. Load workspace flow', () => {
     await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
     const [metaArg, stateArg, smArg] = onDataReady.mock.calls[0];
     expect(metaArg).toEqual(loadedMeta);
-    // A project without a data time zone gets this PC's, written once by
-    // ensureDataUtcOffset (its ONE caller) and handed to the Dashboard too.
+    // A project without a data time zone gets this PC's, written once by ensureDataUtcOffset and passed to the Dashboard.
     expect(mockEnsureOffset).toHaveBeenCalledTimes(1);
     expect(mockEnsureOffset).toHaveBeenCalledWith('ws_1');
     expect(stateArg).toEqual({ ...loaded, dataUtcOffsetMin: 420 });
@@ -1440,9 +1379,7 @@ describe('F. Load workspace flow', () => {
       dismissAllErrors();
     });
 
-    // A legacy spreadsheet-style
-    // `round($A, 2)` is converted on open, BEFORE the replay; the conversion is saved in one
-    // write (models trained on it back to Incomplete) and the Dashboard gets the WRITTEN state.
+    // Legacy `round($A, 2)` is converted on open, before the replay, and saved in one write; the Dashboard gets the written state.
     it('F-legacy. round($A, 2) is converted before the replay, the replay runs the converted text, the conversion is saved, the Dashboard gets the written state and the user is told why the values changed', async () => {
       const original = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a, 2)' };
       const converted = { kind: 'formula' as const, tag: 'R', formula: 'round($sensor_a * 100) / 100' };
@@ -1483,8 +1420,7 @@ describe('F. Load workspace flow', () => {
       // The Dashboard starts from what was WRITTEN (its autosave would otherwise write the old text back).
       const stateArg = onDataReady.mock.calls[0][1] as WorkspaceState;
       expect(stateArg.specialSensorRecipes).toEqual([converted, untouched]);
-      // One INFORMATION message (not an error toast), shown after the Dashboard is handed the
-      // state, saying the values changed and how many models must be trained again.
+      // One info message (not an error toast) after the Dashboard gets the state: values changed, models to retrain.
       await waitFor(() => expect(mockDialogMessage).toHaveBeenCalledTimes(1));
       expect(mockDialogMessage).toHaveBeenCalledWith(message, { title: 'Rounding updated', kind: 'info' });
       expect(mockDialogMessage.mock.invocationCallOrder[0]).toBeGreaterThan(onDataReady.mock.invocationCallOrder[0]);
@@ -1576,9 +1512,7 @@ describe('F. Load workspace flow', () => {
 
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
       expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
-        // `replace: true`: recomputing a recipe has to
-        // overwrite the column of that name rather than append a second,
-        // unreachable one. On a fresh load there is nothing to replace.
+        // `replace: true` overwrites the existing column of that name instead of appending an unreachable second one.
         { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
       // Replayed right after load_csv, before Dashboard ever sees the data.
       expect(invokeOrder.indexOf('load_csv')).toBeLessThan(invokeOrder.indexOf('evaluate_formula'));
@@ -1636,9 +1570,7 @@ describe('F. Load workspace flow', () => {
       await waitFor(() => expect(onDataReady).toHaveBeenCalledTimes(1));
       // The second (valid) recipe still got replayed.
       expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula',
-        // `replace: true`: recomputing a recipe has to
-        // overwrite the column of that name rather than append a second,
-        // unreachable one. On a fresh load there is nothing to replace.
+        // `replace: true` overwrites the existing column of that name instead of appending an unreachable second one.
         { formula: '$sensor_a * 2', customName: 'CALC1', replace: true });
       // One toast naming the sensor that failed, not one per attempt.
       const errors = getErrors();
@@ -1647,9 +1579,7 @@ describe('F. Load workspace flow', () => {
       expect(errors[0].message).toContain('BROKEN1');
     });
 
-    // A recipe that can't be rebuilt used to leave a ghost -- still
-    // plotted, no data -- and everything built on it failed one by one (or,
-    // worse, read some other column of the same name).
+    // A recipe that can't be rebuilt must not leave a plotted ghost with no data or let dependents read a same-name column.
     it('F35. a recipe built ON a failed one is skipped (never sent to the backend), reported in the same single toast, and every no-data sensor is dropped from the plotted selection while its recipe is kept', async () => {
       mockLoadWorkspace.mockResolvedValue({
         ...baseLoadedWs,
@@ -1740,9 +1670,7 @@ describe('F. Load workspace flow', () => {
       });
     });
 
-    // Rust now refuses a formula with an unknown name/function at
-    // compute time. A workspace saved earlier can hold one that used to be
-    // accepted and silently produced an empty sensor (`$A * pi`).
+    // Rust refuses unknown names/functions in formulas; a saved formula that was once accepted (`$A * pi`) gave an empty sensor.
     it('F35b. a saved formula Rust now refuses (`$sensor_a * pi`) does not break the open: the toast names the sensor WITH Rust’s reason, it is dropped from the plot and its recipe is kept to fix in Manage', async () => {
       const PI_MSG = "Formula error: unknown name 'pi'. Write pi() for π.";
       mockLoadWorkspace.mockResolvedValue({
@@ -1810,9 +1738,6 @@ describe('F. Load workspace flow', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// G. Empty-state hint + status bar
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('G. Empty-state hint + status bar', () => {
   it('G32. no files → "Add at least one CSV file to continue."', () => {
@@ -1840,15 +1765,7 @@ describe('G. Empty-state hint + status bar', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// I. Stale-report state (post-parse file edits)
-//   Regression coverage for two reported bugs:
-//     1. After parsing, editing the file list left no way to re-parse
-//        (Parse button only appeared while !isReady).
-//     2. Continue stayed enabled even when files had been removed after parse.
-//   Both are now driven by the page-level `isReady = hasReport && !isStale &&
-//   hasFiles` derivation.
-// ═════════════════════════════════════════════════════════════════════════
+// After parse, file edits must allow re-parse and disable Continue; driven by `isReady = hasReport && !isStale && hasFiles`.
 
 describe('I. Stale-report state', () => {
   it('I37. stale report → Parse button visible again', () => {
@@ -1939,13 +1856,7 @@ describe('I. Stale-report state', () => {
   });
 
   it('I43. firing `upload-page-resumed` clears stuck loadingWorkspace state', async () => {
-    // Regression: sub-window (FG / PM) "Back to Upload" reuses the existing
-    // main webview via WebviewWindow.getByLabel('main') → show()+setFocus().
-    // React state survives, so `loadingWorkspace=true` (set when the user
-    // originally clicked the Recent Workspace row) was getting stuck — the
-    // navigation that was supposed to flip it off already happened in the
-    // sub-window's lifetime. The sub-window now emits `upload-page-resumed`
-    // before closing; this test verifies the page's listener clears the flag.
+    // 'Back to Upload' reuses the main webview; the page must clear a stuck `loadingWorkspace` on `upload-page-resumed`.
     mockGetRecent.mockResolvedValue([
       { id: 'ws_1', name: 'Stuck workspace', lastModified: Date.now(), filePath: '/ws/ws_1.json' },
     ] satisfies WorkspaceMetadata[]);
@@ -1958,8 +1869,7 @@ describe('I. Stale-report state', () => {
     fireEvent.click(screen.getByText('Stuck workspace'));
     await waitFor(() => expect(screen.getByText('Loading workspace…')).toBeTruthy());
 
-    // Locate the `upload-page-resumed` listener specifically — `mockListen`
-    // may have other registrations too, so find() disambiguates by event name.
+    // Find the `upload-page-resumed` listener by event name; other listeners exist.
     const resumeCall = mockListen.mock.calls.find((c) => c[0] === 'upload-page-resumed');
     expect(resumeCall).toBeDefined();
     const handler = resumeCall![1] as (e: { event: string; payload: undefined; id: number }) => void;
@@ -1974,10 +1884,7 @@ describe('I. Stale-report state', () => {
   });
 
   it('I44. fallback: window regaining focus >2s into a stuck load also clears the spinner', async () => {
-    // Defense-in-depth for the same regression as I43. If the explicit
-    // `upload-page-resumed` event is dropped (IPC swallowed, sub-window
-    // force-quit, etc.), the `tauri://focus` event still fires when main
-    // becomes the active window again — we use that as a secondary signal.
+    // Backup for the same case: if `upload-page-resumed` is dropped, `tauri://focus` on main clears the flag.
     vi.useFakeTimers();
     try {
       mockGetRecent.mockResolvedValue([
@@ -2032,14 +1939,7 @@ describe('I. Stale-report state', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// J. Onboarding flow (step 0 → 1 → 2)
-//   The page no longer boots straight into the upload UI. Step 0 is the
-//   new-project-vs-recent branch point, step 1 names the project, step 2 is
-//   the dataset surface every other group above asserts against. These tests
-//   cover the two screens the helpers walk through (steps 1-2 share the setup
-//   rail -- see groups M-Q for their own detail).
-// ═════════════════════════════════════════════════════════════════════════
+// Onboarding: step 0 (new vs recent) and step 1 (name the project); step 2 is the surface the other groups use.
 
 describe('J. Onboarding flow', () => {
   it('J45. boots into step 0 (Get started) with the hero, New project and no dataset UI', async () => {
@@ -2206,8 +2106,7 @@ describe('J. Onboarding flow', () => {
     fireEvent.click(screen.getByText('Which machine'));
     expect(screen.getByText('Which machine is this?')).toBeTruthy();
 
-    // …but the "Add sensor data" step is not a shortcut forward; that path has
-    // to go through Continue so the project-name validation always runs.
+    // 'Add sensor data' is no shortcut: going forward must pass Continue so project-name validation runs.
     fireEvent.click(screen.getByText('Add sensor data'));
     expect(screen.getByText('Which machine is this?')).toBeTruthy();
     expect(screen.queryByText('Add your sensor data')).toBeNull();
@@ -2215,14 +2114,8 @@ describe('J. Onboarding flow', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// K. Dataset generation + "latest click wins"
-//   `load_csv` returns the generation of the Rust session it installed; the
-//   page hands it to the Dashboard (inside the metadata), pins every recipe
-//   replay command to it, and -- because the Rust session is ONE shared object
-//   -- never lets an older, slower load hand over or mix its dataset with a
-//   newer one's.
-// ═════════════════════════════════════════════════════════════════════════
+// `load_csv` returns the Rust session generation; the page passes it to the Dashboard and pins replay commands to it.
+// The session is shared, so an older, slower load must never hand over or mix with a newer one.
 
 describe('K0. a parse from step 2 and an opening project', () => {
   it('the parse is abandoned before the project loads its dataset', async () => {
@@ -2268,9 +2161,7 @@ describe('K. dataset generation and latest-click-wins', () => {
   });
   const R = (tag: string) => ({ kind: 'formula' as const, tag, formula: '$sensor_a * 2' });
 
-  /** A tiny stand-in for the Rust session: `load_csv` installs a new generation
-   *  (when its deferred, if any, is released) and the replay commands refuse a
-   *  pinned generation that is not the session's. */
+  /** Stand-in Rust session: `load_csv` bumps the generation; replay commands refuse a pinned generation that isn't current. */
   function session() {
     let gen = 0;
     const loads: Array<{ path: string; generation: number | null }> = [];
@@ -2453,10 +2344,6 @@ describe('K. dataset generation and latest-click-wins', () => {
   });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// L. The "Get started" page (step 0): hero, recent-project
-//    cards (rename / delete in the row), search, empty state, Ctrl+N.
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('L. Get started page (step 0)', () => {
   const HOUR_MS = 3_600_000;
@@ -2863,18 +2750,11 @@ describe('L. Get started page (step 0)', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// M-Q. The setup rail and steps
-//      1-2 ("Name your project" / "Add your sensor data"). Behaviour of
-//      loading / mapping / replay is covered by the groups above; these
-//      cover the presentation: rail, name step, read progress, summary cards,
-//      time coverage, "Fixed while reading", Tag names.
-// ═════════════════════════════════════════════════════════════════════════
 
 const DAY_US = 86_400_000_000;
 const T0_US = Date.UTC(2025, 0, 1) * 1000;
 
-/** A report carrying every field the Rust side now sends. */
+/** A report carrying every field the Rust side sends. */
 const FULL_REPORT: CsvLoadReport = {
   ...FAKE_REPORT,
   total_rows: 159264,
@@ -2982,7 +2862,7 @@ describe('N. Step 1 "Which machine is this?"', () => {
     expect(screen.getAllByText('required')).toHaveLength(3);
     expect(screen.getByText('optional')).toBeTruthy();
     expect(document.activeElement).toBe(plantInput());
-    // No more free project name / description fields.
+    // There are no free project name / description fields.
     expect(screen.queryByLabelText('Project name')).toBeNull();
     expect(screen.queryByLabelText(/Description/)).toBeNull();
   });

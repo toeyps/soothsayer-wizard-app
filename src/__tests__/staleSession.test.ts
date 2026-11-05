@@ -35,10 +35,7 @@ describe('bindToGeneration', () => {
         return { calls, invoker };
     };
 
-    // `validate_formula` joined them (read-only, but it must not
-    // check a formula against another project's columns).:
-    // `preview_formula` (the Formula editor's live check) too;
-    // `convert_legacy_formula` is pure text and stays unguarded.
+    // `validate_formula` and `preview_formula` are guarded too; `convert_legacy_formula` is pure text and unguarded.
     it('stamps expectedGeneration (camelCase) on exactly the five guarded commands', async () => {
         const { calls, invoker } = recorder();
         const bound = bindToGeneration(invoker, 7);

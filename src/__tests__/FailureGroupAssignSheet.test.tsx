@@ -1,9 +1,4 @@
-/**
- * FailureGroupAssignSheet — the full-height "Failure Group
- * Assignment" sheet that replaced the old add-to-failure-group popover.
- * Rendered directly here (the seam with the sensor list — open / switch / step /
- * dismiss / placement — is covered in SensorSelection.test.tsx).
- */
+/** The full-height Failure Group Assignment sheet, rendered directly; the seam with the sensor list is in SensorSelection.test.tsx. */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, fireEvent, cleanup, within, act } from '@testing-library/react';
 import FailureGroupAssignSheet, { type FailureGroupAssignSheetProps } from '../components/dashboard/FailureGroupAssignSheet';
@@ -524,9 +519,7 @@ describe('FailureGroupAssignSheet', () => {
 
         it('the footer hint says exactly what Enter does: it creates the group with this sensor\'s Individual model in it', () => {
             renderSheet();
-            // Enter -> commitCreate -> onCreateGroupForSensor (the Dashboard\'s
-            // createGroupForSensor puts the sensor\'s Individual model, reused or
-            // new, into the new group — nothing else).
+            // Enter creates the group and puts the sensor's Individual model (reused or new) in it.
             expect(screen.getByTestId('fg-sheet-hint').textContent)
                 .toBe('Enter creates the group and adds this sensor\u2019s Individual model to it.');
         });

@@ -1,35 +1,5 @@
-//! Per-period running-row counts for the Running-condition modal
-//! (Workbench redesign 2026-10, `docs/design/handoff/workbench-redesign/README.md`
-//! section 5: a period row reads `P1  date -> date  81 d · 69 d running`).
-//!
-//! For a list of time periods (train periods, scoring periods - the caller
-//! decides) and the running condition's VALUE conditions, [`count`] returns per
-//! period how many dataset rows fall inside it and how many of those are
-//! "running" (pass the conditions), plus the same two numbers for the UNION of
-//! the valid periods.
-//!
-//! Cost - nothing here may make the modal slower:
-//!   * ONE pass over `ts_parsed` for all periods together (rayon fold): a row's
-//!     timestamp is compared with every period's bounds (integer compares, a
-//!     bit per period - hence the cap of [`MAX_PERIODS`] = 64) and the value
-//!     conditions are evaluated at most ONCE per row, and only for a row that is
-//!     inside at least one period. Never one scan per period, never a timestamp
-//!     string parsed per row (the bounds are parsed once, up front).
-//!   * Nothing per row leaves Rust: the result is O(periods).
-//!
-//! Definitions shared with the scoring results (`health_validation`):
-//!   * the time gate and the value conditions are the SAME code
-//!     (`parse_time_bound`, `ResolvedFilter::keeps`, AND/OR `combine`), with the
-//!     same rules: bounds inclusive, blank / null = open, a row without a
-//!     parseable timestamp is in no period, a missing sensor value never passes
-//!     a condition;
-//!   * `running_days` = `health_validation::days_of(running_rows, interval)`,
-//!     i.e. rows x the dataset's median sample interval, one decimal - the very
-//!     function behind `test_validation.tests[].days`.
-//! What differs on purpose: a scoring result counts only rows where the MODEL's
-//! own inputs have a value; this count is model-free (the modal edits the
-//! workspace's running condition, not one model), so for a model whose sensors
-//! have gaps the scoring `days` can be a little lower than the modal's.
+//! Per-period running-row counts for the Running-condition modal (rows in period, rows passing conditions, and the union).
+//! One rayon pass over ts_parsed (max 64 periods); gate/conditions as in health_validation, model-free so scoring days may be lower.
 
 use rayon::prelude::*;
 use serde::Serialize;
@@ -84,8 +54,7 @@ pub struct UnionCount {
 pub struct PeriodCounts {
     /// Rows of the loaded dataset (with or without a timestamp).
     pub total_rows: usize,
-    /// The dataset's median sample interval in seconds - what turns rows into
-    /// days. `null` below two valid timestamps: every `running_days` is then 0.
+    /// Median sample interval in seconds (rows -> days); null below two valid timestamps, then every running_days is 0.
     pub interval_secs: Option<f64>,
     /// One entry per requested period, same order.
     pub periods: Vec<PeriodCount>,
@@ -142,17 +111,8 @@ impl Tally {
     }
 }
 
-/// Count `periods` against `data`.
-///
-/// `filter` is the SAME payload the preview / train commands take. Only its
-/// `value_filters` and `combine` are read (the running condition); its own time
-/// fields (`timestamp_start` / `timestamp_end` / `timestamp_ranges`) are
-/// IGNORED - each requested period is the only time gate of its own count,
-/// exactly like a scoring period in `health_validation`. A condition on a
-/// sensor the dataset does not have is skipped, as everywhere else.
-///
-/// Errors: `BAD_REQUEST: ...` for more than [`MAX_PERIODS`] periods. A period
-/// that cannot be counted is NOT an error: it comes back `valid: false`.
+/// Count `periods` against `data`. Only the filter's value_filters and combine are used; a condition on a missing sensor is skipped.
+/// BAD_REQUEST for more than MAX_PERIODS; an uncountable period gives valid: false, not an error.
 pub fn count(
     data: &ColumnarData,
     periods: &[TimeRangeArg],
@@ -470,9 +430,7 @@ mod tests {
         let d = data();
         let p = [period("2024-01-03T00:00", "2024-01-03T23:50")];
         let plain = count(&d, &p, Some(&running())).unwrap();
-        // The training payload: its periods exclude day 3 entirely, one of them
-        // is even malformed, and the legacy pair is set too (a combination
-        // `ResolvedFilter::resolve` refuses) - none of it matters here.
+        // Training payload with time fields that exclude day 3 and a malformed range; none of it matters here.
         let train = filter(
             r#"{"timestamp_start":"2024-01-01T00:00","timestamp_end":"2024-01-01T12:00",
                 "timestamp_ranges":[{"start":"2024-01-01T00:00","end":"2024-01-01T23:50"},{"start":"junk","end":null}],
@@ -484,9 +442,7 @@ mod tests {
 
     #[test]
     fn agrees_with_the_scoring_results_rows_and_days() {
-        // The same period + running condition through the scoring-period code
-        // (`TestPlan`, what `test_validation.tests[].rows / days` come from, for
-        // a model whose inputs are never missing).
+        // The same period + running condition through the scoring-period code (TestPlan) for a model whose inputs are never missing.
         let d = data();
         let f = filter(
             r#"{"combine":"or","value_filters":[
@@ -579,10 +535,7 @@ mod tests {
     #[test]
     fn repeated_counts_on_one_dataset_compute_the_sample_interval_at_most_once() {
         use crate::csv_processor::{median_interval_runs, median_interval_seconds};
-        // The modal counts twice per settled draft (train periods, scoring
-        // periods) and again on every edit: the interval (two passes over the
-        // timestamps + a sort, more than the count itself) is the dataset's,
-        // not the request's.
+        // The modal counts twice per settled draft and on every edit; the interval belongs to the dataset, so it is computed once.
         let d = data();
         let before = median_interval_runs();
         let train = count(&d, &[period("2024-01-01T00:00", "2024-01-02T23:50")], Some(&running())).unwrap();
@@ -599,8 +552,7 @@ mod tests {
         assert_eq!(nums(&scoring), vec![(288, 144, 1.0)]);
         assert_eq!(nums(&edited), vec![(576, 576, 4.0)]);
 
-        // A dataset whose interval is already known (as after `load_csv`, whose
-        // load report asks for it): a count computes nothing at all.
+        // Interval already known (as after load_csv): a count computes nothing.
         let loaded = data();
         loaded.sample_interval_secs();
         let before = median_interval_runs();

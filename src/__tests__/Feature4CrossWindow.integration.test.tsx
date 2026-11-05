@@ -1,24 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * Dashboard and the Build Model window running
- * side by side against ONE workspace file.
- *
- * Both real components are mounted at once (they are separate OS windows in
- * the app), sharing:
- *   - the real workspaceManager over an in-memory plugin-fs (JSON round trips);
- *   - one event bus that delivers every emit to every listener (Tauri's global
- *     broadcast), with a switch to DROP broadcasts so a stale Dashboard mirror
- *     can be reproduced — `failure-group-state-changed` is best-effort IPC.
- * Dashboard answers the Build Model window's `request-build-model-data` for
- * real. Dashboard's own heavy children (charts, panels) are stubbed with
- * buttons that call the same props the real panels call.
- *
- * Caveat: in the app each window has its OWN workspaceManager write queue; here
- * they share one, so this file cannot reproduce two writes interleaving
- * mid-flight — only stale-mirror/ordering problems.
- */
+/* Dashboard and Build Model window side by side on ONE workspace file (real workspaceManager over in-memory plugin-fs, one event bus that can drop `failure-group-state-changed` to fake a stale mirror). Both share one write queue, so interleaved writes cannot be reproduced; heavy Dashboard children are stubbed. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -46,8 +29,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    // Workspace saves go to a temp sibling and are renamed over the real file
-    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    // Saves go to a temp sibling and are renamed over the real file (`writeWorkspaceJsonAtomically`); record the write when it lands.
     writeTextFile: async (p: string, c: string) => { h.files.set(p, c); if (!p.endsWith('.tmp')) h.writes.push(p); },
     rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); h.writes.push(to); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
@@ -117,7 +99,6 @@ import BuildModelWindow from '../components/windows/BuildModelWindow';
 import type { WorkspaceState } from '../types';
 import { rcOn } from './helpers/trainTestFixture';
 
-// ── fixtures ────────────────────────────────────────────────────────────
 
 const WS_FILE = 'workspaces/ws1.json';
 const LEGACY_KEYS = ['runningConditionTimeStart', 'runningConditionTimeEnd', 'filterTimeStart', 'filterTimeEnd'];
@@ -170,17 +151,13 @@ async function mountBoth() {
             <div data-testid="build-model-window"><BuildModelWindow /></div>
         </>,
     );
-    // Workbench: wait for the one-line Running Condition
-    // bar — the inline "Running Condition Filter" panel now lives only in the
-    // Edit… modal (auto-opened when the workspace condition is unset).
+    // Wait for the Running Condition bar (`rc-card`); the filter panel lives in the Edit… modal.
     await waitFor(() => expect(within(screen.getByTestId('build-model-window')).getByTestId('rc-card')).toBeTruthy());
     await settle(350); // hydration write-back + Dashboard's on-mount autosave
 }
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
-/** Select TAG1 under FG-1 in the Workbench's left list; the detail pane's
- *  header then carries the per-sensor Category switch (was inside the old
- *  accordion row `sensor-row-fg:1:tag1`). */
+/** Select TAG1 under FG-1 in the left list; the detail header holds the per-sensor Category switch. */
 const selectTag1InFg1 = () => {
     const row = bmw().getByTestId('sensor-list-row-fg:1-tag1');
     fireEvent.click(row);
@@ -207,9 +184,6 @@ afterEach(() => {
     cleanup();
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (5) category changed in Build Model, then a Dashboard toggle
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(5) a sensor category set in Build Model survives Dashboard edits', () => {
     const start = () => wsState({
@@ -251,18 +225,13 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
             models = diskModels();
             expect(models.every(m => m.category === 'condition')).toBe(true);
 
-            // The Build Model window shows one category for the sensor, no Mixed
-            // (detail header's Category switch for the still-selected TAG1).
+            // One category for the sensor, no Mixed.
             await waitFor(() => expect(tag1CategorySwitch().getByText('Condition').getAttribute('aria-pressed')).toBe('true'));
             expect(tag1CategorySwitch().getByText('Performance').getAttribute('aria-pressed')).toBe('false');
         });
     }
 
-    // Every group writer (renameGroup / updateGroupDetails /
-    // createEmptyGroup / deleteGroup) computes against DISK, like toggle /
-    // create-group / delete-model: with a stale mirror (lost broadcast) it
-    // must not write the mirror's models array over another window's model
-    // edits — here the sensor category.
+    // Every group writer computes against disk, so a stale mirror must not overwrite another window's model edits (here the sensor category).
     it('renaming a group on the Dashboard with a stale mirror keeps the category Build Model set', async () => {
         writeDisk(start());
         await mountBoth();
@@ -275,9 +244,6 @@ describe('(5) a sensor category set in Build Model survives Dashboard edits', ()
     });
 });
 
-// ─────────────────────────────────────────────────────────────────────────
-// (4) a stale Dashboard mirror holding the OLD time keys
-// ─────────────────────────────────────────────────────────────────────────
 
 describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneath', () => {
     const V1 = () => wsState({
@@ -306,8 +272,7 @@ describe('(4) Dashboard opened on the v1 file, Build Model migrates it underneat
             const fg = JSON.parse(raw).failureGroupState;
             expect(fg.runningConditionTimePeriods).toEqual(WS_PERIOD);
             expect(fg.models.find((m: any) => m.id === 'i2').filterTimePeriods).toEqual(I2_PERIOD);
-            // The running condition was never set: nothing to convert, and the
-            // autosave keeps the read path's "handled" marker (no old flag).
+            // Running condition never set: nothing to convert, and the autosave keeps the read path's 'handled' marker.
             expect(fg.runningConditionConversion).toBeNull();
             expect(fg.rcLegacyNotice).toBeUndefined();
         });
@@ -338,7 +303,7 @@ describe('a brand-new workspace: the first model is created on the Dashboard', (
         await settle(350);
         const fg = readDisk().failureGroupState;
         expect(fg.models).toHaveLength(1);
-        expect(fg.rcLegacyNotice).toBeUndefined(); // the old legacy-gate flag is no longer seeded
+        expect(fg.rcLegacyNotice).toBeUndefined(); // no legacy notice flag is seeded
         expect(fg.categoryNormalisationNotice).toBeNull();
         expect(fg.runningConditionConversion).toBeNull();
         expect(screen.queryByTestId('rc-conversion-notice')).toBeNull();

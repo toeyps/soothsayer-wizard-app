@@ -5,23 +5,7 @@ import type { RunningConditionFg } from './runningCondition';
 import { testPeriodsKey } from './timePeriods';
 import { isModelTrainedFresh } from './trainFingerprint';
 
-/*
- * "Change warnings" of the Running-condition settings (spec:
- * docs/design/handoff/workbench-redesign/README.md §5):
- *
- *   BEFORE Apply — an impact line next to the Apply button says what applying
- *   the draft does to the models that follow the workspace running condition.
- *   It never blocks Apply.
- *
- *   AFTER Apply — a notice under the running-condition line while models the
- *   Apply sent back to training are still not trained again (session-only; the
- *   amber dots in the list are what persists).
- *
- * Nothing here decides WHICH models a change affects on its own: the two
- * comparisons are `changedTrainInputIds` / `changedScoringPeriodIds`, the same
- * functions `applyIncompleteRule` runs inside the write. This file only turns
- * their answer into counts and sentences.
- */
+/* Impact line before Apply and notice after it; affected models come from `changedTrainInputIds`/`changedScoringPeriodIds`. */
 
 /** The workspace running condition as the settings modal edits it (the
  *  window's `RcDraft`). */
@@ -35,9 +19,7 @@ export interface RunningConditionDraft {
     testPeriods: TestPeriod[];
 }
 
-/** `fg` as it would be after applying `draft`: everything else in the slice is
- *  carried over untouched (models, groups, and any field added later). For
- *  predictions only — the write itself goes through `withFailureGroupState`. */
+/** `fg` as it would be after applying `draft`, for predictions only; the write goes through `withFailureGroupState`. */
 function withDraft(fg: NonNullable<RunningConditionFg>, draft: RunningConditionDraft): NonNullable<RunningConditionFg> {
     return {
         ...fg,
@@ -56,9 +38,7 @@ export interface RunningConditionImpact {
     text: string;
     /** A second, quiet line under it, or null. */
     quiet: string | null;
-    /** Workspace-mode models that are trained (or Complete) today and would
-     *  need training again. Keep these at Apply time for the after-Apply notice
-     *  (`modelsStillNeedingTraining`). */
+    /** Workspace-mode models trained (or Complete) that would need training again; kept at Apply for the after-Apply notice. */
     retrainIds: string[];
     /** Complete Workspace-mode models that stay trained but would need Mark
      *  complete again (only their scoring periods change). */
@@ -87,28 +67,7 @@ export function remarkImpactText(n: number): string {
     return `${count(n, 'complete model', 'complete models')} will need Mark complete again (re-score, no training)`;
 }
 
-/**
- * What applying `draft` over the persisted failure-group state `fg` does to
- * the models:
- *
- *   - the train periods or the condition changed  → amber "Applying sets N
- *     models back to Incomplete — they need training again"; N = Workspace-mode
- *     models that are trained and fresh (or Complete) today and whose train
- *     fingerprint changes;
- *   - only the scoring periods changed            → amber "N complete models
- *     will need Mark complete again (re-score, no training)";
- *   - both changed                                → the train line, plus the
- *     quiet line "The new scoring periods are scored when they are trained again";
- *   - nothing affected (N = 0, with or without a change) → grey "No trained or
- *     complete model is affected by this change".
- *
- * Custom-mode models are never counted: they do not read the workspace
- * running condition. `recipes` (the workspace's special-sensor recipes) makes
- * "trained and fresh" agree with the status dots; pass them when at hand.
- *
- * Pure. Show the line only while the draft is dirty — for an unchanged draft
- * this returns the grey line, which would be noise.
- */
+/** Effect of applying `draft` on Workspace-mode models: train change = retrain; scoring-only = Mark complete again; else grey. Custom models are never counted; pure; show only while the draft is dirty. */
 export function runningConditionImpact(
     fg: RunningConditionFg,
     draft: RunningConditionDraft,
@@ -139,9 +98,7 @@ export function runningConditionImpact(
     for (const m of models) {
         if (m.runningConditionMode === 'custom') continue;
         if (trainIds.has(m.id)) {
-            // Trained and fresh today, or Complete (a model marked complete before
-            // train records existed has no fingerprint, but it goes back to
-            // Incomplete all the same and has to be trained to get out of it).
+            // Trained and fresh, or Complete (an old Complete model without a fingerprint still goes Incomplete).
             if (isModelTrainedFresh(m, fg, opts.recipes) || isModelComplete(m, fg, opts.recipes)) retrainIds.push(m.id);
         } else if (scoreIds.has(m.id) && isModelComplete(m, fg, opts.recipes)) {
             remarkIds.push(m.id);
@@ -158,13 +115,7 @@ export function runningConditionImpact(
     return { ...base, tone: 'grey', text: NO_IMPACT_TEXT, quiet: null };
 }
 
-/**
- * Of the models an Apply sent back to training (`impact.retrainIds`, kept by
- * the window at Apply time), those that are STILL not trained again — the
- * after-Apply notice shows while this is not empty and counts it. A model
- * that was deleted, or trained since, drops out. Session-only by decision
- * (the amber dots in the list are what persists).
- */
+/** Models an Apply sent back to training that are still untrained; deleted or since-trained ones drop out. Session-only. */
 export function modelsStillNeedingTraining(
     ids: readonly string[],
     models: readonly FailureModel[],
@@ -178,11 +129,7 @@ export function modelsStillNeedingTraining(
     });
 }
 
-/**
- * The after-Apply notice, in two parts so the UI can set the headline in bold:
- *   "Running condition changed — 3 models need training again" +
- *   "Use Train all, or Train sensor on each one; the amber dots in the list show which."
- */
+/** After-Apply notice in two parts so the UI can bold the headline. */
 export function retrainNoticeParts(n: number): { headline: string; rest: string } {
     return n === 1
         ? {

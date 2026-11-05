@@ -8,27 +8,18 @@ import { sensorPlainLabel, useLayeredSensorLookup } from '../sensor/sensorInfo';
 import { RecipeSummary } from './RecipeSummary';
 
 interface Props {
-    /** Special sensors to list — already excluding anything in an open undo
-     *  window, so a deleted row disappears the moment it is deleted. */
+    /** Special sensors to list, excluding any in an open undo window. */
     recipes: SpecialSensorRecipe[];
     sensorMetadata: SensorMetadata[] | null;
-    /** Every Failure Group model, from the dashboard. A model referencing a
-     *  special sensor is one of the two things that blocks deleting it. */
+    /** All Failure Group models; a model using a special sensor blocks its deletion. */
     models: FailureModel[];
-    /** False while this window does not know the models / running condition
-     *  FRESH (never received, or the last re-read failed): deletion is held
-     *  back, because "no model uses it" would be a guess. */
+    /** False while models / running condition are not known fresh: deletion is held back. */
     usageKnown?: boolean;
-    /** The workspace Running condition's conditions: naming a special sensor
-     *  there also blocks its deletion (Rust silently ignores a condition on a
-     *  column that no longer exists, so models would train on other rows). */
+    /** Workspace running condition's conditions; a special sensor named there cannot be deleted (Rust ignores a condition on a missing column). */
     runningConditionFilters?: Array<{ sensor: string }>;
     /** Sensors currently plotted on the dashboard chart. */
     selectedSensors: string[];
-    /** Formula tag -> sensors its expression references, from Rust's
-     *  `extract_formula_refs`. Null while that lookup is still in flight:
-     *  deletion is held back until it lands, since an incomplete map would
-     *  under-report dependencies and let a depended-on sensor be deleted. */
+    /** Formula tag -> sensors it references (Rust `extract_formula_refs`). Null while in flight: deletion is held back. */
     formulaRefs: Map<string, string[]> | null;
     onDelete: (tag: string) => void;
     /** Set while a deletion is inside its undo window. */
@@ -40,12 +31,7 @@ interface Props {
     onEdit: (tag: string) => void;
     /** A save is being applied: the pencil buttons wait. */
     savingEdit: boolean;
-    /** Special sensors whose recipe could not be rebuilt this session (no
-     *  column): tag key (trimmed, lower-case) -> why, or null for "no specific
-     *  reason". Their formula / sources stay editable even when a model uses
-     *  them (only the name is locked then) -- otherwise a locked sensor with a
-     *  refused recipe could never be fixed. Null / omitted = unknown (nothing
-     *  is unlocked). */
+    /** Special sensors whose recipe couldn't be rebuilt this session: tag key (trimmed, lower-case) -> reason or null. Formula/sources stay editable under a lock (only the name locks) so they can be fixed. Null/omitted = nothing unlocked. */
     unrestored?: Map<string, string | null> | null;
 }
 
@@ -79,8 +65,7 @@ export default function ManageSpecialSensors({
             models,
             runningConditionFilters,
             selectedSensors,
-            // Until both lookups have answered, "nothing uses it" would be a
-            // guess -- the edit lock then holds name / formula / sources back.
+            // Until both lookups answer, 'nothing uses it' is a guess, so the edit lock holds.
             failureKnown: usageKnown && formulaRefs !== null,
         }),
         [recipes, formulaRefs, models, runningConditionFilters, selectedSensors, usageKnown],
@@ -124,7 +109,6 @@ export default function ManageSpecialSensors({
 
     return (
         <div className="flex flex-col h-full min-h-0">
-            {/* Search */}
             <div className="shrink-0 px-4 py-2.5 border-b" style={{ borderColor: 'var(--border)' }}>
                 <div className="flex items-center gap-2 px-2.5 py-1.5 rounded" style={{ backgroundColor: 'var(--input-bg)', border: '1px solid var(--border)' }}>
                     <Search size={13} style={{ color: 'var(--text-faint)' }} />
@@ -140,7 +124,6 @@ export default function ManageSpecialSensors({
                 </div>
             </div>
 
-            {/* Rows */}
             <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-1.5">
                 {visible.length === 0 && (
                     <p className="py-6 text-center" style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
@@ -151,21 +134,13 @@ export default function ManageSpecialSensors({
                     const info = usageFor(usage, recipe.tag)!;
                     const meta = metaFor(recipe.tag);
                     const summary = blockedSummary(info);
-                    // Edit lock: why this sensor's name / formula / sources are
-                    // frozen (a model uses it, or one built on it does). The
-                    // description / unit / component stay editable.
+                    // Edit lock: name/formula/sources freeze when a model (or a sensor built on it) uses the sensor; the rest stays editable.
                     const lockMessage = info.editLock.locked ? describeEditLock(info.editLock, nameOf) : null;
-                    // Its recipe could not be rebuilt this session: it has no
-                    // data until fixed, and the editor lets the formula be
-                    // fixed even under a lock (the name stays locked).
+                    // Not restored this session: no data until fixed; the formula can be fixed even under a lock (the name stays locked).
                     const unrestoredKey = recipe.tag.trim().toLowerCase();
                     const notRestored = !!unrestored?.has(unrestoredKey);
                     const notRestoredReason = unrestored?.get(unrestoredKey) ?? null;
-                    // Deletion stays off until the reference lookup has
-                    // actually answered — see `formulaRefs` above — and until
-                    // the models / running condition are known fresh.
-                    // The sensor open in the editor cannot be deleted under it:
-                    // close the edit first.
+                    // Delete stays off until the reference lookup answered, usage is known fresh, and the sensor isn't open in the editor.
                     const isEditing = editingTag !== null && editingTag.toLowerCase() === recipe.tag.toLowerCase();
                     const canDelete = info.deletable && formulaRefs !== null && usageKnown && !isEditing;
                     // Why Delete is off, in one line (its tooltip): "Used by X — remove it there first".
@@ -192,9 +167,7 @@ export default function ManageSpecialSensors({
                                     {recipe.kind === 'formula' ? 'ƒ' : 'Σ'}
                                 </span>
 
-                                {/* Description first, unit chip, tag on line 2 — the
-                                    ƒ / Σ badge is already the square on the left, so it is not repeated.
-                                    No "no description" placeholder (the tag stands alone). */}
+                                {/* Description first, unit chip, tag on line 2; the badge already shows the f / sigma kind. No 'no description' placeholder. */}
                                 <div className="min-w-0 flex-1 manage-ss-label">
                                     <SensorLabel
                                         tag={recipe.tag}
@@ -329,8 +302,7 @@ export default function ManageSpecialSensors({
                 })}
             </div>
 
-            {/* Undo bar — deletion is applied here immediately and reaches the
-                dashboard once this window closes, so undo costs nothing. */}
+            {/* Undo bar: deletion applies here at once and reaches the dashboard when this window closes. */}
             {pendingDelete && (
                 <div
                     className="shrink-0 flex items-center gap-3 px-4 py-2.5 border-t"

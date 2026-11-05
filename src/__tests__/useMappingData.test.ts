@@ -3,9 +3,6 @@ import { renderHook, act } from '@testing-library/react';
 import { useMappingData } from '../hooks/useMappingData';
 import type { MappingData, MappingResult } from '../types/dataUpload';
 
-// ============================================================
-// Mocks
-// ============================================================
 
 const mockInvoke = vi.fn();
 const mockOpen = vi.fn();
@@ -18,9 +15,6 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
   open: (...args: unknown[]) => mockOpen(...args),
 }));
 
-// ============================================================
-// Test data
-// ============================================================
 
 const sampleMappingData: MappingData = {
   headers: ['tag', 'name', 'unit'],
@@ -36,9 +30,6 @@ const sampleMappingResult: MappingResult = {
   not_in_mapping: ['SENS_C'],
 };
 
-// ============================================================
-// Tests
-// ============================================================
 
 describe('useMappingData', () => {
   beforeEach(() => {
@@ -163,12 +154,10 @@ describe('useMappingData', () => {
       await result.current.selectMappingFile();
     });
 
-    // Set key column
     act(() => {
       result.current.setKeyColumn('tag');
     });
 
-    // Apply mapping
     const datasetHeaders = ['timestamp', 'SENS_A', 'SENS_B', 'SENS_C'];
     await act(async () => {
       await result.current.applyMapping(datasetHeaders);

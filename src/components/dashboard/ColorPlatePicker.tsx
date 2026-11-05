@@ -47,24 +47,10 @@ function hsvToRgb(h: number, s: number, v: number): [number, number, number] {
     return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
 }
 
-// Minimal HSV picker: a saturation/value square (hue held fixed while
-// dragging) plus a hue slider — deliberately no numeric RGB/hex fields, no
-// swatch presets. Built from scratch (no external lib) after react-colorful
-// failed to resolve its CSS import in this project's Vite setup.
+// Minimal hand-built HSV picker (react-colorful's CSS import failed under Vite): saturation/value square plus hue slider.
 export default function ColorPlatePicker({ color, onChange }: ColorPlatePickerProps) {
-    // Hue/saturation/value are tracked as local state rather than re-derived
-    // from `color` on every render. RGB can't losslessly round-trip HSV at
-    // its wrap-around boundary: pure red is hue 0 AND hue 360 depending on
-    // which direction you approach it from, but `rgbToHsv` always normalizes
-    // it back to 0. Re-deriving on every render meant dragging the hue slider
-    // to the far right (hue 360, still pure red) rendered the thumb back at
-    // hue 0 — the far left — on the very next render.
-    //
-    // `lastEmittedColor` tracks the hex WE last sent via `onChange`. Only
-    // re-derive h/s/v from the incoming `color` prop when it does NOT match
-    // that — i.e. the picker is now showing a genuinely different color
-    // (opened for a different sensor), not just React echoing back the exact
-    // value this component itself just emitted.
+    // HSV is local state: RGB can't round-trip HSV at the hue wrap (0 and 360 are both red), and re-deriving snapped a far-right thumb to the left.
+    // Re-derive from `color` only when it differs from `lastEmittedColor` (a genuinely different colour, not our own echo).
     const [hsv, setHsv] = useState<[number, number, number]>(() => rgbToHsv(...hexToRgb(color)));
     const [lastEmittedColor, setLastEmittedColor] = useState(color);
     if (color !== lastEmittedColor) {

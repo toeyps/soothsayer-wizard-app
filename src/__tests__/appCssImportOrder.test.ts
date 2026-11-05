@@ -5,10 +5,7 @@ import { readFileSync } from 'node:fs';
 // `?raw` on a .css file returns '' under vitest, so read the file directly (cwd = repo root).
 const css: string = readFileSync('src/App.css', 'utf8');
 
-// CSS ignores any @import that comes after another rule, and Vite prints
-// "@import must precede all other statements". A Tailwind `@source` placed
-// before the Google Fonts @import silently dropped the Inter / JetBrains Mono
-// fonts. Every @import must come before any @source / rule.
+// CSS ignores an @import after any other rule, so every @import must come first (a @source before it dropped the fonts).
 describe('App.css statement order', () => {
   it('keeps every @import before the first @source or style rule', () => {
     const noComments = css.replace(/\/\*[\s\S]*?\*\//g, '');

@@ -1,26 +1,8 @@
 #!/usr/bin/env bash
-# ──────────────────────────────────────────────────────────────────────────
-# Build Soothsayer-Wizard installer for macOS Intel (x86_64).
-#
-# Run on a real Intel Mac (or an arm64 Mac running this script under Rosetta
-# `arch -x86_64 bash scripts/build-installer-mac-x64.sh` — but the simpler,
-# more reliable path is to run it on a native Intel Mac).
-#
-# The Python sidecar must be Mach-O x86_64 — Nuitka cross-compile from arm64
-# is unreliable for the numpy/scipy stack, so the script refuses to run on a
-# non-Intel host unless TIDE_FORCE_ROSETTA=1 is set (advanced; you own it).
-#
-# Prerequisites:
-#   - macOS on x86_64 (Intel) — OR arm64 + Rosetta + TIDE_FORCE_ROSETTA=1
-#   - Xcode Command Line Tools
-#   - Rust toolchain with x86_64-apple-darwin target
-#   - Node.js 18+ / npm
-#   - Python 3.11+ (Intel build — Rosetta python if forcing on arm64 host)
-#
-# Output:
-#   src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/
-#     Soothsayer-Wizard_<version>_x64.dmg
-# ──────────────────────────────────────────────────────────────────────────
+# Build the macOS Intel (x86_64) installer. Run on a native Intel Mac.
+# The sidecar must be x86_64: Nuitka cross-compile from arm64 is unreliable for numpy/scipy,
+# so a non-Intel host is refused unless TIDE_FORCE_ROSETTA=1.
+# Output: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/
 
 set -euo pipefail
 
@@ -39,7 +21,6 @@ cd "$REPO_ROOT"
 TARGET="x86_64-apple-darwin"
 START_TS=$(date +%s)
 
-# ─── 1. Prerequisites ─────────────────────────────────────────────────────
 step "1/5  Checking prerequisites"
 
 [[ "$(uname -s)" == "Darwin" ]] || fail "This script must run on macOS. Detected: $(uname -s)"
@@ -91,7 +72,6 @@ done
 [[ -n "$PYTHON_BIN" ]] || fail "Python 3.11+ missing. Install via: brew install python@3.11"
 ok "Python $($PYTHON_BIN --version | awk '{print $2}') ($PYTHON_BIN)"
 
-# ─── 2. npm install ───────────────────────────────────────────────────────
 step "2/5  Installing npm dependencies"
 if [[ -d node_modules && -f node_modules/.package-lock.json ]] \
    && [[ node_modules/.package-lock.json -nt package-lock.json ]]; then
@@ -101,13 +81,11 @@ else
     ok "npm ci complete"
 fi
 
-# ─── 3. Python sidecar ────────────────────────────────────────────────────
 step "3/5  Building Python sidecar (Nuitka)"
 SIDECAR="src-tauri/bin/backend-${TARGET}"
 if [[ -f "$SIDECAR" ]]; then
     SIZE=$(du -h "$SIDECAR" | awk '{print $1}')
-    # Verify the existing binary really is x86_64 — if a previous arm64 run
-    # left a binary with this name it would still pass this check naively.
+    # A leftover arm64 binary with this name would pass a plain existence check.
     if file "$SIDECAR" | grep -q "x86_64"; then
         warn "Sidecar already exists ($SIZE, x86_64) — skipping rebuild"
         warn "Force rebuild with: rm $SIDECAR && $0"
@@ -141,15 +119,11 @@ if [[ ! -f "$SIDECAR" ]]; then
     ok "Sidecar built ($(du -h "$SIDECAR" | awk '{print $1}'), x86_64)"
 fi
 
-# ─── 4. Tauri build ───────────────────────────────────────────────────────
 step "4/5  Building Tauri app + DMG installer"
-# --remap-path-prefix keeps this machine's paths (user name, repo folder,
-# cargo registry) out of the shipped binary; computed here because the
-# paths differ per build machine. Scoped to this one command.
+# Remap paths so this machine's user/repo/cargo paths stay out of the binary.
 REMAP_FLAGS="--remap-path-prefix=${REPO_ROOT}=wizard --remap-path-prefix=${HOME}=~"
 RUSTFLAGS="${RUSTFLAGS:+${RUSTFLAGS} }${REMAP_FLAGS}" npm run tauri -- build --target "${TARGET}"
 
-# ─── 5. Locate + report installer ─────────────────────────────────────────
 step "5/5  Locating installer"
 DMG_DIR="src-tauri/target/${TARGET}/release/bundle/dmg"
 APP_DIR="src-tauri/target/${TARGET}/release/bundle/macos"

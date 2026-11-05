@@ -1,5 +1,4 @@
-# Makes every test-data folder the manual test plan (docs/testing/MANUAL_TEST_PLAN.md) needs, in one go.
-# Which plan item uses which file: docs/testing/TEST_DATA_GUIDE.md.
+# Makes every test-data folder the manual test plan needs (file-to-item map: docs/testing/TEST_DATA_GUIDE.md).
 #
 # Usage (standard library only, run from the project folder):
 #   python scripts/make-all-testdata.py                      # -> C:\WizardTestData (a few seconds, ~50 MB)

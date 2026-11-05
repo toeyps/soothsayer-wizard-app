@@ -10,9 +10,7 @@ export interface AppMenuHandlers {
     onAbout: () => void;
 }
 
-// Builds a native cross-platform menu (app menu bar on macOS, window menu on Windows/Linux)
-// using the Tauri v2 menu API. Rebuilt only when the enabled/disabled state changes; action
-// closures read latest handlers via a ref so we don't rebuild on every render.
+// Native menu (Tauri v2 menu API), rebuilt only when enabled/disabled state changes; action closures read the latest handlers via a ref.
 export function useAppMenu(handlers: AppMenuHandlers) {
     const handlersRef = useRef(handlers);
     useEffect(() => { handlersRef.current = handlers; }, [handlers]);

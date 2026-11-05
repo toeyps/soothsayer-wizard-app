@@ -1,9 +1,6 @@
 @import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-/* Tailwind v4 scans every non-ignored file for class names. A doc that quotes a Windows path
-   containing a backslash followed by hex digits is read as a CSS escape with an impossible code
-   point and the whole build dies with "Invalid code point". The app uses
-   Tailwind classes only under src/, so docs and scripts are excluded. */
+/* Tailwind scans docs too; a Windows path with a backslash and hex digits parses as a bad CSS escape and breaks the build. */
 @source not "../docs";
 @source not "../scripts";
 @source not "../CLAUDE.md";
@@ -14,10 +11,7 @@
     width: 100%;
 }
 
-/* Wraps whichever page App.tsx is showing (Import wizard vs Dashboard).
-   That swap is a full unmount/mount with nothing shared between the two —
-   without this it read as the whole program closing and reopening rather
-   than a page change. */
+/* Wraps the Import/Dashboard swap, which is a full unmount/mount. */
 .app-page-transition {
     display: flex;
     flex-direction: column;
@@ -26,7 +20,6 @@
     animation: fadeIn 0.2s ease-out;
 }
 
-/* Import Screen */
 
 .card {
     background: var(--card-bg);
@@ -49,7 +42,6 @@
     margin-bottom: 2rem;
 }
 
-/* Filter Panel */
 
 .time-range-inputs {
     display: flex;
@@ -61,7 +53,6 @@
     color: var(--text-secondary);
 }
 
-/* Sensor Filter Dropdown */
 .sensor-filter-group {
     position: relative;
 }
@@ -70,18 +61,13 @@
     border-color: var(--accent-color);
 }
 
-/* Dashboard Grid 2x2 — note: kept the class name for back-compat, but the
-   layout is now flex-based so split.js can inject draggable gutters between
-   the columns. The visual separation between panels is provided by the
-   split.js gutter element (.gutter / .gutter-horizontal / .gutter-vertical
-   defined further down), so no `gap` here. */
+/* Flex layout so split.js can inject gutters between columns; no `gap`. */
 
 .left-column {
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    /* Initial flex ratio before split.js applies inline width. Matches the
-       previous 2fr:1fr grid template so the first paint isn't a jump. */
+    /* Initial 2:1 ratio before split.js sets inline width. */
     flex: 2 1 0;
     min-width: 0;
     min-height: 0;
@@ -108,10 +94,7 @@
     min-height: 0;
 }
 
-/* Wrapper around the right-column's sensors + filter panels — split.js
-   manages these two. The Save & Continue button sits OUTSIDE this wrapper
-   (still a child of .right-column) so resizing the panels never pushes the
-   save button off-screen or below the fold. */
+/* Holds the two split.js panels; Save & Continue stays outside so resizing never pushes it off-screen. */
 .right-column-splits {
     display: flex;
     flex-direction: column;
@@ -130,7 +113,6 @@
     flex: 1;
 }
 
-/* Section Header Layout */
 
 .section-header-actions {
     display: flex;
@@ -138,7 +120,6 @@
     gap: 0.5rem;
 }
 
-/* Section Badges */
 
 @keyframes pulse-badge {
 
@@ -162,9 +143,7 @@
     color: var(--text-secondary);
 }
 
-/* "Blocked" looks identical to :disabled but stays a real, clickable button —
-   used where the click itself must fire (e.g. Pair Plot over the sensor cap
-   explains why via a dialog instead of just refusing to respond). */
+/* Looks disabled but stays clickable so the click can explain why (e.g. Pair Plot over the sensor cap). */
 .chart-type-btn.blocked,
 .chart-type-btn.blocked:hover {
     opacity: 0.35;
@@ -173,7 +152,6 @@
     color: var(--text-secondary);
 }
 
-/* Save & Continue Section */
 
 .chart-wrapper > * {
     flex: 1 1 auto;
@@ -182,7 +160,6 @@
     min-width: 0;
 }
 
-/* Chart Bottom Tab */
 
 .time-range-tab-group {
     display: flex;
@@ -197,7 +174,6 @@
     flex-direction: column;
 }
 
-/* Sensor Selection Widget */
 .sensor-selection-widget {
     display: flex;
     flex-direction: column;
@@ -291,7 +267,6 @@
     background: #10b981;
 }
 
-/* Data Table */
 
 table {
     width: 100%;
@@ -334,7 +309,6 @@ tr:hover {
     font-size: 0.9rem;
 }
 
-/* Spinner */
 .spinner {
     width: 20px;
     height: 20px;
@@ -350,7 +324,6 @@ tr:hover {
     }
 }
 
-/* Widget Footer */
 
 @keyframes fadeIn {
     from {
@@ -374,7 +347,6 @@ tr:hover {
     }
 }
 
-/* Custom TitleBar */
 .titlebar {
     height: 32px;
     background: var(--bg-secondary);
@@ -444,7 +416,6 @@ tr:hover {
     box-sizing: border-box;
 }
 
-/* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
@@ -463,13 +434,11 @@ tr:hover {
     background: var(--text-faint);
 }
 
-/* Split JS Gutters */
 
 .gutter.gutter-horizontal {
     cursor: col-resize;
 }
 
-/* Collapsible Dashboard Panels */
 .dashboard-container {
     display: flex;
     flex-direction: column;
@@ -486,10 +455,7 @@ tr:hover {
     letter-spacing: 0.02em;
     text-align: center;
     white-space: normal;
-    /* `normal` (not `break-word`) so wrapping only happens at spaces —
-       "Control Chart" wraps cleanly into two words, and a single
-       long word like "Sensors" is never sliced into an orphaned
-       leftover letter on its own line. */
+    /* `normal`, not `break-word`: wrap only at spaces, never slice a single word. */
     word-break: normal;
     overflow-wrap: normal;
     line-height: 1.25;
@@ -501,12 +467,7 @@ tr:hover {
     align-items: center;
 }
 
-/* =============================================
-   Dashboard slot wrapper (resizable panel container)
-   =============================================
-   Generic flex passthrough — split.js sets inline `flex-basis` on this
-   element, and the inner `.chart-section-large` / `.widget-section` keeps
-   its own visual card styling (background, border). */
+/* Passthrough flex slot; split.js sets inline flex-basis. */
 .dashboard-slot {
     display: flex;
     flex-direction: column;
@@ -516,7 +477,6 @@ tr:hover {
     overflow: hidden;
 }
 
-/* Animation for panels */
 
 @keyframes panelExpand {
     from {
@@ -530,12 +490,7 @@ tr:hover {
     }
 }
 
-/* When ALL panels in a column are collapsed, the column has no visible
-   content. The horizontal split useEffect tears down split.js for this case
-   (so the surviving column has no leftover inline width from split.js),
-   and these rules visually remove the empty column so the other one fills
-   the row. The class flags are set in Dashboard.tsx based on whichever
-   panels happen to be in each column's slots. */
+/* When every panel in a column is collapsed, split.js is torn down and the empty column is hidden so the other fills the row. */
 .dashboard-grid-2x2.left-fully-collapsed .left-column {
     display: none;
 }
@@ -549,21 +504,12 @@ tr:hover {
     flex: 1 1 100%;
 }
 
-/* The collapsed-tabs-sidebar is `position: fixed; left: 0`, floating over
-   whatever sits at the viewport's left edge. Without this, it overlaps the
-   chart's y-axis labels/scale once enough panels are hidden that the chart
-   reaches all the way to x=0. Reserve room instead of overlapping. */
+/* The collapsed sidebar is fixed at left:0; reserve room so it does not cover the chart's y-axis. */
 .dashboard-grid-2x2.has-collapsed-sidebar {
     padding-left: 76px;
 }
 
-/* =============================================
-   split.js Gutter (dashboard resize handles)
-   =============================================
-   Wide hit-target (12px) for easy grabbing, with a 2px centered line as the
-   visual indicator. Hover state highlights with accent color so the user
-   knows it's interactive. The `.gutter` element itself is injected by
-   split.js between adjacent panels. */
+/* 12px hit target with a centred 2px line; split.js injects the .gutter element. */
 .gutter {
     background-color: transparent;
     background-repeat: no-repeat;
@@ -612,9 +558,6 @@ tr:hover {
     height: 2px;
 }
 
-/* =============================================
-   Shared form rows (Build Model Workbench)
-   ============================================= */
 
 .filter-row {
     display: flex;
@@ -629,7 +572,6 @@ tr:hover {
     font-weight: 500;
 }
 
-/* Plot Cards */
 
 .plot-placeholder {
     display: flex;
@@ -644,7 +586,6 @@ tr:hover {
     font-size: 0.9rem;
 }
 
-/* Model Stats Bar */
 .model-stats-bar {
     background: var(--card-bg);
     border: 1px solid var(--border);
@@ -670,7 +611,6 @@ tr:hover {
     gap: 0;
 }
 
-/* RIGHT - Sensor List Panel */
 
 .sensor-list-panel-header {
     padding: 0.6rem 0.75rem;
@@ -736,11 +676,7 @@ tr:hover {
     border-top: 1px solid var(--border);
 }
 
-/* =============================================
-   Failure Group Creation Page
-   ============================================= */
 
-/* ── New Group Dialog ── */
 
 @keyframes fgFadeIn {
     from {
@@ -754,7 +690,6 @@ tr:hover {
     }
 }
 
-/* ── Model Build Panel (Right side) ── */
 
 @keyframes fgSlideIn {
     from {
@@ -768,7 +703,6 @@ tr:hover {
     }
 }
 
-/* ── New Group Dialog ── */
 
 @keyframes fgFadeIn {
     from {
@@ -782,7 +716,6 @@ tr:hover {
     }
 }
 
-/* ── Model Build Panel (Right side) ── */
 
 @keyframes fgSlideIn {
     from {
@@ -796,7 +729,6 @@ tr:hover {
     }
 }
 
-/* ── Model Build Panel (Right side) ── */
 
 @keyframes fgSlideIn {
     from {
@@ -846,7 +778,6 @@ tr:hover {
     cursor: not-allowed;
 }
 
-/* Sensor list panel items with description */
 .sensor-list-text {
     display: flex;
     flex-direction: column;
@@ -864,9 +795,6 @@ tr:hover {
     text-overflow: ellipsis;
 }
 
-/* =============================================
-   Dashboard Design Refresh — Linear/Vercel style
-   ============================================= */
 
 :root {
     /* Drives native form-control chrome (number spinners, date/time
@@ -903,50 +831,27 @@ tr:hover {
     --blue-bg: rgba(59, 130, 246, 0.12);
     --blue-line: rgba(59, 130, 246, 0.4);
     --blue-soft: rgba(59, 130, 246, 0.22);
-    /* Model kind identity (Build Model window) — deliberately distinct from
-     * --perf/--cond above (those mean category, a different axis) so a
-     * card's kind icon and category chip never share a color. */
+    /* Kind colours differ from --perf/--cond (a different axis) so icon and chip never share a colour. */
     --kind-clu: oklch(0.72 0.12 200);
     --kind-clu-muted: oklch(0.72 0.12 200 / 0.16);
-    /* Consolas named explicitly (DESIGN_SYSTEM §3.2): the installed app renders the fallback,
-     * so the fallback is the one designed for. */
+    /* Consolas is named explicitly: the installed app renders the fallback. */
     --mono: 'JetBrains Mono', Consolas, ui-monospace, SFMono-Regular, Menlo, monospace;
 
-    /* ---- Shared design tokens ----
-     * Short names (`--pop`, `--ki`/`--kr`/`--kc`, `--ok-m`) aliased via var(...)
-     * onto the base tokens above rather than duplicated, so a change to a base
-     * token still propagates. */
-    --pop: #17171c; /* distinct popover surface -- the prototype's own
-        --pop, a touch lighter than --card-bg (#101012) / --input-bg
-        (#16161a) so a floating popover still reads as "above" the card or
-        input it's anchored to, instead of blending into either */
-    --ki: var(--accent-hi); /* Individual kind colour -- already this exact
-        value via BuildModelWindow.tsx's local `KIND_COLOR` map and
-        `.model-kind-icon--individual`; oklch(0.74 0.17 245) matches the
-        prototype's own --ki */
-    --kr: var(--warn); /* Relationship kind colour -- same note as --ki;
-        oklch(0.78 0.14 75) matches the prototype's own --kr exactly */
-    --kc: var(--kind-clu); /* Clustering kind colour -- same note as --ki;
-        oklch(0.72 0.12 200) matches the prototype's own --kc exactly */
+    /* Short aliases point at the base tokens so base changes propagate. */
+    --pop: #17171c; /* Popover surface slightly lighter than --card-bg and --input-bg so it reads as floating. */
+    --ki: var(--accent-hi);
+    --kr: var(--warn); /* Relationship kind colour */
+    --kc: var(--kind-clu); /* Clustering kind colour */
     --ki-m: var(--accent-muted);
     --kr-m: var(--warn-muted);
     --kc-m: var(--kind-clu-muted);
-    --ok-m: rgba(16, 185, 129, 0.14); /* generic success/"Complete" tint --
-        same green as --ok, same literal value as the existing
-        --perf-muted, but named without --perf's "Performance category"
-        meaning -- for the new Complete/Trained status dot below and any
-        future success pill outside the Performance/Condition axis */
+    --ok-m: rgba(16, 185, 129, 0.14); /* Generic success tint, same green as --ok, without --perf's category meaning. */
     /* The blue "next step" callout / assign bar — the accent hue at a
      * hairline and a wash strength. */
     --accent-line: oklch(0.68 0.17 245 / 0.35);
     --accent-wash: oklch(0.68 0.17 245 / 0.08);
-    --dot-empty: #26262c; /* neutral "no status yet" fill for the new
-        kind-badge corner dot below -- not meaningful outside that one use,
-        so it isn't generalised into a broader token */
-    /* The special-sensor Formula editor
-     * (`SpecialSensorFormulaEditor.tsx`, DESIGN_SYSTEM §4.1). Functions are
-     * painted teal (`--fnc`), sensor references as
-     * accent chips, brackets cycle white → teal → violet → green by depth. */
+    --dot-empty: #26262c; /* Neutral 'no status yet' fill for the kind-badge corner dot. */
+    /* Formula editor colours: functions teal, sensor refs as accent chips, brackets cycle by depth. */
     --fnc: oklch(0.78 0.12 200);
     --fnc-muted: oklch(0.78 0.12 200 / 0.14);
     --fnc-line: oklch(0.78 0.12 200 / 0.4);
@@ -970,10 +875,7 @@ body {
     letter-spacing: -0.005em;
 }
 
-/* Grid & columns (theme overrides). Layout itself is flex-based now —
-   `grid-template-columns` and `gap` were dropped because split.js manages
-   the column widths inline and inserts gutter elements as visual separators.
-   The padding/background still apply. */
+/* Flex layout; split.js sets column widths inline and inserts the gutters. */
 .dashboard-grid-2x2 {
     display: flex;
     padding: 16px;
@@ -983,7 +885,6 @@ body {
     background: var(--bg-primary);
 }
 
-/* Cards */
 .chart-section-large,
 .widget-section {
     animation: panelExpand 0.2s ease-out;
@@ -992,7 +893,6 @@ body {
     border-radius: 10px;
 }
 
-/* Section headers */
 .section-header {
     padding: 14px 18px;
     border-bottom: 1px solid var(--border);
@@ -1018,7 +918,6 @@ body {
     gap: 10px;
 }
 
-/* Badges / Pills — monospace, uppercase, subtle */
 .section-badge {
     font-size: 10.5px;
     padding: 2px 7px;
@@ -1040,7 +939,6 @@ body {
     border-color: transparent;
 }
 
-/* Segmented control — chart type group */
 .chart-type-group {
     display: inline-flex;
     gap: 2px;
@@ -1075,7 +973,6 @@ body {
     box-shadow: none;
 }
 
-/* Collapse button */
 .collapse-btn {
     display: flex;
     align-items: center;
@@ -1097,7 +994,6 @@ body {
     border-color: var(--border-strong);
 }
 
-/* Export button in header — secondary style */
 .export-btn-header {
     display: flex;
     align-items: center;
@@ -1120,7 +1016,6 @@ body {
     border-color: var(--border-strong);
 }
 
-/* Widget footer / Add special sensor — dashed ghost */
 .widget-footer {
     padding: 12px 16px;
     border-top: 1px solid var(--border);
@@ -1152,7 +1047,6 @@ body {
     border-color: var(--text-faint);
 }
 
-/* Collapsed tabs sidebar */
 .collapsed-tabs-sidebar {
     position: fixed;
     left: 0;
@@ -1192,7 +1086,6 @@ body {
     transform: none;
 }
 
-/* Data table styling */
 .chart-section-large th,
 .widget-section th {
     background: var(--surface-hi);
@@ -1219,7 +1112,6 @@ body {
     background: var(--hover-bg);
 }
 
-/* Chart wrapper padding tighten */
 .chart-wrapper {
     padding: 14px 18px;
     flex: 1;
@@ -1232,14 +1124,12 @@ body {
     position: relative;
 }
 
-/* Filter panel */
 .filter-content {
     padding: 14px 16px;
     display: flex;
     align-items: flex-start;
 }
 
-/* Scrollbar subtle */
 .widget-content::-webkit-scrollbar,
 .sensor-list-widget::-webkit-scrollbar {
     width: 8px;
@@ -1252,11 +1142,7 @@ body {
     border-radius: 4px;
 }
 
-/* =============================================
-   Failure Group Creation — Design Refresh
-   ============================================= */
 
-/* Group cards */
 .fg-group-card {
     border: 1px solid var(--border);
     border-radius: 10px;
@@ -1299,7 +1185,6 @@ body {
     border-color: var(--danger);
 }
 
-/* Build model button — primary */
 .fg-build-model-btn {
     display: inline-flex;
     align-items: center;
@@ -1330,7 +1215,6 @@ body {
     transform: none;
 }
 
-/* ── Group color accent tints ──────────────────────────────────────── */
 
 .fg-group-color-slate {
     --fg-dot: oklch(0.68 0.02 250);
@@ -1366,18 +1250,13 @@ body {
     display: inline-block;
 }
 
-/* Inspector footer */
 
 .fg-build-model-btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
 
-/* =============================================
-   Inspector Panel Layout Fix
-   ============================================= */
 
-/* Field blocks */
 .fg-inspector-field {
     display: flex;
     flex-direction: column;
@@ -1403,7 +1282,6 @@ body {
     line-height: 1;
 }
 
-/* Inputs */
 .fg-inspector-input {
     padding: 8px 10px;
     background: var(--bg-primary);
@@ -1428,19 +1306,11 @@ body {
     color: var(--text-faint);
 }
 
-/* =============================================
-   Failure Group — Responsive breakpoints
-   ============================================= */
 
-/* Small: ≤860px — inspector overlays left column */
 @media (max-width: 860px) {
 
-    /* Inspector becomes an overlay panel on narrow screens */
 }
 
-/* ──────────────────────────────────────────────────────────────
-   Shared button / chip / chart-modal styles (pm-* — Workbench + SensorPickers)
-   ────────────────────────────────────────────────────────────── */
 
 .pm-btn {
     display: inline-flex;
@@ -1463,15 +1333,9 @@ body {
 
 .pm-btn-sm { padding: 4px 10px; font-size: 11.5px; }
 
-/* Target card */
 
-/* Segmented */
 
-/* The model's kind is fixed (chosen on the Build Model overview page), so
-   the two non-matching buttons are locked rather than clickable — dimmed
-   instead of hidden so the kind stays visible at a glance. */
 
-/* Chart card */
 
 .pm-chart-title-block { flex: 1; min-width: 0; }
 .pm-chart-title {
@@ -1487,22 +1351,14 @@ body {
     margin-top: 2px;
 }
 
-/* Called out next to the chart's own zoom control —
-   clarifies that zoom only changes what's visible here.
-   Accent-tinted (not plain --chip-bg like .pm-count-pill) so
-   it reads as "worth reading", not just another stat pill. */
 
-/* ── Expand button on each chart header ───────────────────────────── */
 
-/* ── Expanded-chart fullscreen modal ─────────────────────────────── */
-/* Also reused by BuildModelWindow.tsx's own expand-chart modal (shared
-   class, grep-confirmed) — this backdrop value change benefits both. */
+/* Shared with BuildModelWindow's expand-chart modal. */
 .pm-chart-modal-backdrop {
     position: fixed;
     inset: 0;
     z-index: 1000;
-    /* The app's glass-backdrop pattern: rgba(0,0,0,.55) + blur(2px), same as
-       `.predictor-picker-backdrop` above and `.bmw-modal-backdrop`. */
+    /* Glass backdrop shared with .predictor-picker-backdrop and .bmw-modal-backdrop. */
     background: rgba(0, 0, 0, 0.55);
     backdrop-filter: blur(2px);
     -webkit-backdrop-filter: blur(2px);
@@ -1569,11 +1425,6 @@ body {
     flex-direction: column;
 }
 
-/* ── Preview Modal ─────────────────────────────────────────────────
-   Triggered by the toolbar Preview button. Lays out wizard.py's
-   `PreviewModel.{individual, relationship, clustering}` outputs in a
-   single scrollable card so the user can review before clicking Save
-   Model (which commits files to disk). */
 .pm-preview-modal-backdrop {
     position: fixed;
     inset: 0;
@@ -1588,12 +1439,7 @@ body {
     padding: 32px;
     animation: pm-chart-modal-fade 0.14s ease-out;
 }
-/* The sub-models modal needs to feel "full screen" — slim the backdrop
-   gutter from 32px → 16px so the wide 2-column chart grid doesn't lose
-   pixels to dead space. `:has()` ships in every Tauri-shipped webview
-   (WebKit / Blink / WebView2 ≥ 105). Falls through to the default
-   32px padding on the off chance a runtime predates :has() support,
-   which still works — just slightly snugger margins. */
+/* Sub-models modal uses 16px backdrop padding; without :has() support it falls back to 32px. */
 .pm-preview-modal-backdrop:has(> .pm-submodels-modal-card) {
     padding: 16px;
 }
@@ -1647,15 +1493,9 @@ body {
     border-radius: 6px;
 }
 
-/* ── Sub-models Modal ──────────────────────────────────────────────
-   Shares the .pm-preview-modal-* shell but expands to fill (almost)
-   the full viewport so the 2-column grid of per-step scatter charts
-   has room to breathe on every screen size. The backdrop's 32px
-   padding becomes the modal's natural outer margin. */
+/* Shares the .pm-preview-modal-* shell but fills the viewport. */
 .pm-submodels-modal-card {
-    /* Drop the preview modal's 880px width cap entirely — sub-models
-       need every horizontal pixel they can get, especially on wide
-       monitors where the preview text card looks lonely. */
+    /* No 880px cap; sub-models need the width. */
     max-width: none;
     width: 100%;
     /* `100vh - 32px` matches the slimmer 16px×2 backdrop padding for
@@ -1663,19 +1503,13 @@ body {
     max-height: calc(100vh - 32px);
     height: calc(100vh - 32px);
 }
-/* Override the parent .pm-preview-modal-body's flex layout — sub-models
-   render as a 2-column responsive grid so several cumulative-step
-   charts fit in view at once. Falls back to a single column under the
-   ~900px breakpoint where two scatters would each be too cramped.
-   Tighter padding gives the charts more breathing room. */
+/* Two-column chart grid; one column under 900px. */
 .pm-submodels-body {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 14px;
     align-content: start;
-    /* Every row is as tall as its cards NEED and the body scrolls. With plain `auto` rows and
-       cards that may shrink, three or more rows (5+ predictors) were squeezed into the height
-       of the window and each chart ran over the card below it. */
+    /* max-content rows: with auto rows, 5+ predictors squeezed the cards and charts overflowed. */
     grid-auto-rows: max-content;
     padding: 14px 16px;
 }
@@ -1711,9 +1545,6 @@ body {
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-secondary, rgba(0, 0, 0, 0.05));
-    /* Trimmed from 14px / 12px to give the chart more vertical room
-       inside a viewport-sized modal — chrome was overflowing on
-       shorter screens. */
     padding: 10px 12px;
     display: flex;
     flex-direction: column;
@@ -1757,9 +1588,7 @@ body {
     color: var(--text-secondary);
     margin: 0 2px;
 }
-/* One sensor of a step: the shared inline label (description, then tag) in a chip. The row
-   wraps, so three predictors with long descriptions take two lines instead of pushing the
-   numbers out of the card. */
+/* One chip per predictor; the row wraps so long descriptions do not push the numbers out. */
 .pm-submodel-predictors {
     display: flex;
     flex-wrap: wrap;
@@ -1808,21 +1637,13 @@ body {
 }
 .pm-submodel-chart {
     width: 100%;
-    /* Each card occupies ~half the modal body, minus its own chrome.
-       The `calc(50vh - 140px)` term targets that budget: 140px ≈
-       modal header (~50) + body padding (~28) + card padding/header/gap
-       (~62) — averaged so two rows fit comfortably on a 720p+ screen
-       without the bottom card clipping. Clamped to a 180px floor for
-       legibility and a 420px ceiling so big monitors don't get
-       sparse-looking cards. */
+    /* About half the modal body minus its chrome; clamped to 220-420px. */
     height: clamp(220px, calc(50vh - 140px), 420px);
     min-height: 220px;
-    /* The chart fills THIS box (it used to be a fixed 280 px inside a box that could be
-       shorter, so it hung out of the card on a short window). */
+    /* The chart fills this box. */
     flex: none;
     overflow: hidden;
 }
-/* ── Configure Clustering Model layout ────────────────────────────── */
 
 .pm-field-hint-inline {
     font-size: 0.65rem;
@@ -1832,10 +1653,7 @@ body {
     margin-left: 2px;
 }
 
-/* Per-cluster range list — one row per cluster, each row showing a
-   colour swatch (matching the scatter chart palette), the cluster id,
-   and a [min, max) range pair. Replaces the single Min—Max input from
-   the pre-multi-cluster build. */
+/* Per-cluster range row: colour swatch, id and range. */
 .pm-cluster-range-dot {
     display: inline-block;
     width: 10px;
@@ -1846,11 +1664,7 @@ body {
     box-shadow: 0 0 0 2px var(--bg-secondary, rgba(15, 23, 42, 0.3));
 }
 
-/* =============================================
-   Cluster slider — multi-handle range editor for clustering ranges.
-   Replaces the per-cluster Min/Max number inputs. Track shows colored
-   segments per cluster + N-1 draggable split handles at boundaries.
-   ============================================= */
+/* Multi-handle cluster range editor: coloured segments with N-1 draggable split handles. */
 .pm-cluster-slider {
     display: flex;
     flex-direction: column;
@@ -1898,9 +1712,7 @@ body {
     opacity: 0.65;
 }
 
-/* Track holds segments + handles. Position:relative anchors absolutely-
-   positioned children. Fixed height keeps layout stable when segments
-   redistribute on handle drag. */
+/* Positioning anchor for segments and handles; fixed height keeps layout stable while dragging. */
 .pm-cluster-slider-track {
     position: relative;
     height: 32px;
@@ -1934,8 +1746,7 @@ body {
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
 }
 
-/* Draggable split handle — a vertical bar centered on its split value.
-   Sits on top of segments (higher z-index) so it stays grabbable. */
+/* Handle sits above the segments (z-index) so it stays grabbable. */
 .pm-cluster-slider-handle {
     position: absolute;
     top: -3px;
@@ -2000,9 +1811,6 @@ body {
     min-height: 280px;
 }
 
-/* =============================================
-   regl-scatterplot wrapper (Dashboard scatter chart)
-   ============================================= */
 .scatter-regl-wrap {
     position: relative;
     width: 100%;
@@ -2013,12 +1821,10 @@ body {
 .scatter-regl-controls {
     position: absolute;
     top: 10px;
-    /* Starts 8 px inside the plot's left edge (ScatterChart's AXIS_PADDING.left = 88): at the
-       old 70 px the bar sat over the top Y tick label, which ends at 80 px. */
+    /* Starts 8px inside the plot's left edge (ScatterChart AXIS_PADDING.left = 88) to clear the top Y tick label. */
     left: 96px;
     z-index: 10;
-    /* Stops 8 px before the icon buttons (.scatter-regl-toolbox: 12 px from the edge, 90 px wide with
-       3 tools, 118 px with Clear all); the pickers shrink. */
+    /* Stops 8px before the toolbox (12px from the edge, 90px wide, 118px with Clear all); pickers shrink. */
     box-sizing: border-box;
     max-width: calc(100% - 96px - 12px - 90px - 8px);
     display: flex;
@@ -2124,11 +1930,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 6px;
-    /* The popover surface token, not a plain
-     * card — this is a floating editor over the chart canvas, same family
-     * as `.popover-surface` even though it isn't portaled (it's
-     * positioned within the chart's own non-scrolling wrapper, so it is
-     * never clipped by a scrolling ancestor). */
+    /* Popover surface; not portaled because the chart's wrapper does not scroll, so nothing clips it. */
     background: var(--pop);
     border: 1px solid var(--border-strong);
     border-radius: 10px;
@@ -2207,10 +2009,6 @@ body {
     border-top: 1px solid var(--border);
 }
 
-/* =============================================
-   Tag Point — Line chart's own toolbox (Scatter's tag
-   button reuses the existing .scatter-regl-tool classes above)
-   ============================================= */
 .line-chart-toolbox {
     position: absolute;
     top: 10px;
@@ -2254,18 +2052,11 @@ body {
     color: var(--accent-color);
 }
 
-/* Horizontal Zoom — dropdown menu opened from the Zoom tool button,
-   replacing the old always-visible dataZoom slider bar. */
+/* Horizontal Zoom: dropdown menu opened from the Zoom tool button. */
 .line-chart-zoom-menu {
     position: absolute;
     top: calc(100% + 4px);
-    /* Right-anchored (hangs down-and-left from the button), not left-
-       anchored — the Zoom button sits at the toolbox's right edge, which
-       itself hugs the chart panel's own right edge (`right: 12px`). A
-       menu extending rightward from there overflows past the panel
-       boundary and gets clipped by its `overflow: hidden` (the resizable
-       split-pane layout) instead of showing in full. Opening it leftward
-       stays inside the much wider chart area instead. */
+    /* Right-anchored: the toolbox hugs the panel edge, so a rightward menu would be clipped by overflow:hidden. */
     right: 0;
     z-index: 12;
     display: flex;
@@ -2298,10 +2089,7 @@ body {
     color: var(--accent-color);
 }
 
-/* Tag Point — Scatter chart's ring/badge/callout overlay (DOM, not
-   WebGL — regl-scatterplot only draws points, so tagged-point chrome is
-   an absolutely-positioned layer on top, following the same technique
-   already used for the axis SVG overlay). */
+/* Tag ring/badge/callout is a DOM overlay; regl-scatterplot only draws points. */
 .scatter-tag-ring {
     position: absolute;
     width: 18px;
@@ -2313,10 +2101,7 @@ body {
     pointer-events: none;
 }
 
-/* Tag Point — the values of the tagged points, in a table (`TagCompareTable.tsx`, Line and
-   Scatter). In the Dashboard it fills the "Tagged points" tab of the panel under the chart
-   (`.tag-panel`); with no such tab it docks under the chart. The chart keeps only a dot in
-   the tag's colour. */
+/* TagCompareTable (Line and Scatter): fills the Tagged points tab in the Dashboard, otherwise docks under the chart. */
 .chart-with-tags {
     display: flex;
     flex-direction: column;
@@ -2340,10 +2125,7 @@ body {
     background: var(--card-bg);
 }
 
-/* In the Dashboard's tab: the whole tab is the table (SPEC
-   docs/design/handoff/dashboard-tagged-points): the head band and the row lines cross the full
-   width, rows are 30 px, a point's head is two short lines (date, time) under a rule in the
-   tag's colour, the unit is printed once per row, and a hovered row lights up. */
+/* Dashboard tab variant: full-width head band and row lines, 30px rows, unit printed once per row. */
 .tag-table--panel {
     max-height: none;
     height: 100%;
@@ -2408,7 +2190,6 @@ body {
     display: contents;
 }
 
-/* Head band */
 .tag-table-corner,
 .tag-table .chart-tag-item,
 .tag-table-fill--head {
@@ -2466,9 +2247,7 @@ body {
     font-weight: 500;
 }
 
-/* The column heads are the tag list itself, each tag one cell of the grid:
-   [dot] date / time [×]. The rule on top is the tag's colour — the same colour as its dot
-   and dashed line on the chart. */
+/* Column heads are the tag list; the top rule uses the tag's colour, same as its dot and dashed line. */
 .tag-table .chart-tag-list {
     display: contents;
 }
@@ -2528,7 +2307,6 @@ body {
     opacity: 1;
 }
 
-/* Rows */
 .tag-table-name,
 .tag-table-val,
 .tag-table-fill {
@@ -2579,8 +2357,7 @@ body {
     color: var(--text-primary);
 }
 
-/* A narrow name cell gives its room to the description: the tag (still in the tooltip) hides
-   sooner here than the shared label's 150 px. */
+/* A narrow name cell hides the tag sooner than the shared 150px (it stays in the tooltip). */
 @container (max-width: 250px) {
     .tag-table-name .sl-fit .sl-tag { display: none; }
 }
@@ -2645,8 +2422,7 @@ body {
     color: var(--text-primary);
 }
 
-/* The tag-mode hint of the Scatter chart, in the right-hand column under its toolbox
-   (z-index 10, below the toolboxes' 11 and Scatter's axis editor at 12). */
+/* Tag-mode hint under the toolbox (z-index 10, below the toolboxes at 11 and the axis editor at 12). */
 .chart-tag-anchor {
     position: absolute;
     top: 44px;
@@ -2723,9 +2499,6 @@ body {
     outline: none;
 }
 
-/* =============================================
-   Pair plot (regl-scatterplot grid)
-   ============================================= */
 .pair-regl-wrap {
     position: relative;
     width: 100%;
@@ -2783,13 +2556,7 @@ body {
     position: relative;
     min-width: 0;
     min-height: 0;
-    /* NOT overflow:hidden — the axis-label hover tooltip (a sibling of
-       .pair-regl-cell, see AxisLabel in PairPlotChart.tsx) must be able to
-       spill outside a cell's own narrow bounds to show a full sensor
-       description. The chart itself is clipped one level deeper, on
-       .pair-regl-cell, which reaches the exact same pixel bounds since it's
-       sized to 100%/100% of this slot — so nothing about chart rendering
-       changes, only the tooltip gets room to render outside the cell. */
+    /* Not overflow:hidden: the axis-label tooltip must spill outside a narrow cell; the chart is clipped on .pair-regl-cell. */
 }
 
 .pair-regl-cell {
@@ -2809,11 +2576,7 @@ body {
     user-select: none;
 }
 
-/* Cluster legend strip ---------------------------------------------------
-   Chips in the 36px strip above the matrix, left of the toolbox — never over
-   the plot. One chip per cluster: ColourPicker swatch + name (renamable in
-   place) + x. "Clear" shows at 2+ clusters. On overflow the chip row scrolls
-   sideways with a fade on the right; Clear and the toolbox stay visible. */
+/* Legend chips in the 36px strip above the matrix; the row scrolls sideways on overflow, Clear shows at 2+ clusters. */
 .pp-legend {
     display: flex;
     align-items: center;
@@ -2956,7 +2719,6 @@ body {
 
 .pair-regl-expand-footer .pp-legend { min-height: 26px; }
 
-/* Magnifier click-to-inspect overlay --------------------------------- */
 .pair-regl-inspect-overlay {
     position: absolute;
     inset: 0;
@@ -2971,9 +2733,7 @@ body {
     box-shadow: inset 0 0 0 2px var(--accent-color);
 }
 
-/* Axis label hover tooltip (sensor description) — zero footprint at rest,
-   pure CSS :hover, no JS position tracking. See AxisLabel in
-   PairPlotChart.tsx. */
+/* Hover tooltip with the sensor description, pure CSS. */
 .pair-regl-axis-label.hoverable > span {
     text-decoration: underline dotted;
     text-underline-offset: 2px;
@@ -3004,7 +2764,6 @@ body {
     visibility: visible;
 }
 
-/* Enlarged-view dialog (one cell big, themed) ------------------------- */
 .pair-regl-expand-backdrop {
     position: fixed;
     inset: 0;
@@ -3101,11 +2860,7 @@ body {
     padding: 3px 6px;
 }
 
-/* ── Build Model window — model card row (BuildModelWindow.tsx) ───────────
- * Do NOT reuse `.fg-group-badge` here — that class is a fixed 20-22px
- * circular digit avatar for a different, unrelated feature; putting a full
- * word like "Individual" inside it overflows the box and overlaps
- * neighboring text. */
+/* Do not reuse .fg-group-badge: it is a fixed 20-22px circle and a full word overflows it. */
 .model-kind-icon {
     width: 30px;
     height: 30px;
@@ -3118,10 +2873,7 @@ body {
     font-weight: 700;
 }
 
-/* One distinct color per kind so the icon reads at a glance without having
- * to read the abbreviation letter — and deliberately different hues from
- * --perf/--cond (category chips on the same card) so the two axes never
- * look like they're saying the same thing. */
+/* Distinct hue per kind, different from --perf/--cond. */
 .model-kind-icon--individual {
     background: var(--accent-muted);
     color: var(--accent-hi);
@@ -3193,13 +2945,7 @@ body {
     font-family: var(--mono);
 }
 
-/* =====================================================================
- * Running Condition panel, Training periods, sensor rows.
- * `f4-` prefix so none of
- * this collides with the older `.pm-*` / `.fg-*` classes.
- * ===================================================================== */
 
-/* pills / counts / chips */
 .f4-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px; white-space: nowrap; flex-shrink: 0; }
 .f4-pill--blue { background: var(--blue-bg); color: var(--accent-color); border: 1px solid var(--blue-line); }
 .f4-pill--ok { background: var(--perf-muted); color: var(--perf); border: 1px solid rgba(16, 185, 129, 0.3); }
@@ -3207,7 +2953,6 @@ body {
 .f4-pill--warn { background: var(--warn-muted); color: var(--warn); border: 1px solid var(--warn-line); }
 .f4-pill--bad { background: var(--danger-muted); color: var(--danger); border: 1px solid var(--danger-line); }
 
-/* buttons / links / segmented */
 .f4-btn { display: inline-flex; align-items: center; gap: 4px; background: var(--blue-bg); border: 1px solid var(--blue-line); color: var(--accent-color); border-radius: 6px; padding: 5px 10px; font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
 .f4-btn:hover:not(:disabled) { background: var(--blue-soft); }
 .f4-btn--plain { background: var(--chip-bg); border-color: var(--border-strong); color: var(--text-primary); }
@@ -3226,7 +2971,6 @@ body {
 .f4-seg button:hover:not(.on) { color: var(--text-primary); }
 .f4-seg button.on { background: var(--blue-bg); border-color: var(--blue-line); color: var(--accent-color); }
 
-/* coverage bar */
 .f4-strip { position: relative; height: 14px; border-radius: 4px; background: repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 4px, transparent 4px 8px), var(--bg-primary); border: 1px solid var(--border-strong); overflow: hidden; }
 .f4-strip i { position: absolute; top: 0; bottom: 0; background: var(--blue-soft); border-left: 1px solid var(--accent-color); border-right: 1px solid var(--accent-color); }
 .f4-strip i.bad { background: var(--danger-muted); border-color: var(--danger); }
@@ -3234,7 +2978,6 @@ body {
 .f4-strip-ax { display: flex; justify-content: space-between; font-family: var(--mono); font-size: 9.5px; color: var(--text-faint); margin-top: 3px; gap: 8px; }
 .f4-strip-ax span:nth-child(2) { color: var(--text-secondary); }
 
-/* period rows (wide) */
 @media (prefers-reduced-motion: no-preference) {
     .f4-flash { animation: f4-flash 0.9s ease-out; }
     @keyframes f4-flash { from { box-shadow: 0 0 0 3px var(--blue-line); } to { box-shadow: 0 0 0 0 transparent; } }
@@ -3250,8 +2993,7 @@ body {
 .f4-openb { display: flex; align-items: center; gap: 6px; height: 28px; border: 1px dashed var(--border-strong); border-radius: 5px; padding: 0 6px 0 8px; font-size: 11px; color: var(--text-secondary); min-width: 0; }
 .f4-openb span { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* sensor identity (shared by the Workbench's left-list rows and detail
-   header — see .bmw-srow/.bmw-dhead below for the layout those sit in). */
+/* Sensor identity shared by the Workbench list rows and detail header. */
 .f4-sr-title { font-size: 0.8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .f4-kinds { display: flex; gap: 4px; }
@@ -3279,18 +3021,14 @@ body {
 .f4-fgchip i { width: 6px; height: 6px; border-radius: 2px; flex-shrink: 0; }
 .f4-fgchip span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f4-fgchip em { font-style: normal; font-family: var(--mono); font-size: 0.64rem; color: var(--text-faint); flex-shrink: 0; }
-/* A plain underline-tab strip with a single bottom border, no distinct
-   background of its own (it reads as part of the detail pane, not a boxed-in
-   toolbar). `.f4-tab`'s own underline-on-select styling is right below. */
+/* Plain underline tab strip with no background of its own. */
 .f4-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 0 10px; border-bottom: 1px solid var(--border); }
 .f4-tab { display: inline-flex; align-items: center; gap: 7px; padding: 9px 10px 8px; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px; background: none; color: var(--text-secondary); font-size: 0.74rem; font-weight: 500; cursor: pointer; white-space: nowrap; }
 .f4-tab:hover { color: var(--text-primary); }
 .f4-tab--on { color: var(--text-primary); font-weight: 600; border-bottom-color: var(--kc); }
 .f4-kmini { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-size: 0.56rem; font-weight: 700; }
 .f4-sdot { width: 7px; height: 7px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
-/* One state dot per kind tab (and on the set-point card), in the sensor list's
-   colours; the words are its tooltip — and, on a Workbench kind tab, shown beside
-   it (`.wb3-tab-words`, further down). */
+/* State dot per kind tab and set-point card; the words are its tooltip. */
 .f4-sdot { flex-shrink: 0; }
 .f4-sdot--need { background: var(--warn); box-shadow: none; }
 .f4-sdot--bad { background: var(--danger); box-shadow: none; }
@@ -3317,11 +3055,7 @@ body {
 .f4-notice-x { align-self: start; font-size: 0.7rem; padding: 4px 9px; border-radius: 6px; border: 1px solid var(--border-strong); background: var(--surface-hi); color: var(--text-primary); cursor: pointer; }
 .f4-strike { text-decoration: line-through; color: var(--text-faint); }
 
-/* ── Build Model Workbench layout ──
-   A master/detail layout. Reuses every f4- and model- prefixed token and
-   class it can (pills, tabs, readouts, chips, the sticky footer) — these
-   rules cover the two-pane grid, the left sensor list, the collapsible
-   "Model settings" section and the Running Condition edit modal. */
+/* Master/detail grid; reuses the f4- and model- classes. */
 .bmw-wb { flex: 1; min-height: 0; display: grid; position: relative; }
 /* Sensor list hidden: the detail pane is the only column (the component also sets it inline). */
 .bmw-wb--nolist { grid-template-columns: minmax(0, 1fr); }
@@ -3330,11 +3064,11 @@ body {
 .bmw-prog { display: flex; flex-direction: column; gap: 5px; font-size: 0.72rem; color: var(--text-secondary); }
 .bmw-prog-row { display: flex; justify-content: space-between; }
 .bmw-prog-bar { height: 5px; border-radius: 99px; background: var(--input-bg); overflow: hidden; display: flex; }
-.bmw-prog-bar span { display: block; height: 100%; transition: width 0.3s; } /* 🆕 2026-10-02: matches the prototype's `.prog .bar span` */
+.bmw-prog-bar span { display: block; height: 100%; transition: width 0.3s; }
 .bmw-chips { display: flex; gap: 5px; flex-wrap: wrap; }
 .bmw-chip { font: inherit; font-size: 0.7rem; border: 1px solid var(--border-strong); background: none; color: var(--text-secondary); padding: 3px 9px; border-radius: 99px; cursor: pointer; display: inline-flex; gap: 5px; align-items: center; }
 .bmw-chip:hover { color: var(--text-primary); }
-.bmw-chip b { color: var(--text-primary); font-weight: 600; } /* 🆕 2026-10-02: matches the prototype's `.fchip b` -- the count reads brighter than the label */
+.bmw-chip b { color: var(--text-primary); font-weight: 600; }
 .bmw-chip--on { background: var(--accent-muted); border-color: transparent; color: var(--accent-hi); font-weight: 600; }
 .bmw-chip--on b { color: var(--accent-hi); }
 .bmw-groupby { display: flex; justify-content: space-between; align-items: center; font-size: 0.7rem; color: var(--text-faint); }
@@ -3376,12 +3110,7 @@ body {
 .bmw-sum-sep { white-space: pre; }
 .bmw-sets-sum--parts ~ .f4-pill { flex-shrink: 0; }
 .bmw-sets-sp { flex: 1; }
-/* MODEL SETTINGS — ONE form for the three kinds (SPEC docs/design/handoff/model-settings-layout,
-   2026-10-12). One grid of three equal columns (two on a narrow detail pane, one on a very
-   narrow one). Row 1 is always: Model name · the kind's own setting (Boundary / Stiffness /
-   Clusters) · Training data; the sensors follow on row 2 and wide fields take a full row —
-   the DOM is in that order, the grid only flows it. Every field is label (one 16 px line) →
-   control (30 px, the picker's height) → help. */
+/* Model settings: 3 equal columns (2 narrow, 1 very narrow). Row 1 is name, kind setting, training data; DOM order is the flow order. */
 .bmw-sets-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px 20px; align-items: start; padding: 4px 20px 14px 38px; }
 /* `.bmw-sets-kind` groups a kind's own fields in the JSX only: no box, its fields are grid cells. */
 .bmw-sets-kind { display: contents; }
@@ -3407,8 +3136,7 @@ body {
 /* Help and notes: one size, right under the control. */
 .bmw-sets-body .f4-hint,
 .bmw-sets-body .f4-req-note { font-size: 10.5px; line-height: 14px; }
-/* Three columns but not much room (a detail pane of about 780–940 px): the four Stiffness
-   options are wider than their cell — they wrap onto a second line rather than being cut off. */
+/* Stiffness options wrap onto a second line when the cell is too narrow. */
 @container (max-width: 940px) {
     .bmw-sets-body .f4-fld > .f4-seg { flex-wrap: wrap; height: auto; min-height: 30px; }
 }
@@ -3428,9 +3156,7 @@ body {
 .bmw-step button:disabled, .bmw-step button:disabled:hover { color: var(--text-faint); background: var(--input-bg); cursor: default; }
 .bmw-step span { min-width: 28px; text-align: center; font-family: var(--mono); font-size: 0.76rem; }
 
-/* A Custom model's OWN running condition (workbench redesign §5): the same panel
-   as the workspace settings, on its own full-width row of the Model settings grid
-   (`.bmw-sets-body .rc-custom` above). */
+/* A Custom model's own running condition, on a full-width row. */
 .rc-custom { min-width: 0; border-top: 1px dashed var(--border-strong); padding-top: 6px; margin-top: 2px; }
 .rc-seed { display: flex; align-items: baseline; gap: 8px; }
 .rc-seed > span { flex: 1; min-width: 0; }
@@ -3441,8 +3167,7 @@ body {
 .bmw-btn-ok { font-size: 0.76rem; font-weight: 600; padding: 7px 14px; border-radius: 7px; border: 0; background: var(--ok); color: #04130a; cursor: pointer; white-space: nowrap; }
 .bmw-btn-ok:disabled { opacity: 0.4; cursor: not-allowed; }
 
-/* Train/Re-train (footer, fixed slot) and the "N items to fix" links inside
-   the results area's incomplete-config state. */
+/* The "N items to fix" links inside the results area's incomplete-config state. */
 .bmw-fix-link { background: none; border: 0; padding: 0; margin: 0; color: var(--warn); text-decoration: underline; cursor: pointer; font: inherit; font-size: 0.76rem; text-align: left; }
 .bmw-fix-link:hover { color: var(--text-primary); }
 
@@ -3453,24 +3178,12 @@ body {
 .bmw-modal-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 0.82rem; font-weight: 600; }
 .bmw-modal-x { background: none; border: 0; color: var(--text-secondary); cursor: pointer; display: flex; padding: 4px; border-radius: 6px; }
 .bmw-modal-x:hover { color: var(--text-primary); background: var(--hover-bg); }
-/* Running Condition modal footer (Apply / Cancel / dirty hint, or the inline
-   "Discard changes?" row). Sticky so it stays reachable when the modal body
-   scrolls; reuses the Filter tab's .filter-apply-btn / .filter-dirty-hint. */
+/* Sticky so it stays reachable when the modal body scrolls. */
 .bmw-modal-foot { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--card-bg); border-top: 1px solid var(--border); border-radius: 0 0 12px 12px; }
 .bmw-modal-foot .filter-apply-btn:not(:disabled):hover { filter: brightness(1.08); }
 
-/* =============================================
-   Shared base classes
-   ============================================= */
 
-/* Kind badge + corner status dot. A standalone pair, NOT a rename of either
- * look-alike:
- *   - `.model-kind-icon`(--individual/--relationship/--clustering) gives the
- *     plain colored I/R/C badge (no dot, no `position: relative` of its own);
- *   - `.f4-kb` / `.f4-kb-dot--*` is the badge + status dot that
- *     BuildModelWindow.tsx and the Dashboard's Failure Groups tab render.
- * `.kind-badge` is the I/R/C badge shell of the Dashboard's Failure Groups
- * tab (`FailureGroupsPanel.tsx`) and the assignment sheet. */
+/* Kind badge shell for the Failure Groups tab and assignment sheet; separate from .model-kind-icon and .f4-kb. */
 .kind-badge {
     position: relative;
     width: 22px;
@@ -3486,15 +3199,8 @@ body {
 .kind-badge--relationship { background: var(--kr-m); color: var(--kr); }
 .kind-badge--clustering { background: var(--kc-m); color: var(--kc); }
 
-/* Corner dot. No modifier = "no status yet" (neutral). `--trained`/`--complete`
- * use the SAME tokens as `.f4-kb-dot--trained`/`--complete` (--accent-hi/--ok)
- * so the two badge families read as the same status language. `--blocked`
- * is warn/yellow ("Needs setup"). */
 
-/* Small monospace unit label rendered right after a sensor's name (e.g.
- * "Boiler drum level (mm)" -- the unit sits inline, not flush right).
- * Named `.unit-badge` (not a bare `.unit`) since a single-word global class
- * is risky in a stylesheet this size. */
+/* Inline monospace unit after a sensor name; prefixed to avoid a bare global .unit. */
 .unit-badge {
     flex-shrink: 0;
     font-size: 0.66rem;
@@ -3507,13 +3213,7 @@ body {
     line-height: 1.6;
 }
 
-/* Popover surface -- background/border/radius/shadow only (positioning,
- * z-index and padding are each popover's own job, since they differ by
- * use: color picker vs. alarm setpoints vs. add-to-failure-group all need
- * different sizes/anchoring). Pair with the new `Portal` component
- * (`src/components/Portal.tsx`) once a popover is rewired to render
- * outside its scrolling ancestor -- that rewiring is a later phase; this
- * pass only adds the look and the portal primitive, not wired together. */
+/* Popover look only; positioning and padding are each popover's own. */
 .popover-surface {
     background: var(--pop);
     border: 1px solid var(--border-strong);
@@ -3521,32 +3221,15 @@ body {
     box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
 }
 
-/* =============================================
-   Dashboard "Sensor" tab: SensorSelection.tsx's
-   row chrome, the Selected Sensor list,
-   Filter/Highlights tabs, and the popovers
-   rendered through `Portal` + `AnchoredPopover`
-   (src/components/AnchoredPopover.tsx). Reuses
-   the shared tokens/classes above (--pop,
-   --ki/--kr/--kc, .unit-badge, .popover-surface,
-   .kind-badge).
-   ============================================= */
 
-/* Generic padding for a popover built from `.popover-surface` +
- * `AnchoredPopover` — background/border/radius/shadow stay on
- * `.popover-surface` itself (shared with any future popover), this is
- * just the inner spacing every current popover wants the same way. */
+/* Inner spacing shared by popovers. */
 .sensor-popover {
     padding: 10px 12px;
     max-height: min(70vh, 420px);
     overflow-y: auto;
 }
 
-/* Sensor/component row action buttons (alarm, add-to-failure-group,
- * and the Selected-Sensor list's colour / pin-Y-axis / remove) —
- * small, square, neutral until hovered or active. Always rendered (not
- * hover-reveal) — this class only styles them, it doesn't change
- * when they're shown. */
+/* Square action buttons, always rendered; this only styles them. */
 .row-action-btn {
     display: inline-flex;
     align-items: center;
@@ -3571,9 +3254,6 @@ body {
     color: var(--accent-hi);
 }
 
-/* Sensor list / component-group header row — restyled in place
- * (`.sensor-list-row` etc. are only ever used by SensorSelection.tsx,
- * confirmed by grep before touching them). */
 .sensor-selection-widget .component-group-header {
     display: flex;
     align-items: center;
@@ -3615,8 +3295,7 @@ body {
     background: var(--hover-bg);
 }
 
-/* "Add to failure group" / alarm popovers' own internal rows — same
- * look for both: a label/name, flexible middle, fixed-width action(s). */
+/* Popover menu heading. */
 .fg-menu-heading {
     font-size: 0.68rem;
     font-weight: 700;
@@ -3626,22 +3305,7 @@ body {
     margin-bottom: 8px;
 }
 
-/* =============================================
-   Dashboard "Failure Groups" tab
-   (FailureGroupsPanel.tsx). Reuses the shared
-   tokens/classes rather than duplicating them:
-   `.widget-header` + `.search-input-compact` (the
-   search box, same shell as the Sensor tab),
-   `.kind-badge`/`.kind-badge--*` (I/R/C badge
-   shell), `.unit-badge`, `.sensor-row-tag`,
-   `.text-btn`, `.fg-icon-btn`, `.fg-group-dot`,
-   `.fg-group-color-*`, `.fg-group-card`,
-   `.fg-build-model-btn`. The per-kind STATUS DOT on
-   the sensor row uses `.f4-kb-dot`/`--*` — deliberately; see
-   FailureGroupsPanel.tsx's renderSensorRow comment
-   (a cross-window integration test asserts that
-   exact class name).
-   ============================================= */
+/* Status dot uses .f4-kb-dot on purpose: an integration test asserts that class name. */
 
 /* Summary chip -- "N groups · M sensors assigned · x of y models complete". */
 .fg-summary-chip {
@@ -3655,10 +3319,7 @@ body {
     color: var(--accent-hi);
 }
 
-/* Status-dot legend under the summary chip -- purely decorative, explains
- * what the sensor row's I/R/C corner dot colors mean. Uses the same tokens
- * as `.f4-kb-dot--trained`/`--complete` so the legend never drifts from
- * what the dot actually renders. */
+/* Legend for the corner-dot colours; uses the dot's tokens so it cannot drift. */
 .fg-legend {
     display: flex;
     gap: 12px;
@@ -3681,10 +3342,7 @@ body {
 .fg-legend-dot--trained { background: var(--accent-hi); box-shadow: none; }
 .fg-legend-dot--complete { background: var(--ok); box-shadow: none; }
 
-/* Group header row. Not a button (the
- * row itself doesn't toggle anything -- only "Edit details" and the
- * per-sensor chevrons do), so plain flex chrome rather than a clickable
- * row shell. */
+/* Group header is not a button; only Edit details and the chevrons act. */
 .fg-row {
     display: flex;
     align-items: center;
@@ -3712,10 +3370,7 @@ body {
     gap: 4px;
     flex-shrink: 0;
 }
-/* Trailing "done / total" counter (same pattern as the Sensor tab's own
- * "selected / total" `.component-group-count`) -- a plain "0" when the
- * group has no models yet (same "hide the noisy 0/ prefix" rule
- * `.component-group-count` uses). */
+/* Trailing done/total counter; plain 0 when the group has no models. */
 .fg-row-count {
     flex-shrink: 0;
     font-size: 0.7rem;
@@ -3770,19 +3425,8 @@ body {
     color: var(--accent-hi);
 }
 
-/* =============================================
-   The chart's Time range bar, the Filter panel,
-   the Highlights panel (two columns), the
-   Failure Group assignment sheet and the Add
-   Special Sensor window. Reuses the shared tokens
-   (--pop, --ki/--kr/--kc, .popover-surface,
-   .kind-badge) wherever they fit.
-   ============================================= */
 
-/* ---- Time range bar (`.timebar`) ----
- * Single unified flex row directly under the chart, built from small
- * pill-style sub-controls — replaces the old boxed "TIME RANGE" label +
- * separate bordered date fields + redundant second "Date: ..." line. */
+/* One flex row of pill sub-controls under the chart. */
 .timebar {
     display: flex;
     align-items: center;
@@ -3941,9 +3585,6 @@ body {
     white-space: nowrap;
 }
 
-/* ---- Filter panel (`FilterPanel.tsx`) ----
- * Compact single-row-per-condition grid, replacing the old stacked
- * heading + wide native selects + separate Apply/Clear row. */
 .filter-panel {
     display: flex;
     flex-direction: column;
@@ -4100,10 +3741,7 @@ body {
     color: var(--warn);
 }
 
-/* ---- Highlights panel (`HighlightsPanel.tsx`) ----
- * Two columns side by side ("By time" / "By value"), divided by a vertical
- * line, instead of the old stacked layout where "By value" needed
- * scrolling past "By time" to reach. */
+/* By time and By value side by side. */
 .highlights-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -4290,8 +3928,6 @@ body {
     line-height: 1.5;
 }
 
-/* ---- Add Special Sensor window (`AddSensorWindow.tsx` +
- * `SensorExplorer.tsx` + `SpecialSensorFormulaEditor.tsx`) ---- */
 .special-sensor-tabs {
     display: inline-flex;
     background: var(--card-bg);
@@ -4484,8 +4120,6 @@ body {
     padding: 10px;
 }
 
-/* ---- Formula editor + Quick build
- * (`SpecialSensorFormulaEditor.tsx`, DESIGN_SYSTEM §4.1). Prefix `fx-`. ---- */
 .fx { display: grid; gap: 12px; align-content: start; container-type: inline-size; container-name: fx; }
 .fx-card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; min-width: 0; }
 .fx-card.repair { border-color: var(--warn-line); }
@@ -4540,7 +4174,6 @@ body {
 .fx-k.op { font-family: var(--mono); font-size: 13px; min-width: 26px; justify-content: center; padding: 0 6px; color: var(--accent-hi); }
 .fx-k.fn { font-family: var(--mono); color: var(--fnc); }
 .fx-k.more { color: var(--text-secondary); }
-/* Sensors row */
 .fx-used { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 10px 14px 0; }
 .fx-cap { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--text-faint); font-weight: 600; margin-right: 2px; }
 .fx-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 11.5px; cursor: pointer; max-width: 100%; min-width: 0; }
@@ -4548,7 +4181,6 @@ body {
 .fx-chip.unk { color: var(--danger); border: 1px dashed var(--danger); background: var(--danger-muted); font-family: var(--mono); font-size: 11px; }
 .fx-chip:disabled { cursor: default; }
 .fx-chip .sl-inline-wrap { max-width: 240px; overflow: hidden; }
-/* check line */
 .fx-check { margin-top: 10px; padding: 8px 14px 10px; font-size: 12px; display: flex; gap: 8px; align-items: flex-start; border-top: 1px solid var(--border); flex-wrap: wrap; }
 .fx-check.ok { color: var(--ok); }
 .fx-check.bad { color: var(--danger); }
@@ -4560,7 +4192,6 @@ body {
 .fx-fix { font: inherit; font-size: 11px; font-weight: 600; background: none; border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 6px; padding: 2px 8px; cursor: pointer; flex-shrink: 0; }
 .fx-fix:hover { background: var(--hover-bg); }
 .fx-info { flex-basis: 100%; color: var(--text-secondary); font-size: 11.5px; }
-/* Round the result */
 .fx-rrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); padding: 8px 14px 10px; border-top: 1px solid var(--border); }
 .fx-seg { display: inline-flex; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; padding: 2px; gap: 2px; }
 .fx-seg button { font: inherit; font-family: var(--mono); font-size: 11.5px; border: 0; background: none; color: var(--text-secondary); padding: 3px 9px; border-radius: 5px; cursor: pointer; }
@@ -4573,13 +4204,11 @@ body {
 .fx-hint.full { flex-basis: 100%; }
 .fx-hint.warn { color: var(--warn); }
 .fx-mono { font-family: var(--mono); }
-/* aggregate block */
 .fx-aggbox { margin: 10px 14px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; min-height: 44px; border-radius: 9px; background: var(--fnc-muted); border: 1px solid var(--fnc-line); }
 .fx-an { font-weight: 700; color: var(--fnc); text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; margin-right: 4px; }
 .fx-src { display: inline-flex; gap: 4px; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 2px 2px 8px; font-size: 12px; font-weight: 500; max-width: 280px; min-width: 0; }
 .fx-src.unk { border-style: dashed; border-color: var(--danger); }
 .fx-src button { background: none; border: 0; color: var(--text-faint); cursor: pointer; padding: 0 3px; display: grid; place-items: center; }
-/* autocomplete + menus (inside AnchoredPopover) */
 .fx-ac { display: grid; gap: 1px; }
 .fx-acrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; min-width: 0; color: var(--text-primary); }
 .fx-acrow.on { background: var(--accent-muted); }
@@ -4596,7 +4225,6 @@ body {
 .fx-fngrid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 6px; max-height: 320px; overflow-y: auto; }
 .fx-fngrid .fx-mitem { grid-template-columns: 1fr; gap: 0; padding: 5px 8px; }
 .fx-fngrid .fx-mitem small { font-size: 10.5px; }
-/* preview */
 .fx-prev { padding: 8px 14px 12px; }
 .fx-plot { position: relative; height: 150px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); overflow: hidden; }
 .fx-plot canvas { width: 100%; height: 100%; display: block; }
@@ -4604,7 +4232,6 @@ body {
 .fx-stats { display: flex; gap: 16px; margin-top: 8px; font-size: 11.5px; color: var(--text-secondary); flex-wrap: wrap; }
 .fx-stats b { font-family: var(--mono); font-weight: 600; color: var(--text-primary); }
 .fx-stats .w { color: var(--warn); }
-/* sensor fields (Name / Description / Unit / Component) */
 .fx-fields { display: grid; grid-template-columns: 1.1fr 2fr .8fr 1fr; gap: 10px; padding: 10px 14px 14px; }
 .fx-f { min-width: 0; }
 .fx-f label { display: block; font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
@@ -4618,7 +4245,6 @@ body {
 @container fx (max-width: 600px) {
     .fx-fields { grid-template-columns: 1fr 1fr; }
 }
-/* Quick build (the selection-aware option sets of the old ButtonBuilder) */
 .fx-qbidle { padding: 8px 14px 12px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
 .fx-qbsel { display: inline-flex; align-items: center; font-weight: 500; letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--text-primary); min-width: 0; }
 .fx-qbbody { display: grid; gap: 8px; padding: 10px 14px 0; }
@@ -4712,19 +4338,7 @@ body {
     cursor: not-allowed;
 }
 
-/* =============================================
-   Failure Group Assignment sheet
-   FailureGroupAssignSheet.tsx -- the full-height sheet docked to the left edge
-   of the Dashboard's Sensors panel, plus UndoToastStack.tsx and the highlight
-   on the sensor row being edited. A matrix with one row per Failure Group and
-   one column per model kind.
-   Reuses the shared tokens/classes (--pop, --ki/--kr/--kc, .popover-surface,
-   .kind-badge, .row-action-btn, .fg-group-color-*, .fg-group-dot,
-   .sensor-row-tag) instead of adding new ones.
-   Positioning: Portal + position: fixed with a rect measured from the Sensors
-   panel by the component (inline left/top/width/height). The values below are
-   only the fallback used before the first measurement.
-   ============================================= */
+/* Assign sheet docked to the Sensors panel (portal, position: fixed); the component measures the rect, these values are the pre-measure fallback. */
 
 .fg-sheet {
     position: fixed;
@@ -4848,8 +4462,7 @@ body {
 /* Shared column template: dot | name | I | R | C | menu. */
 .fg-sheet-grid {
     display: grid;
-    /* Kind columns: 84px max so the "Relation model" header fits its column (it was
-       ~5px wider than 72px); the three stay equal, the 52px floor is unchanged. */
+    /* Kind columns max 84px so the Relation model header fits; floor 52px. */
     grid-template-columns: 10px minmax(0, 1fr) repeat(3, minmax(52px, 84px)) 28px;
     column-gap: 8px;
     align-items: center;
@@ -4903,8 +4516,7 @@ body {
     border-radius: 9px;
 }
 .fg-sheet-row:hover { background: var(--hover-bg); }
-/* A group this sensor is in: a bar in the group's own colour + bold name. The
-   tint stays put when a cell is toggled (the row only changes colour in place). */
+/* Row for a group this sensor is in: bar in the group's colour; the tint stays when a cell is toggled. */
 .fg-sheet-row--in {
     background: rgba(255, 255, 255, 0.035);
     box-shadow: inset 3px 0 0 var(--fg-dot, var(--text-faint));
@@ -4926,8 +4538,7 @@ body {
 .fg-sheet-row--in .fg-sheet-gname { color: var(--text-primary); font-weight: 600; }
 .fg-sheet-gno { font-family: var(--mono); font-size: 0.62rem; color: var(--text-faint); }
 
-/* The matrix cell. Empty = an empty box (the + and the kind colour only show on
-   hover/focus); selected = filled with the kind colour and a check. */
+/* Matrix cell: empty box (+ and kind colour only on hover/focus); selected = kind colour with a check. */
 .fg-sheet-cell {
     height: 32px;
     padding: 0;
@@ -5083,14 +4694,7 @@ body {
     .fg-sheet-row--flash { animation: none; }
 }
 
-/* =====================================================================
-   Running condition
-   Build Model window: the Step-1 card and the "Running condition" settings
-   modal. Prefixes: rcc- card,
-   rcm- modal, rcx- shared buttons. Uses the app's own tokens only.
-   ===================================================================== */
 
-/* shared buttons */
 .rcx-btn { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: 1px solid var(--border-strong); background: var(--input-bg); color: var(--text-primary); border-radius: 8px; font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .rcx-btn:hover:not(:disabled) { background: var(--hover-bg); border-color: var(--accent-color); }
 .rcx-btn--pri { background: var(--accent-color); border-color: transparent; color: #06111f; font-weight: 600; }
@@ -5122,23 +4726,15 @@ body {
 .rcc-chip b { font: 500 12px Inter, system-ui, sans-serif; color: var(--text-primary); }
 .rcc-chip--bad { border-color: var(--danger-line); color: var(--danger); }
 .rcc-use { width: 230px; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; }
-/* Holds the small period strip and, above it, the card's one warning. Never a count of
-   rows. "Add a train period" is amber (`.rcc-line-warn`: a step still to do, like the
-   modal's Apply hint), "Nothing to train on" red (`.rcc-line-bad`). Nothing to show = no column. */
+/* Period strip and the card's one warning (amber = a step to do, red = nothing to train on); empty = no column. */
 .rcc-use:empty { display: none; }
 .rcc-use-note { font-size: 11.5px; line-height: 1.45; }
 /* small period strip (same PeriodCoverageBar, "mini") */
 .rcc-use .f4-cov--mini { margin-top: 2px; }
 .rcc-use .f4-cov--mini .f4-strip { height: 8px; border-radius: 99px; }
 
-/* results area while Step 1 is not done */
-/* (the locked state is a `.wbx-msg` board now — see the Workbench redesign block) */
 
-/* Running-condition settings: the
-   workspace modal (980 px, header / ONE scrolling column / sticky footer) and a
-   Custom model's own panel use the same body — a timeline hero, three sections
-   with one eyebrow line each, one quiet line per period / condition. No right
-   preview column, no callout boxes. */
+/* Workspace modal and a Custom model's panel share this body: one scrolling column, sticky footer. */
 .bmw-modal--rc { width: min(980px, 100%); height: min(760px, calc(100vh - 40px)); max-height: none; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; }
 .bmw-modal--rc:focus { outline: none; }
 .bmw-modal--rc .bmw-modal-foot { flex-shrink: 0; border-radius: 0 0 16px 16px; }
@@ -5225,8 +4821,7 @@ body {
 .rcm-val input { background: none; border: 0; outline: none; font: 500 12px var(--mono); width: 100%; min-width: 0; color: var(--text-primary); }
 .rcm-val span { font-size: 10.5px; color: var(--text-faint); white-space: nowrap; }
 
-/* modal footer, next to Apply: why it is disabled (red / amber), or what applying
-   does to the models (amber, grey when none is affected) with an optional quiet line */
+/* Footer beside Apply: why it is disabled, or what applying does to the models. */
 .rc-impact { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; min-width: 0; max-width: 560px; font-size: 11.5px; text-align: right; }
 .rc-impact--amber { color: var(--warn); }
 .rc-impact--grey { color: var(--text-secondary); }
@@ -5248,27 +4843,15 @@ body {
     .rcm-per .f4-dt-end, .rcm-per .rcm-dur, .rcm-permsg { grid-column: 2; }
 }
 
-/* =====================================================================
-   Build Model Workbench, two pages per model: page switch, stale banner,
-   chart cards and the "Model fit" page. Prefix wb2-.
-   Uses the app tokens only. The
-   Health score page adds its own hs- classes and reuses these cards.
-   ===================================================================== */
 .wb2-sp { flex: 1; }
 
-/* page switch, right side of the detail header */
-/* (The detail header's columns and its narrow-pane wrap live in the "Workbench
-   redesign" block at the end of this file: identity | ONE control group.) */
 
 /* detail body: settings, banner and page scroll together, the footer stays put */
 .wb2-scroll { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 .wb2-stale { display: flex; align-items: center; gap: 12px; margin: 10px 18px 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-muted); border: 1px solid var(--warn-line); font-size: 12.5px; color: var(--warn); }
 .wb2-stale b { color: var(--text-primary); }
 
-/* board of chart cards */
-/* Cards are lifted off the window (Workbench detail v2 §7): the card background, a
-   stronger edge and a soft shadow, radius 14 — for the chart cards and the set-point
-   (ruler) card alike. Chart heights are unchanged. */
+/* Lifted cards (card background, stronger edge, soft shadow, radius 14) for chart and set-point cards. */
 .wb2-board { padding: 14px 20px 18px; display: grid; gap: 14px; align-content: start; }
 /* A banner that sits INSIDE a board is a row of the board (no page margins of its own). */
 .wb2-board > .wb2-stale, .wb2-board > .rcm-warn, .wb2-board > .hs-save { margin: 0; grid-column: 1 / -1; }
@@ -5287,8 +4870,7 @@ body {
 .wb2-cv { position: relative; height: 250px; min-width: 0; }
 .wb2-card--tall .wb2-cv { height: 330px; }
 .wb2-card--xtall .wb2-cv { height: 520px; }
-/* Health score: ONE card, the set-point chart above the score chart on one time axis
-   (the Clusters scatter above it is taller: it has two value axes). */
+/* Health score: one card, set-point chart above the score chart on one time axis; the Clusters scatter is taller. */
 .wb2-card--stack .wb2-cv { height: 560px; }
 .wb2-card--stackxy .wb2-cv { height: 700px; }
 .wb2-card--stack3 .wb2-cv { height: 740px; }
@@ -5302,8 +4884,7 @@ body {
 .wb3-stack-fit { flex: 1 1 36%; min-height: 0; }
 .wb3-stack-in--fit .wb3-stack-top { flex-basis: 35%; margin-top: 2px; padding-top: 4px; border-top: 1px dashed var(--border-strong); }
 .wb3-stack-in--fit .wb3-stack-bot { flex-basis: 29%; }
-/* The lower half while there is no score to draw: the lock sentence, or the "could not be
-   calculated" notice, in the score chart's own place. */
+/* Lower half when there is no score to draw: the lock sentence or the 'could not be calculated' notice. */
 .wb3-stack-bot--lock { display: grid; place-items: center; padding-top: 10px; }
 .wb3-stack-locktext { width: 100%; padding: 18px 24px; border: 1px dashed var(--border-strong); border-radius: 10px; text-align: center; font-size: 12.5px; color: var(--text-secondary); }
 .wb3-stack-locktext b { display: block; margin-bottom: 3px; font-size: 13.5px; color: var(--text-primary); }
@@ -5318,18 +4899,13 @@ body {
 .wb2-lg i.wb2-lg-sq { width: 9px; height: 9px; border: 0; border-radius: 2px; }
 .wb2-xsel { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-faint); }
 
-/* Model fit, Individual: one column — the tiles, then both charts at full width;
-   the value chart is taller than a "tall" card elsewhere. */
+/* Individual Model fit: one column, tiles then both charts at full width. */
 .wb2-board--ind { grid-template-columns: minmax(0, 1fr); }
 .wb2-board--ind .wb2-card--tall .wb2-cv { height: 400px; }
 
-/* KPI tiles (Kpi.tsx, "Workbench detail pages v2"): the numbers first, in a strip
-   above the charts. Prefix wb3-. One big mono number per tile, its unit, a caption.
-   A tile never judges: the value is plain text. Only a value that IS a health score
-   takes its band colour (the --ok / --warn / --bad modifiers). */
+/* A tile never judges; only a value that is a health score takes its band colour. */
 .wb3-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
-/* Model fit: three equal tiles across the whole board, like the Health score page's row
-   (real-app report 2026-10-16: capped at 420 px they left an empty strip on the right). */
+/* Three equal tiles across the board, like the Health score row. */
 .wb3-kpis--fit { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .wb3-kpi { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 12px; padding: 10px 14px 9px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .wb3-kpi-l { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-secondary); display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -5341,8 +4917,7 @@ body {
 .wb3-kpi--ok .wb3-kpi-v { color: var(--ok); }
 .wb3-kpi--warn .wb3-kpi-v { color: var(--warn); }
 .wb3-kpi--bad .wb3-kpi-v { color: var(--danger); }
-/* Health score: ONE row of equal tiles that never wraps; a pane too narrow for it scrolls
-   the row sideways. A long label wraps inside its tile instead of being cut. */
+/* One non-wrapping row of equal tiles; a narrow pane scrolls sideways, long labels wrap inside the tile. */
 .wb3-kpis--scroll { display: flex; overflow-x: auto; padding-bottom: 2px; scrollbar-width: thin; }
 .wb3-kpis--scroll .wb3-kpi { flex: 1 0 176px; }
 .wb3-kpis--scroll .wb3-kpi-l { white-space: normal; overflow: visible; }
@@ -5364,25 +4939,14 @@ body {
 .bmw-leg { display: flex; gap: 10px; flex-wrap: wrap; padding: 8px 14px; border-top: 1px solid var(--border); font-size: 10.5px; color: var(--text-faint); }
 .bmw-leg i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
 
-/* =====================================================================
-   Build Model Workbench, "Health score" page: the score ruler (the set
-   points and the Checks), the set-point chart, the score chart and the
-   shares. Prefix hs- (the ruler itself: wb3-ruler). Reuses the wb2- cards,
-   pills and tokens; no new colours.
-   ===================================================================== */
-/* One column: every card is as wide as the board, so the two time charts are the same
-   width (their time axes line up) and the ruler has room for its band. */
+/* One column so both time charts have the same width and their time axes line up. */
 .hs-board { grid-template-columns: minmax(0, 1fr); }
 .hs-full { grid-column: 1 / -1; }
 .hs-stateboard { min-height: 280px; }
 .hs-card { background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 14px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), 0 8px 24px rgba(0, 0, 0, 0.25); padding: 12px 14px 12px; min-width: 0; display: flex; flex-direction: column; }
 .hs-note { font-size: 11px; color: var(--text-faint); line-height: 1.45; }
 
-/* The score ruler (ScoreRuler.tsx, "Workbench detail pages v2"): ONE horizontal band
-   maps value -> score. A tick = a value and the score the model gives there; the ticks
-   are spaced evenly (a schematic, not a scale). The program's ticks are plain text, the
-   user's points are the only inputs (large). The Checks sit in the same card, under a
-   hairline. The band's colours are set inline from the --ok / --warn / --danger tokens. */
+/* Score ruler: ticks evenly spaced (schematic, not to scale); program ticks are text, the user's points are inputs. */
 .wb3-rulercard { gap: 0; }
 .wb3-rulercard .wb2-card-s { color: var(--text-secondary); }
 /* The side margins hold half of an end input, which is centred on its tick. */
@@ -5417,8 +4981,7 @@ body {
 .wb3-ruler-v--user { top: 0; }
 .wb3-ruler-v--bad .wb3-ruler-vl { color: var(--danger); }
 .wb3-ruler-v--req .wb3-ruler-vl { color: var(--warn); }
-/* A rejected typed value, marked in red where it really sits: the label (stacked on rows
-   when two would overlap), a dashed stem down to the band, a diamond on the band. */
+/* A rejected typed value is marked in red where it sits: label, dashed stem, diamond on the band. */
 .wb3-ruler-marks { position: relative; height: 22px; }
 .wb3-ruler-mark { position: absolute; top: 0; z-index: 1; transform: translateX(-50%); white-space: nowrap; padding: 1px 6px; border: 1px solid var(--danger-line); border-radius: 6px; background: color-mix(in srgb, var(--danger) 14%, var(--card-bg)); color: var(--danger); font: 600 10.5px var(--mono); line-height: 14px; }
 /* beyond the user's point at that end: the label hugs the end, its arrow points outwards */
@@ -5456,9 +5019,7 @@ body {
     .wb3-ruler--individual .hs-num--big { width: 112px; }
     .wb3-ruler--individual .hs-num--big input { font-size: 14.5px; }
 }
-/* Relation model on a narrow pane: seven ticks leave no room for four inputs, so the
-   inputs move to their own labelled row under the band (in ruler order); the band keeps
-   the scores, the program ticks' names and their values. */
+/* Relation model, narrow pane: the four inputs move to a labelled row under the band (seven ticks leave no room). */
 @container (max-width: 900px) {
     .wb3-ruler--relationship { width: calc(100% - 52px); }
     .wb3-ruler--relationship .wb3-ruler-nm--user { display: none; }
@@ -5483,7 +5044,6 @@ body {
 .hs-quick button { border: 1px solid var(--border-strong); background: none; border-radius: 6px; font: 500 11px var(--mono); padding: 2px 8px; cursor: pointer; color: var(--text-secondary); }
 .hs-quick button.on { border-color: var(--accent-color); color: var(--accent-hi); background: var(--accent-muted); }
 
-/* Checks */
 .hs-checks { display: flex; flex-direction: column; gap: 6px; }
 .hs-chk { display: flex; gap: 8px; font-size: 11.5px; line-height: 1.4; align-items: flex-start; }
 .hs-ic { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; display: grid; place-items: center; margin-top: 1px; }
@@ -5511,16 +5071,7 @@ body {
     animation: spin 1s linear infinite;
 }
 
-/* ===================================================================
- * Train periods and scoring periods (specs:
- * docs/design/handoff/train-test-validation/README.md, revised by
- * docs/design/handoff/workbench-redesign/README.md §2 "just score it";
- * DESIGN_SYSTEM §4). Train = accent blue, scoring = magenta
- * oklch(.74 .16 340) (not a kind, category or state colour; the tokens and
- * classes keep their `test` / `te` names). A scoring period is only
- * start → end: no Known-problem hatch, no event line, no verdict colours.
- * Dark only (the app has no light theme: `color-scheme: dark` on :root).
- * =================================================================== */
+/* Train = accent blue, scoring = magenta; token names keep `test`/`te`. Dark theme only. */
 :root {
     --train: var(--accent-color);
     --train-muted: oklch(0.68 0.17 245 / 0.14);
@@ -5545,27 +5096,15 @@ body {
 .f4-strip i.te { top: 50%; background: oklch(0.74 0.16 340 / 0.35); border-left: 1px solid var(--test); border-right: 1px solid var(--test); }
 .f4-cov--mini .f4-strip-ax { white-space: nowrap; font-size: 9px; }
 
-/* "Scoring periods changed" notice under the running-condition card */
 
-/* (The Health score page's "Scoring results" card and its rules — .vt-tile, .vt-none,
-   .vt-quiet … — were removed 2026-10-12; the Model fit page's table 2026-10-11.) */
-/* The health score could not be calculated (warning `test_scoring_failed`):
-   amber, for reading only (a failure to compute, not a verdict). */
+/* Health score could not be calculated (`test_scoring_failed`): amber, informational, not a verdict. */
 .vt-fail { display: flex; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-top: 8px; padding: 9px 11px; border-radius: 10px; background: var(--warn-muted); border: 1px solid var(--warn-line); font-size: 12px; color: var(--warn); }
 .vt-fail > span { flex: 1 1 220px; min-width: 0; }
 .vt-fail b { display: block; font-weight: 600; color: var(--warn); }
 .vt-fail small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--text-secondary); }
 
-/* =====================================================================
-   The ONE sensor label (`src/components/sensor/SensorLabel.tsx`), the ONE
-   sensor picker (`SensorPicker.tsx`) and the ONE colour picker
-   (`ColourPicker.tsx`) — spec:
-   docs/design/handoff/customer-batch-2026-10/README.md §1; DESIGN_SYSTEM §4.
-   Fonts use the explicit stacks the
-   installed app really renders with (DESIGN_SYSTEM §3.2: Segoe UI / Consolas).
-   ===================================================================== */
+/* Shared sensor label, picker and colour picker; fonts are the stacks the installed app renders (Segoe UI / Consolas). */
 
-/* ── Sensor label: Stacked (`.sl`) and Inline (`.sl-inline`) ── */
 .sl {
     min-width: 0;
     flex: 1;
@@ -5647,8 +5186,7 @@ body {
 @container (max-width: 150px) {
     .sl-fit .sl-tag { display: none; }
 }
-/* Long sensor names (DESIGN_SYSTEM §4). A name is printed this way only once it is measured as cut.
-   The head never ends in a space and the tail starts with exactly one (white-space: pre keeps it): head… tail. */
+/* A cut name prints as head… tail; the head never ends in a space, the tail starts with one (white-space: pre). */
 .sl-split { display: inline-flex; min-width: 0; max-width: 100%; }
 .sl-split > [data-name-part="head"] { flex: 0 1 auto; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .sl-split > [data-name-part="tail"] { flex: 0 0 auto; max-inline-size: 100%; min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
@@ -5660,8 +5198,7 @@ body {
 .sl--muted .sl-split--shared > [data-name-part="head"],
 .sl--muted .sl-head--shared { color: var(--text-faint); }
 /* A cut head that would show under ~8 characters is dropped: "… tail". */
-/* It stays in the flow, invisible, after the tail: the name's own width never changes with its form, so a name in a
-   shrink-to-fit row cannot change its room by being shortened (which made it flip between forms for ever). */
+/* The hidden head stays in flow so the name's width is the same in both forms, or a shrink-to-fit row flips forever. */
 .sl-split[data-short] > [data-name-part="head"] { order: 1; visibility: hidden; }
 .sl-split[data-short] > [data-name-part="tail"]::before { content: '…'; }
 .sl-split--pre[data-short] > [data-name-part="tail"]::before { content: ' …'; }
@@ -5691,7 +5228,6 @@ body {
     white-space: nowrap;
 }
 
-/* ── Sensor picker: single trigger + anchored popover ── */
 .pk-trigger {
     display: flex;
     align-items: center;
@@ -5731,8 +5267,7 @@ body {
 .pk-trigger--sm { height: 24px; padding: 0 6px; border-radius: 6px; font-size: 11px; }
 .pk-trigger--sm .sl-desc { font-size: 11px; }
 .pk-trigger--sm .sl-tag { font-size: 10px; }
-/* Optional single picker (`allowNone`): a clear × over the trigger's right side, left of the
-   chevron. The wrapper keeps the trigger's own sizing (it fills the field like the bare trigger). */
+/* Optional single picker: clear × over the trigger's right side, left of the chevron. */
 .pk-trigger-wrap { position: relative; display: flex; width: 100%; min-width: 0; }
 /* room for the × between the label and the chevron (the chevron stays where it always is) */
 .pk-trigger--clearable > :first-child { margin-right: 22px; }
@@ -5762,8 +5297,7 @@ body {
     flex-direction: column;
     max-height: min(380px, 70vh);
 }
-/* Opened above its trigger: AnchoredPopover reserves the list's full height, so fill it — the
-   search box then stays put while the user types or opens groups. */
+/* Opened above its trigger the popover reserves full height, so fill it to keep the search box in place. */
 .sensor-popover[data-placement="above"] > .pk-pop { height: 100%; }
 .pk-search {
     display: flex;
@@ -5917,7 +5451,6 @@ body {
 }
 .pk-empty small { font-size: 11px; color: var(--text-faint); }
 
-/* ── Sensor picker: multi (chips + "Add…" + modal) ── */
 .pk-multi { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; min-width: 0; }
 .pk-chip {
     display: inline-flex;
@@ -6039,7 +5572,6 @@ body {
 }
 .pk-btn--pri { background: var(--accent-color); border-color: transparent; color: #fff; }
 
-/* ── Colour picker ── */
 .cp-hit {
     flex-shrink: 0;
     width: 24px;
@@ -6064,10 +5596,7 @@ body {
     transition: transform 0.15s, border-color 0.15s;
 }
 .cp-hit:hover:not(:disabled) .cp-swatch { border-color: var(--accent-color); transform: scale(1.12); }
-/* `minmax(0, 1fr)`, not the implicit `auto` column: an auto column grows to the widest child's
-   max-content, so a long sensor name in `.cp-head-label` (nowrap) made the column — and the
-   swatch grid stretched across it — wider than the 228 px popover (swatches twice their size,
-   spilling out of the surface). */
+/* minmax(0, 1fr), not auto: auto grows to the widest nowrap label and stretches the swatch grid past the 228px popover. */
 .cp-pop { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 10px; }
 .cp-head {
     display: flex;
@@ -6127,12 +5656,9 @@ body {
 .cp-custom[aria-expanded="true"] .cp-car { transform: rotate(90deg); }
 .cp-adv { display: grid; gap: 8px; }
 
-/* ── Tooltip / value-box rows (line chart HTML tooltip, scatter + pair plot
-   hover, scatter tag callouts): inline label left, value + unit right. ── */
+/* Tooltip / value-box rows: label left, value + unit right. */
 .tt-head { margin-bottom: 4px; font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
-/* Long sensor names, rule 4 (DESIGN_SYSTEM §4): box at most 440 px including padding, so a row at most 418 px.
-   A row is a grid with its OWN value column, so a name can never run under the value: swatch or key | name, with
-   the value in an implicit last column. A row that fits lays out like a flex row with the same gaps (8 px, value 18 px). */
+/* Box at most 440px (row 418px). Each row is a grid with its own value column so a name never runs under the value. */
 .tt-row {
     display: grid;
     grid-auto-flow: column;
@@ -6202,7 +5728,6 @@ body {
 .tt-grid { max-width: 440px; white-space: normal; }
 .tt-title { margin-bottom: 4px; font-family: Inter, system-ui, sans-serif; font-weight: 600; }
 
-/* ── Per-screen rollout ── */
 /* Dashboard › Sensor tab rows: the label takes the room so ellipsis works. */
 .sensor-list-row .checkbox-wrapper { flex: 1; min-width: 0; }
 /* Rule 2: the start a run of rows shares. Rule 6: the windowed list and its sticky line. */
@@ -6328,8 +5853,7 @@ body {
     gap: 2px;
     overflow: hidden;
 }
-/* Two lines: description, then tag + unit. Sizes are logical (inline-size), so the same rules
-   cap a line at the plot WIDTH for the X title and at the plot HEIGHT for the vertical Y title. */
+/* Two lines: description, then tag + unit. Logical sizes cap a line at plot width (X title) or height (Y title). */
 .sat-l1,
 .sat-l2 {
     flex: none;
@@ -6363,8 +5887,7 @@ body {
 .sat-unit { font-weight: 400; color: var(--text-secondary); }
 .sat-desc--tag { font-family: var(--mono); font-size: 10px; font-weight: 400; }
 .scatter-axis-unit { flex-shrink: 0; font-family: var(--mono); font-size: 9.5px; line-height: 12px; color: var(--text-secondary); }
-/* Vertical, reading bottom-to-top; the column direction puts the description on the OUTER
-   line and tag + unit next to the tick labels. */
+/* Vertical, reading bottom to top; column direction puts the description on the outer line. */
 .scatter-axis-title--y { writing-mode: vertical-rl; transform: rotate(180deg); }
 
 /* Pair Plot axis labels: the tag in mono with a dotted underline; the hover /
@@ -6393,8 +5916,7 @@ body {
 .wb2-xpk { display: inline-flex; width: clamp(160px, 18vw, 260px); min-width: 0; vertical-align: middle; }
 .wb2-sub-sl { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; max-width: 100%; }
 .wb2-sub-lead { flex: none; white-space: nowrap; }
-/* A short note after the sensor labels of a chart subtitle ("· 1 h averages · coloured by score"):
-   it keeps its width, the labels before it ellipsise. */
+/* Note after the labels keeps its width; the labels before it ellipsise. */
 .wb2-sub-sl > .wb2-sub-note { flex-shrink: 0; white-space: nowrap; }
 /* Chart subtitle with sensor names: it never runs off the card, its names shrink head-first (rule 1). */
 .wb2-card-h > .wb2-card-s:has(> .wb2-sub-sl) { min-width: 0; overflow: hidden; white-space: nowrap; }
@@ -6417,15 +5939,7 @@ body {
 .rsum-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .rsum-pre { flex: 0 1000 auto; min-width: 24px; overflow: hidden; text-overflow: ellipsis; color: var(--text-faint); }
 
-/* =====================================================================
-   Failure groups as Import step 3
-   (docs/design/handoff/customer-batch-2026-10/README.md §3, DESIGN_SYSTEM
-   §4.1). Step 3 screen, recent-project chip, Dashboard landing callout and
-   the "Assign sensors" mode. Tokens only; group colours come from the
-   `.fg-group-color-*` family (--fg-dot / --fg-tint).
-   ===================================================================== */
 
-/* -- Import step 3 ("Which failures should Wizard look for?") -- */
 .fg-step-quick { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; max-width: 640px; }
 .fg-step-input {
     height: 36px; width: 100%; box-sizing: border-box; padding: 0 12px;
@@ -6516,7 +6030,6 @@ body {
     .fg-step-spin { animation: none; }
 }
 
-/* -- Recent-project chip (Get started) -- */
 /* The card's columns live here, not inline, so the narrow-list query below can drop one. */
 .fg-recent-list { container-type: inline-size; }
 .fg-recent-card { grid-template-columns: 38px minmax(0, 1fr) auto; }
@@ -6536,7 +6049,6 @@ body {
     .fg-recent-card--chip .fg-count-cell { grid-column: 2; grid-row: 2; margin-top: -6px; }
 }
 
-/* -- Dashboard: landing callout, empty groups, assign mode -- */
 .fg-callout {
     padding: 9px 11px; border: 1px solid var(--accent-line); border-radius: 10px; background: var(--accent-wash);
     font-size: 12px; line-height: 1.45; color: var(--text-secondary);
@@ -6565,11 +6077,6 @@ body {
 }
 .fg-sheet-hint { padding: 0 14px 8px; margin-top: -4px; font-size: 0.68rem; color: var(--text-faint); }
 
-/* =====================================================================
-   Build Model Workbench: Train sensor / Train all with a queue
-   (DESIGN_SYSTEM §4.1). Prefix tq-.
-   Buttons reuse .rcx-btn; colours are the existing tokens only.
-   ===================================================================== */
 .tq-amber { color: var(--warn); }
 .tq-cancel { color: var(--danger); border-color: var(--danger-line); background: none; }
 .tq-cancel:hover:not(:disabled) { border-color: var(--danger); background: var(--danger-muted); }
@@ -6580,13 +6087,11 @@ body {
 .tq-inline-link:hover { text-decoration: underline; }
 .tq-inline-link:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; border-radius: 3px; }
 
-/* Train all (above the sensor list) */
 .tq-all { display: grid; gap: 5px; }
 .tq-all-btn { width: 100%; justify-content: center; font-weight: 600; }
 .tq-all-sub { display: flex; gap: 8px; flex-wrap: wrap; font-size: 10.5px; color: var(--text-faint); }
 .tq-all-sub b { color: var(--text-secondary); font-weight: 600; }
 
-/* Train sensor (detail header): split primary + menu + the line under it */
 .tq-sensortrain { position: relative; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .tq-sensortrain .tq-why { max-width: 340px; text-align: right; }
 .tq-split { position: relative; display: flex; }
@@ -6598,7 +6103,6 @@ body {
 .tq-menu button:disabled { opacity: 0.45; cursor: default; }
 .tq-menu small { display: block; font-size: 10.5px; color: var(--text-faint); }
 
-/* Run strip (under the Step-1 card) */
 .tq-run { margin: 8px 16px 0; padding: 9px 14px; border-radius: 10px; border: 1px solid var(--accent-line); background: var(--accent-wash); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px 14px; align-items: center; font-size: 12px; color: var(--text-primary); }
 .tq-run[data-tone="success"] { border-color: oklch(0.72 0.15 150 / 0.3); background: oklch(0.72 0.15 150 / 0.1); }
 .tq-run[data-tone="warning"] { border-color: var(--warn-line); background: var(--warn-muted); }
@@ -6628,7 +6132,6 @@ body {
 .tq-qring { position: absolute; inset: -3px; border-radius: 7px; border: 1.5px dashed var(--accent-hi); pointer-events: none; }
 .tq-busy { position: absolute; inset: -2px; display: grid; place-items: center; border-radius: 7px; background: rgba(10, 10, 11, 0.6); color: var(--accent-hi); }
 
-/* locked settings + the queued body */
 .tq-sets-h { cursor: default; color: var(--text-faint); }
 .tq-sets-h:hover { background: none; }
 .tq-lk { margin-left: auto; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; font-size: 11px; color: var(--text-secondary); }
@@ -6640,7 +6143,6 @@ body {
 .tq-qnote { max-width: 46ch; color: var(--text-faint); }
 .tq-qring-big { width: 34px; height: 34px; margin: 0 auto; border-radius: 9px; border: 2px dashed var(--accent-hi); display: grid; place-items: center; font-weight: 700; color: var(--text-primary); }
 
-/* Health score page banner after a run */
 /* "Trained in the run 22:41 · 7 need set points · this is 3 of 7 · Next …": ONE line, not a card */
 .tq-hbanner { margin: 8px 18px 0; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--accent-line); background: var(--accent-wash); display: flex; flex-wrap: nowrap; gap: 10px; align-items: center; font-size: 11.5px; color: var(--text-secondary); }
 .tq-hbanner b { color: var(--text-primary); font-weight: 600; }
@@ -6649,7 +6151,6 @@ body {
 .tq-inline-link:disabled { color: var(--text-faint); cursor: default; text-decoration: none; }
 .tq-ok { color: var(--ok); }
 
-/* Train all modal (inside .bmw-modal-backdrop) */
 .tq-modal { width: min(760px, 100%); max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 16px; }
 .tq-mh { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
 .tq-mh small { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--text-secondary); }
@@ -6685,7 +6186,6 @@ body {
 .tq-reason--warn { color: var(--warn); }
 .tq-reason--danger { color: var(--danger); }
 
-/* Close during a run (in-window alertdialog) */
 .tq-close-back { z-index: 60; }
 .tq-confirm { width: min(460px, 100%); overflow: hidden; background: var(--card-bg); border: 1px solid var(--border-strong); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); }
 .tq-cb { padding: 16px 18px; display: grid; gap: 10px; font-size: 12.5px; color: var(--text-secondary); }
@@ -6694,15 +6194,6 @@ body {
 .tq-cf { display: flex; gap: 8px; justify-content: flex-end; padding: 12px 18px; border-top: 1px solid var(--border); }
 .tq-cf-left { margin-right: auto; }
 
-/* =====================================================================
-   Build Model Workbench — the page spine (spec:
-   docs/design/handoff/workbench-redesign/README.md §1; DESIGN_SYSTEM §4
-   "Build Model Workbench pages"). One line of workspace context, an
-   identity-only header with ONE control group, one state dot per tab, one
-   status sentence in the footer, at most one filled button. Prefixes:
-   rcc-line (running-condition line), wbx- (header group, board, footer).
-   Only the app's own tokens.
-   ===================================================================== */
 
 /* Running condition as ONE line once it is set ("Details" unfolds the full card) */
 .rcc-card.rcc-line { padding: 8px 12px; gap: 12px; flex-wrap: nowrap; margin: 10px 16px 0; border-radius: 10px; background: var(--card-bg); }
@@ -6722,10 +6213,7 @@ body {
 .rcc-line-warn { color: var(--warn); }
 .rcc-line-bad { color: var(--danger); }
 .rcc-line-more { color: var(--text-secondary); }
-/* Details / Hide details + Edit: one group, the same two small buttons in both views. In the
-   full card the group sits at the top-right and is nudged by the difference between the two
-   views' margin + padding (8 px down, 4 px across), so the buttons are in the SAME place as
-   on the line and the toggle stays under the pointer. */
+/* Details/Edit group is nudged in the full card so the buttons sit in the same place as on the line. */
 .rcc-acts { display: inline-flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .rcc-card:not(.rcc-line) > .rcc-acts { align-self: flex-start; margin: -8px -4px 0 0; }
 .rcc-card--req .rcc-num, .rcc-card--bad .rcc-num { font-weight: 700; }
@@ -6734,12 +6222,7 @@ body {
 /* A date in the app's one date format ("2026/02/09 23:50") is always mono */
 .wbx-dt { font-family: var(--mono); font-size: 0.95em; }
 
-/* Detail header, arranged by function (Workbench detail v2 §1): identity on the left —
-   label, unit, tag, component, FG chips, then the category switch (small) in the same
-   meta row — and ACTIONS only on the right: Train sensor + the state buttons, each with
-   its one short reason line under it. The actions never take more than ~46% of the pane
-   (the name keeps its room; the buttons wrap onto a second row instead); on a narrow pane
-   they move under the name as one right-aligned row. */
+/* Identity left, actions right (max ~46% of the pane); on a narrow pane the actions move under the name. */
 .bmw-dhead { padding: 16px 20px 12px; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; }
 .wbx-dh-ctl { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 46cqi; }
 @container (max-width: 760px) {
@@ -6750,9 +6233,7 @@ body {
 .wb3-meta-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--border-strong); }
 .wb3-catseg { padding: 1px; }
 .wb3-catseg button { font-size: 0.66rem; padding: 3px 9px; }
-/* The state buttons: Save changes · Next: Health score → · Mark complete / Mark incomplete.
-   At most ONE of them (or Train sensor) is filled. The reason of a disabled one sits
-   under THAT button, in the same slot and style as Train sensor's line. */
+/* At most one state button (or Train sensor) is filled; a disabled one's reason sits under it. */
 .wb3-actions { display: flex; align-items: flex-start; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
 .wb3-actions:empty { display: none; }
 /* A button (or the Mark pair) with its reason line under it. */
@@ -6766,19 +6247,14 @@ body {
 /* Train sensor: filled only while it is the pane's next action; the caption is one short line */
 .tq-sensortrain .tq-why { margin-top: -1px; }
 .tq-split-caret:not(.rcx-btn--pri) { border-left-color: transparent; margin-left: -1px; }
-/* The two halves are ONE control: pointing at either half lights the border of both (only
-   the half under the pointer gets the hover fill). With the plain button rule the hovered
-   half turned blue while the other stayed grey, and the button read as two colours. */
+/* The two halves are one control: hovering either lights both borders. */
 .tq-split:has(.rcx-btn:hover:not(:disabled)) .rcx-btn:not(.rcx-btn--pri):not(:disabled) { border-color: var(--accent-color); }
 .tq-split:has(.rcx-btn--pri:hover:not(:disabled)) .rcx-btn--pri:not(:disabled) { background: var(--accent-hi); }
 
 /* Kind tabs: kind badge + name + ONE dot */
 .f4-tab { padding: 8px 10px 7px; }
 
-/* Workbench detail v2 §2 — a Workbench kind tab says its status in WORDS beside the dot
-   (BuildModelWindow `tabDotOf`). Amber / red only for words that ask for action, green
-   for Complete, neutral grey for a plain "Trained". The words are never cut: a row that
-   does not fit wraps onto a second line of tabs. Slightly larger padding (§7). */
+/* Kind tab status in words beside the dot (amber/red only when action is needed); tabs wrap rather than cut words. */
 .wb3-kindtabs { flex-wrap: wrap; }
 .wb3-kindtabs .f4-tab { padding: 10px 12px 9px; font-size: 0.78rem; max-width: 100%; }
 .wb3-tab-state { display: inline-flex; align-items: center; gap: 5px; margin-left: 2px; min-width: 0; }
@@ -6788,10 +6264,7 @@ body {
 .wb3-tab-words--complete { color: var(--ok); }
 .f4-tab--on .wb3-tab-words { font-weight: 600; }
 
-/* Workbench detail v2 §3 — the two pages of a model: a second tab row under the kind
-   tabs. ① Model fit / ② Health score; the numbers are an order, not progress. A closed ②
-   (aria-disabled, still focusable) dims its number and name only — its reason stays at
-   full strength, and stays on screen at every width. */
+/* Second tab row (Model fit / Health score): a closed page dims its number and name, not its reason. */
 .wb3-pages { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 14px 0; border-bottom: 1px solid var(--border); background: var(--bg-primary); }
 .wb3-page { display: inline-flex; align-items: center; gap: 8px; min-width: 0; height: 38px; padding: 0 14px; border: 0; border-bottom: 2px solid transparent; border-radius: 6px 6px 0 0; margin-bottom: -1px; background: none; color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap; cursor: pointer; }
 .wb3-page:hover:not(.wb3-page--off) { color: var(--text-primary); background: var(--hover-bg); }
@@ -6803,9 +6276,7 @@ body {
 .wb3-page--on .wb3-page-n { border-color: transparent; background: var(--accent-color); color: #06111f; }
 .wb3-page-s { font-size: 10.5px; font-weight: 400; color: var(--text-faint); }
 .wb3-page-why { font-size: 10.5px; font-weight: 500; color: var(--warn); }
-/* ② open, trained, set points missing / not valid: its "next step" cue (it replaced the
-   header's "Next: Health score →") — the kind tab's dot (`.f4-sdot`) + its caption in the
-   same colour: amber "set points needed", red "fix set point". */
+/* Trained but set points missing or invalid: dot plus caption, amber 'set points needed', red 'fix set point'. */
 .wb3-page-s--need { font-weight: 500; color: var(--warn); }
 .wb3-page-s--bad { font-weight: 500; color: var(--danger); }
 @container (max-width: 760px) {
@@ -6837,10 +6308,7 @@ body {
 .wbx-msg--bad .wbx-msg-t { color: var(--danger); }
 .wbx-msg--run .wbx-msg-t { color: var(--accent-hi); }
 
-/* Notice line (Workbench detail v2 §4): what is left of the footer bar. It exists ONLY
-   while there is something to fix or wait for — a warning (amber), an error (red; a
-   rejected set point is one), saving, an unsaved draft, queued / training — or the
-   "Files saved <date> · <folder>" confirmation (ok). No pill, no buttons. */
+/* Exists only while there is something to fix or wait for, or the 'Files saved' confirmation. */
 .wb3-notice { position: sticky; bottom: 0; z-index: 1; display: flex; align-items: center; gap: 10px; padding: 9px 20px; border-top: 1px solid var(--border); background: var(--card-bg); }
 .wb3-notice:focus-visible { outline: 2px solid var(--accent-color); outline-offset: -2px; }
 .wbx-reason { font-size: 0.72rem; color: var(--text-secondary); }
@@ -6854,13 +6322,11 @@ body {
 .wb3-notice--warn .wbx-reason, .wb3-notice--warn .wbx-reason > svg { color: var(--warn); }
 .wb3-notice--bad .wbx-reason, .wb3-notice--bad .wbx-reason > svg { color: var(--danger); font-weight: 500; }
 
-/* Spinners honour reduced motion */
 @media (prefers-reduced-motion: reduce) {
     .pm-spin { animation: none; }
 }
 
-/* Welcome page — machine illustration: the ‹ › buttons and the dots that pick a machine
-   (MachineMorphCanvas.tsx; the panel is always dark, so these do not follow the theme). */
+/* Machine picker buttons and dots (MachineMorphCanvas); the panel is always dark, so not themed. */
 .machine-nav-btn {
     display: inline-flex;
     align-items: center;
@@ -6916,8 +6382,6 @@ body {
     outline-offset: 2px;
 }
 
-/* ===== Project details (2026-10-20): machine fields (Step 1 + Project details dialog),
-   the Project details dialog, the title bar's project menu ===== */
 .mf-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
 .mf-f { display: grid; gap: 5px; min-width: 0; }
 .mf-f--full { grid-column: 1 / -1; }
@@ -6958,8 +6422,6 @@ body {
 .tb-menu button:hover, .tb-menu button:focus-visible { background: var(--hover-bg); outline: none; }
 .tb-menu button:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-color); }
 
-/* ===== The running condition's ONE line (2026-10-26): "Machine is running when
-   [sensor] is above [value unit]" — also the export's running status ===== */
 .rs-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-secondary); }
 .rs-l { white-space: nowrap; }
 .rs-pick { flex: 0 1 320px; min-width: 200px; max-width: 360px; }
@@ -6968,9 +6430,6 @@ body {
 .rs-val input { width: 100%; min-width: 0; background: none; border: 0; outline: none; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; }
 .rs-val--empty { border-style: dashed; border-color: var(--warn); }
 
-/* ===== Export results (2026-10-20, DESIGN_SYSTEM §4.2): the Build Model window's
-   bottom bar (variant C) and the Export dialog — readiness checklist, Save to,
-   What is written + Peek, the confirm step, writing / done / failed ===== */
 /* The workspace status bar: full width, under the list AND the detail pane. */
 .exb { display: flex; align-items: center; gap: 12px; height: 40px; flex-shrink: 0; padding: 0 12px 0 16px; border-top: 1px solid var(--border); background: var(--card-bg); }
 .exb-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); }
@@ -6993,7 +6452,6 @@ body {
 /* The model settings are a fieldset (disabled while an export writes): no fieldset chrome. */
 fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 
-/* The dialog */
 .ex-modal { width: min(820px, 100%); }
 .ex-sec { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-primary); }
 .ex-lbl { display: flex; align-items: center; gap: 8px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-faint); }
@@ -7095,10 +6553,9 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .rd-sum .rd-n { color: var(--warn); font-weight: 600; }
 .rd-notes { display: grid; gap: 2px; }
 
-/* Running condition: ONE line "Machine is running when [sensor] is above [value]" (2026-10-26). */
 .rc1-row { padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-primary); }
 .rc1-row--unset { border-color: var(--warn-line); }
-/* "Only when running | Use all data" (2026-10-28): two radio cards above the condition line. */
+/* Two radio cards above the condition line. */
 .rcx-rows-mode { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .rcx-mode { flex: 1 1 220px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 7px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--bg-primary); color: var(--text-secondary); font-size: 11.5px; cursor: pointer; }
 .rcx-mode b { font-size: 12.5px; font-weight: 600; color: var(--text-primary); }
@@ -7126,8 +6583,7 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .rc1-dismiss:hover { color: var(--text-secondary); }
 .rc1-link:focus-visible, .rc1-dismiss:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; border-radius: 4px; }
 
-/* Resizable list pane (DESIGN_SYSTEM §4 rule 7, PaneResizeHandle). At rest it is only the column's own 1 px line,
-   so a pane nobody drags looks as before; the grip shows on hover, drag and focus, keyboard focus adds the accent line. */
+/* Resizable list pane: rests as a 1px line; the grip shows on hover, drag and focus. */
 /* The hit area starts at the line and reaches right: to its left is the list's scrollbar. */
 .pane-resize { position: absolute; top: 0; bottom: 0; width: 9px; cursor: col-resize; z-index: 5; outline: none; touch-action: none; }
 .pane-resize::after { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; pointer-events: none; background: transparent; transition: background .15s; }

@@ -1,8 +1,4 @@
-/**
- * Text form of the app's date fields: `YYYY/MM/DD HH:mm`, always 24-hour. A native `datetime-local`
- * follows the Windows region (AM/PM on many machines) and cannot be told otherwise. The value the rest of the app
- * holds stays what that field reported: `YYYY-MM-DDTHH:mm`, with seconds when it has them.
- */
+/** App date fields as text `YYYY/MM/DD HH:mm`, always 24-hour (a native `datetime-local` follows the Windows region, AM/PM). Held values stay `YYYY-MM-DDTHH:mm` (seconds if present). */
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -11,8 +7,7 @@ export function formatDateTime24(value: string | null | undefined): string {
     return (value ?? '').trim().replace('T', ' ').replace(/^(\d+)-(\d+)-(\d+)/, '$1/$2/$3');
 }
 
-/** The value of what was typed, or `''` while it is not a complete real date and time (as a `datetime-local`
- *  reports). Takes `/` or `-` between the date's parts, and a space or `T` before the time. */
+/** Value of typed text, or `''` unless a complete real date and time; `/` or `-` in the date, space or `T` before the time. */
 export function parseDateTime24(text: string): string {
     const m = /^(\d{4,6})[/-](\d{1,2})[/-](\d{1,2})[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(text.trim());
     if (!m) return '';

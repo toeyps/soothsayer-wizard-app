@@ -4,11 +4,7 @@ import {
     readWallClock, wallClockOf,
 } from '../utils/dateFormat';
 
-/*
- * THE date format of the whole app (user decision 2026-10-12): every date a user
- * reads is built here — numerals only, zero-padded, 24-hour clock, never a month
- * name and never the PC's locale.
- */
+/* The app's one date format: numerals only, zero-padded, 24-hour, no month names, never the PC locale. */
 const MONTH_NAME = /Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec/i;
 
 describe('dateFormat', () => {

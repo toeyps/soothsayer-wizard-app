@@ -2,33 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * The Dashboard's Failure
- * Groups tab status dot (`FailureGroupsPanel.tsx`'s `dotStatusFor`) against
- * the Build Model window's own pill / left-list dot, with BOTH real
- * components mounted on ONE workspace file.
- *
- * Same harness as BuildModelWorkbenchTrainCrossWindow.integration.test.tsx
- * (real workspaceManager over an in-memory plugin-fs, one event bus with a
- * switch that DROPS Build Model's `failure-group-state-changed` broadcasts so
- * Dashboard's mirror goes stale) — except `FailureGroupsPanel` is the REAL
- * component here, since the dot it renders is what is under test:
- * FailureGroupsPanel.test.tsx only unit-tests the panel with a hand-built
- * fg / datasetHeaders; this file exercises the Dashboard wiring
- * (`runningConditionFg={fgExtra}`, `datasetHeaders={allSensorTags}`) or the
- * cross-window round trip.
- *
- * Scenarios:
- *  1. Train in Build Model -> Dashboard dot turns blue (broadcast delivered);
- *     Mark complete -> green; Mark incomplete -> blue; workspace RC edit ->
- *     dot gone (stale). With the broadcast LOST: the file is right, and the
- *     dot recovers on the next Dashboard FG write / reopen; one
- *     `it.fails` records a known, self-healing display lag (see its comment).
- *  2. Gate-blocked-but-fingerprint-fresh: every `getBuildBlockReason` reason
- *     that does NOT change the fingerprint must read as not-Trained in the
- *     Build Model pill, its left-list dot AND the Dashboard dot — never a
- *     disagreement between the three.
- */
+/* Dashboard Failure Groups dot vs Build Model's pill and list dot, on one workspace file (in-memory plugin-fs). The bus can DROP Build Model's `failure-group-state-changed`; gate-blocked-but-fresh must read not-Trained everywhere. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -161,8 +135,7 @@ function wsState(fg: Record<string, unknown>): WorkspaceState {
     } as WorkspaceState;
 }
 
-/** A workspace whose model(s) carry a Phase-B training stamp that is
- *  fingerprint-FRESH against the slice they're stored in. */
+/** A workspace whose model(s) carry a training stamp that is fingerprint-FRESH against the slice they're stored in. */
 function wsWithTrained(fg: Record<string, unknown>, models: Record<string, unknown>[]): WorkspaceState {
     const slice = { ...BASE_FG, ...fg, models } as any;
     const stamped = models.map(m => ({
@@ -213,28 +186,14 @@ function dashDot(groupNo: number, key = 'tag1', kind = 'individual'): string {
     expect(dash().getByTestId(`fg-sensor-row-${groupNo}:${key}`)).toBeTruthy();
     const el = screen.getByTestId('dashboard-window').querySelector(`[data-testid="fg-kind-badge-dot-${groupNo}-${key}-${kind}"]`);
     if (!el) return 'none';
-    // A dot element that is present but carries no `f4-kb-dot--<state>` class
-    // must fail loudly here — read back as 'none' it would make every "no dot"
-    // assertion in this file pass vacuously. Build Model's own dot (`bmwDot`
-    // below) maps an unknown class to '?'.
+    // A dot with no `f4-kb-dot--<state>` class must fail here; reading it as 'none' would pass every "no dot" assertion vacuously.
     const state = el.className.match(/f4-kb-dot--(\w+)/)?.[1];
     expect(state, `Dashboard dot present without an f4-kb-dot--<state> class: "${el.className}"`).toBeDefined();
-    // A TRAINED model whose saved set points are empty / rejected draws the yellow
-    // `need` / red `bad` dot (the persisted verdict - `modelSetPointFlag`). This file is about the
-    // CENTRAL status ("trained"), which every one of its models shares whatever its set points say;
-    // the verdict variants are covered in HealthScoreIncompleteRule.integration.test.tsx.
+    // Trained models with empty/rejected set points draw `need`/`bad`; fold to 'trained' since this file tests central status.
     return state === 'need' || state === 'bad' ? 'trained' : state!;
 }
 
-/** Build Model left-list dot(s) for one model id — the same model can render
- *  under several FG buckets; they must all agree.
- *  Health score 3b-1: Build Model's list now has three colours
- *  (green complete / yellow needs input or re-train / red needs fixing) straight
- *  from `modelDotState`, which stays on each dot as `data-state`. The Dashboard's
- *  Failure Groups panel still draws the older none/trained/complete vocabulary
- *  from the SAME `modelDotState`; this folds the Build Model dot back into that
- *  vocabulary so the two windows are still compared on the one underlying state
- *  (stale and blocked both read "no dot" there). */
+/** Build Model list dot(s) for a model id (all FG buckets must agree), folded to none/trained/complete; stale/blocked = no dot. */
 function bmwDot(modelId: string): string {
     expect(screen.getByTestId('build-model-window').querySelectorAll(`[data-testid="sensor-kind-badge-${modelId}"]`).length).toBeGreaterThan(0);
     const dots = [...screen.getByTestId('build-model-window').querySelectorAll(`[data-testid="sensor-kind-badge-dot-${modelId}"]`)];
@@ -245,8 +204,7 @@ function bmwDot(modelId: string): string {
     return st === 'stale' || st === 'blocked' ? 'none' : st;
 }
 
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status word of the open kind tab: Complete / Trained / Incomplete. */
 const pill = () => openTabStatus(screen.getByTestId('build-model-window'));
 const selectTag1 = (g = 1) => fireEvent.click(bmw().getByTestId(`sensor-list-row-fg:${g}-tag1`));
 const dropBuildModelBroadcasts = () => {
@@ -273,17 +231,14 @@ async function applyRcValueSaved(modal: ReturnType<typeof within>, value: string
     await waitFor(() => expect(readDisk().failureGroupState.runningConditionFilters[0].value1).toBe(value), { timeout: 3000 });
 }
 
-/** A Dashboard-owned FG write that goes through `persistFailureGroupStateFrom`
- *  (FailureGroupsPanel's own "Edit details" → description, 250ms debounce). */
+/** A Dashboard-owned FG write via `persistFailureGroupStateFrom` ("Edit details" description, 250 ms debounce). */
 async function dashboardEditsFgDescription(text: string) {
     fireEvent.click(dash().getAllByText('Edit details')[0]);
     fireEvent.change(dash().getByPlaceholderText('What failure mode does this group track?'), { target: { value: text } });
     await waitFor(() => expect(readDisk().failureGroupState.groups.find((g: any) => g.no === 1).description).toBe(text), { timeout: 3000 });
 }
 
-// These cross-window flows wait on the disk (waitFor), not fixed sleeps; a whole
-// train -> complete -> edit flow can exceed the 5 s default when the full suite
-// runs in parallel, so the per-test budget is larger here.
+// Cross-window flows wait on disk, and a full flow can exceed the 5 s default under parallel runs, so the timeout is larger.
 vi.setConfig({ testTimeout: 20_000 });
 
 beforeEach(() => {
@@ -369,8 +324,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         dropBuildModelBroadcasts();
         await trainTag1();
 
-        // Unrelated Dashboard interaction -> full-state autosave: must not
-        // erase the training stamp (it re-reads failureGroupState from disk).
+        // An unrelated Dashboard autosave must not erase the training stamp (it re-reads `failureGroupState` from disk).
         openDashSensorTab();
         await dashSelectTag1Saved();
         openDashFgTab();
@@ -391,17 +345,8 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         expect(pill()).toBe('Trained');
     });
 
-    // Guards against: recorded per this repo's `it.fails` convention.
-    // Dashboard's Failure Groups dot reads ONLY its in-memory mirror
-    // (`fgModels` / `fgExtra`). With the broadcast lost, nothing re-reads
-    // disk into that mirror: the debounced autosave re-reads
-    // `failureGroupState` from disk for the WRITE
-    // but never adopts it into `fgModels`/`fgExtra`. So after a Train in
-    // Build Model the Dashboard dot stays "no dot" (while Build Model says
-    // Trained) until some Dashboard FG write or a reopen — even across an
-    // autosave that just read the fresh value off disk. Data on disk is
-    // never wrong; this is display-only. Flip to `it` if the autosave (or a
-    // focus/visibility refresh) starts adopting the disk slice into the mirror.
+    // Known gap (`it.fails`): the Dashboard dot reads only its in-memory mirror; with the broadcast lost, autosave
+    // re-reads disk but does not adopt it, so the dot lags until an FG write or reopen. Display-only; flip to `it` if fixed.
     it.fails('KNOWN GAP: the Dashboard dot reflects the Train after a Dashboard autosave even though the broadcast was lost', async () => {
         writeDisk(start());
         await mountBoth();
@@ -415,12 +360,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         expect(dashDot(1)).toBe('trained'); // actual: 'none'
     });
 
-    // `Dashboard.persistFailureGroupStateFrom`'s `.then` adopts the WHOLE
-    // on-disk slice into the mirror (`fgExtra` — the workspace running
-    // condition — included), same as the broadcast listener. With the
-    // broadcast lost, a Dashboard FG write must not pair FRESH models with a
-    // STALE running condition (the dot would judge staleness against the
-    // wrong condition).
+    // A Dashboard FG write adopts the whole on-disk slice (incl. `fgExtra`): fresh models never pair with a stale condition.
     it('after a lost RC-edit broadcast, a Dashboard FG write must not show a stale model as Trained (fgExtra now adopted from disk)', async () => {
         writeDisk(start());
         await mountBoth();
@@ -437,7 +377,7 @@ describe('Train in Build Model with the broadcast LOST (stale Dashboard mirror)'
         expect(bmwDot('i1')).toBe('none');
 
         await dashboardEditsFgDescription('Seal leak');
-        expect(dashDot(1)).toBe('none'); // actual: 'trained' — disagrees with Build Model
+        expect(dashDot(1)).toBe('none');
     });
 });
 
@@ -488,10 +428,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
         it(`${c.name} -> ${c.blocked ? 'NOT Trained' : 'Trained'} in all three places`, async () => {
             const ws = wsWithTrained(c.fg, [dashModel({ id: 'i1', ...c.model })]);
             writeDisk(ws);
-            // Precondition: the persisted stamp really is fingerprint-fresh, and
-            // the gate verdict is what the case says (against the same headers
-            // both windows use — Dashboard's allSensorTags, which it also hands
-            // Build Model as `sensors`).
+            // Precondition: the stamp is fingerprint-fresh and the gate verdict matches the case, against the headers both windows use.
             const fgOnDisk = ws.failureGroupState as any;
             const m = fgOnDisk.models[0];
             expect(isModelTrainedFresh(m, fgOnDisk)).toBe(true);
@@ -533,9 +470,7 @@ describe('gate-blocked but fingerprint-fresh: Build Model status words, Build Mo
     });
 });
 
-// "Incomplete immediately": a Complete
-// model whose training inputs change goes back to Incomplete in the SAME write,
-// and the Dashboard's Failure Groups dot follows via the normal broadcast.
+// A Complete model whose training inputs change goes Incomplete in the same write; the Dashboard dot follows via broadcast.
 describe('Complete -> Incomplete immediately (health score SPEC FINAL), seen from both windows', () => {
     const SP = { kind: 'individual', lower: 1.5, upper: 99, masterLower: 2, masterUpper: 90 };
     const completeFg = () => ({ runningConditionFilters: [COND] });

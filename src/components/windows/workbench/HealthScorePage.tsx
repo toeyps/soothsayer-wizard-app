@@ -36,46 +36,9 @@ import { testScoringFailure } from '../../../utils/trainTestValidation';
 import { FitGoneBoard, LoadFailedBoard, StateBoard, TrainSensorLink } from './WorkbenchShellParts';
 import type { HealthScorePageProps, SaveInfo } from './workbenchTypes';
 
-/*
- * Page 2 of the Workbench - "Health score" body:
- *
- *   [ Lowest score ] [ Below 80 ] [ Share of scored hours ]   the KPI tiles
- *   [ Health set points: the score ruler + footnote + the Checks     ]
- *   [ ONE chart card:  the set-point chart                           ]
- *   [                  ------------------------------------------    ]
- *   [                  the health score (locked until valid)         ]
- *
- * One column: every card is as wide as the board. The two charts of the stacked card
- * share ONE time axis (same plot margins, one cursor, one zoom window), so a spike is
- * read straight down to its score.
- *
- * Everything is drawn from the ONE bounded `HealthPreview` the container's
- * `useHealthPreview` returns for the DRAFT set points (so typing moves the
- * lines, the score and the Checks within ~250 ms). The header (the state buttons,
- * status, Mark complete) is rendered by the container, because Mark complete
- * shares its persist flow.
- *
- * 1-HOUR AVERAGES: the health score is computed on one point per clock hour (the
- * mean of the hour's running rows), so EVERY chart and number of this page reads
- * `data.hourly` — the set-point chart, the score chart, the read-out and the
- * Clustering points share that ONE index set. `data.series` (the raw rows, never
- * scored) belongs to the Model fit page and is not read here.
- *
- * Hover: the two time charts (Individual / Relationship) are connected in one
- * ECharts group, so one timestamp cursor shows on both; the page ALSO keeps the
- * hovered `hourly` index to print "hour - 1 h average - score" in the stacked card's
- * header. Clustering has no time axis on its set-point chart, so hovering
- * a point there (or the score chart) highlights the same hour on the other.
- *
- * No legend rows: every line is labelled on its
- * chart — reference lines at the right edge, the user's set points with their
- * typed value, the ring levels at the ring's edge — and the score bands are read
- * off the "Share of scored hours" tile at the top of the page.
- */
+/* Health score page body: KPI tiles, set-point ruler + Checks, and one card of two stacked charts sharing one time axis, cursor and zoom. Drawn from the bounded `HealthPreview` of the DRAFT set points; numbers read `data.hourly` (1-hour averages), never `data.series`. */
 
-/** Memo comparison (see `samePageProps`): the small data the window rebuilds per
- *  render (model, set points, save record, tests-changed state, scoring-period numbers)
- *  by value, everything else by identity — the callbacks must be stable. */
+/** Memo comparison: the small data rebuilt per render is compared by value, the rest by identity (callbacks must be stable). */
 export function sameHealthScoreProps(a: HealthScorePageProps, b: HealthScorePageProps): boolean {
     const { fitGone: fa, ...ra } = a;
     const { fitGone: fb, ...rb } = b;
@@ -90,8 +53,7 @@ function sameFitGone(a: HealthScorePageProps['fitGone'], b: HealthScorePageProps
         && !!a.gone === !!b.gone;
 }
 
-/** A Mark complete check that has been running this long gets a line on the page;
- *  until then the notice line ("Checking the set points…") says it alone. */
+/** A Mark complete check running this long gets a line on the page. */
 export const SLOW_SAVE_NOTICE_MS = 4000;
 
 /** `flag`, but only once it has stayed true for `delayMs` (false at once). */
@@ -111,30 +73,19 @@ function useHeldFor(flag: boolean, delayMs: number): boolean {
 function HealthScorePage(props: HealthScorePageProps) {
     const { model, stale, preview, unit, setPoints, attemptIssues, save } = props;
     const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-    // One zoom window for the two time charts, kept when either is redrawn — and a second
-    // one for their enlarged copy in the Expand overlay. (Hooks: they must stay above the
-    // early returns of the state boards below.)
+    // One zoom window for the two time charts and one for their Expand copy. Hooks: must stay above the early returns.
     const zoom = useSharedZoom(props.model.id);
     const zoomExpanded = useSharedZoom(props.model.id, 'expanded');
-    // A failed request leaves `preview.data` null, but when an earlier answer for this
-    // model exists the page (inputs, charts) stays on screen from `lastData` under the
-    // red card with its Retry instead of being replaced.
-    // A Relation-model fit that is gone from memory (NOT_FITTED) has its own board —
-    // by the live answer, or by what the window knows (`fitGone.gone`): after a load
-    // that failed and a tab switch away and back, no request is asked any more, so
-    // `preview.notFitted` is no longer set while the fit is still gone.
+    // A failed request keeps the page up from `lastData` under a red Retry card.
+    // A Relation fit gone from memory (NOT_FITTED) has its own board (`preview.notFitted` or `fitGone.gone`).
     const fitIsGone = preview.notFitted || !!props.fitGone.gone;
     const failed = !preview.data && !fitIsGone && !!preview.error;
-    // The NEXT request after a failure (Retry, or a set point typed under the red card)
-    // clears `error` while `data` is still null: the page must stay exactly where it is
-    // — replacing it by the "Loading…" board would unmount the input being typed in.
+    // After a failure the next request clears `error` while `data` is null; stay on the page or the typed input unmounts.
     const asking = !preview.data && !preview.error && preview.loading && !!preview.lastData;
     // The page is drawn from the last good answer, which does not describe what is typed.
     const errorMode = (failed || asking) && !!preview.lastData;
     const data = preview.data ?? (errorMode ? preview.lastData ?? null : null);
-    // Train / scoring scopes of the time charts (null = no scoring periods sent): the line
-    // shows the hours of both; only the train periods are highlighted and named.
-    // Memoised on the payload so a hover re-render never rebuilds the time charts.
+    // Train/scoring scopes of the time charts (null = none sent); memoised so hover re-renders don't rebuild the charts.
     const validation = data?.test_validation;
     // S-numbers of the sent scoring periods: memoised on their VALUE (the container
     // builds a new array every render).
@@ -148,9 +99,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     const slowSave = useHeldFor(save.phase === 'running', SLOW_SAVE_NOTICE_MS);
     // A new request cannot be fixed by asking again after the dataset changed.
     const canRetry = !!props.onRetryPreview && preview.errorCode !== 'STALE_SESSION';
-    // The ONE shape of "the preview failed", with or without an earlier
-    // answer under it: a red card, the reason, Retry. Mark complete is disabled
-    // meanwhile and the notice line says why.
+    // One failure card (with or without an earlier answer): reason and Retry. Mark complete is disabled meanwhile.
     const errorCard = failed ? (
         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="health-error">
             <span>
@@ -179,8 +128,7 @@ function HealthScorePage(props: HealthScorePageProps) {
     );
 
     if (!data) {
-        // The model's own load (or train) failed in this session, so no preview is asked
-        // for at all: without this the page would read "Loading…" for ever.
+        // The model's own load/train failed: no preview is asked for, or the page would read Loading forever.
         const loadError = !fitIsGone && !props.fitLoading ? props.fitGone.error ?? null : null;
         const kindName = model.kind === 'relationship' ? 'Relation model' : `${model.kind === 'clustering' ? 'Clustering' : 'Individual'} model`;
         return (
@@ -213,9 +161,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                         />
                     )
                 ) : fitIsGone ? (
-                    // The fit is being loaded again (silently, or "Load it again"): say so.
-                    // Otherwise ONE board, no button of its own: "Load it again" (nothing
-                    // about the model changed) and, when it trains this model, "Train sensor ↑".
+                    // Fit being loaded again: say so. Otherwise one board: 'Load it again', or 'Train sensor ↑' when it trains this model.
                     props.fitLoading ? loadingBoard : (
                         <FitGoneBoard
                             testId="health-not-fitted"
@@ -231,37 +177,26 @@ function HealthScorePage(props: HealthScorePageProps) {
         );
     }
 
-    // While an error shows, the old answer's verdict / issues / score do not describe the set
-    // points on screen: nothing is judged until the next request lands.
+    // While an error shows, the old verdict/issues/score don't describe the typed set points: nothing is judged.
     const issues = errorMode ? [] : attemptIssues ?? data.validation;
     const verdict = errorMode ? null : attemptIssues ? verdictOfIssues(attemptIssues) ?? healthVerdict(data) : healthVerdict(data);
     const scoreReady = !errorMode && data.valid && !!data.hourly.score && !!data.score_summary;
-    // "The health score could not be calculated" (the Relation model's engine did not
-    // answer for the hours to score). With no scored hour at all the notice stands in the
-    // score chart's place — the lower half of the stacked card; when some hours WERE
-    // scored (the training hours), it is a card of its own above the charts and the score
-    // chart is still drawn. (The "Scoring results" card that used to
-    // carry it — one tile per scoring period — was removed 2026-10-12, user decision: not
-    // used. The KPI tiles at the top keep the facts for ALL scored hours; there is never a
-    // tile per scoring period.)
+    // 'Could not be calculated' (no answer for the hours to score): replaces the score chart if no hour scored, else a card above the charts.
     const scoringFailure = errorMode ? null : testScoringFailure(data);
     const anyScored = !!data.hourly.score?.some(v => v !== null);
     const retryScoring = canRetry ? (props.onRetryTestScoring ?? props.onRetryPreview) : undefined;
-    // The score chart is drawn when there is a score to draw — and not under a failure
-    // that left no hour scored (an empty chart would say nothing).
+    // Draw the score chart only when there is a score and not after a failure that scored no hour.
     const score = scoreReady && data.hourly.score && !(scoringFailure && !anyScored) ? data.hourly.score : null;
 
     return (
         <div className="wb2-board hs-board" data-testid="health-page" data-valid={String(data.valid)}>
-            {/* The page's numbers first, as tiles — they replace the score chart's old
-                subtitle and the "Share of scored hours" card. */}
+            {/* The page's numbers first, as tiles. */}
             <ScoreKpis summary={scoreReady ? data.score_summary : null} state={errorMode ? 'error' : scoreReady ? 'ready' : 'locked'} />
             <SaveBanner save={save} slow={slowSave} />
             <SlowScoringNotice show={props.slowScoring} />
             {errorCard}
             <TestsChangedBanner state={props.testsChanged} />
-            {/* The ruler: value → score in one band, the user's points its only inputs, its
-                footnote, then the Checks — ONE card, as wide as the board. */}
+            {/* Ruler card: value to score in one band, footnote, then the Checks. */}
             <ScoreRuler
                 data={data}
                 setPoints={setPoints}
@@ -281,10 +216,7 @@ function HealthScorePage(props: HealthScorePageProps) {
                     <TestScoringFailedNotice issue={scoringFailure} onRetry={retryScoring} testNumbers={testNumbers} />
                 </section>
             )}
-            {/* ONE card, two charts on one time axis: the set-point chart above, the score
-                under it, one linked cursor and one zoom window. (Clustering has no time axis
-                on its set-point chart — the scatter sits above the score chart; hovering an
-                hour on either highlights it on the other.) */}
+            {/* One card, two charts; time charts share axis, cursor and zoom. Clustering: hovering an hour highlights it on the other chart. */}
             <StackCharts
                 data={data}
                 props={props}
@@ -306,26 +238,19 @@ function HealthScorePage(props: HealthScorePageProps) {
     );
 }
 
-/** Why the score area is locked: the request failed (`error`), a set point is rejected
- *  (`bad`), or nothing is rejected but the score cannot be drawn yet (`empty`). */
+/** Why the score area is locked: request failed, a set point rejected, or nothing to draw yet. */
 export function lockReason(errorMode: boolean, verdict: HealthVerdict | null): 'error' | 'bad' | 'empty' {
     return errorMode ? 'error' : verdict === 'bad' ? 'bad' : 'empty';
 }
 
-/** The sentence in the locked score area: it sends the user to the ruler above — to FIX a
- *  rejected point, or to SET the points that are still empty. */
+/** Locked-area sentence: sends the user to the ruler to fix or set points. */
 export function scoreLockText(verdict: HealthVerdict | null): string {
     return verdict === 'bad'
         ? 'Fix the set point on the ruler above — the score appears here'
         : 'Set every point on the ruler above — the score appears here';
 }
 
-// ---------------------------------------------------------------------------
-// A FAILED Mark complete, and a check that is taking long. Checking is otherwise
-// said by the notice line alone ("Checking the set points…"); a successful one
-// is the green "Complete" on the kind tab. Mark complete writes no files — the
-// files are written by Export results.
-// ---------------------------------------------------------------------------
+// Failed Mark complete, and a slow check. Checking otherwise shows only in the notice line.
 
 function SaveBanner({ save, slow }: { save: SaveInfo; slow: boolean }) {
     if (save.phase === 'running' && slow) {
@@ -339,7 +264,7 @@ function SaveBanner({ save, slow }: { save: SaveInfo; slow: boolean }) {
         );
     }
     if (save.phase !== 'error') return null;
-    // The reason carries the file (Rust names the file or folder it could not write).
+    // The reason is the failure message of the save.
     return (
         <div className="hs-save hs-save--bad hs-full" role="alert" data-testid="save-error">
             <span><b>The model was not saved.</b> <span data-testid="save-error-reason">{save.message}</span></span>
@@ -347,19 +272,11 @@ function SaveBanner({ save, slow }: { save: SaveInfo; slow: boolean }) {
     );
 }
 
-// ---------------------------------------------------------------------------
-// The linked pair of time charts: one cursor group, one zoom window
-// ---------------------------------------------------------------------------
 
-/** Which pair a `useSharedZoom` serves: the two charts on the page, or their enlarged
- *  copy inside the Expand overlay (ChartCard's `.pm-chart-modal-backdrop`). */
+/** Which chart pair a `useSharedZoom` serves: the page's, or the Expand overlay's copy. */
 export type ZoomScope = 'page' | 'expanded';
 
-/** Join the ECharts group so the pair of time charts share one cursor.
- *  The pair on the page and its ENLARGED copy are two separate groups, and a chart only
- *  ever joins the one it is drawn in: the charts under the backdrop must not answer the
- *  overlay's hover with a cursor and tooltip of their own (they showed through, over the
- *  overlay), and a zoom in the overlay redraws only the charts in it. */
+/** Join the ECharts group for a shared cursor. The page pair and the Expand copy are separate groups; a chart joins only its own. */
 function joinSyncGroup(inst: { group?: string; getDom?: () => Element | null } | null | undefined, scope: ZoomScope): boolean {
     if (!inst) return false;
     try {
@@ -403,23 +320,7 @@ function zoomWindowOf(inst: ZoomChart): [number, number] | null {
     }
 }
 
-/**
- * ONE zoom window for the page's two time charts (the sensor value / the residual,
- * and the health score — stacked in one card). They are the same width and share
- * the plot margins, so with the same window a moment in time is at the same X in
- * both — the user reads a spike straight down to its score (real-app request
- * 2026-10-12: "no need to line the point up by eye").
- *
- * The ECharts group already forwards a wheel zoom, but a chart REDRAWN from a new
- * option (a set point edited, a new score) starts unzoomed while the other keeps
- * its window — the two then showed different spans. So the window is kept here:
- * each zoom records it and pushes it to the other chart, and a redraw puts it back.
- * A different model starts unzoomed.
- *
- * `scope` picks the pair it serves: the charts on the page (the default) or their
- * enlarged copy in the Expand overlay — each pair has its own cursor group and its own
- * window, and a chart drawn in the other place is never joined.
- */
+/** Shared zoom window for the stacked time charts, kept here so a chart redrawn from a new option (which starts unzoomed) gets it back. `scope` picks the page pair or the Expand copy (separate cursor group and window). */
 export function useSharedZoom(resetKey: string, scope: ZoomScope = 'page'): SharedZoom {
     const state = useRef<{ key: string; win: [number, number] | null; charts: Set<ZoomChart>; busy: boolean }>({ key: resetKey, win: null, charts: new Set(), busy: false });
     if (state.current.key !== resetKey) state.current = { key: resetKey, win: null, charts: state.current.charts, busy: false };
@@ -442,8 +343,7 @@ export function useSharedZoom(resetKey: string, scope: ZoomScope = 'page'): Shar
         return {
             join: inst => {
                 if (!inst || !joinSyncGroup(inst, scope)) return;
-                // The enlarged copy opens on the whole range EVERY time: when its charts of
-                // the last opening are all gone, so is their window.
+                // The Expand copy opens on the full range every time: once its old charts are disposed, drop the window.
                 if (scope === 'expanded') {
                     for (const old of [...st().charts]) if (old.isDisposed?.()) st().charts.delete(old);
                     if (st().charts.size === 0) st().win = null;
@@ -476,17 +376,7 @@ export function useSharedZoom(resetKey: string, scope: ZoomScope = 'page'): Shar
     }, [scope]);
 }
 
-/**
- * The ONE chart card of the page: the set-point chart (per kind) above, the health score
- * below. Individual / Relation model: both are time charts on ONE time axis — the upper
- * one leaves its X labels to the lower one, the train periods are named once (above the
- * upper plot), one cursor and one zoom window serve both. Clustering: the scatter above
- * has no time axis; hovering a point (or an hour of the score chart) highlights the same
- * hour on the other.
- *
- * `score` = the hourly scores to draw, or null when there is none to draw: the lower half
- * then holds the "could not be calculated" notice (`failure`) or the lock sentence.
- */
+/** The page's one chart card: set-point chart above, health score below. Time charts share axis, cursor and zoom. `score` null = the lower half shows the failure notice or the lock sentence. */
 function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom, zoomExpanded, score, lock, lockText, failure, onRetryFailure, testNumbers }: {
     data: HealthPreview;
     props: HealthScorePageProps;
@@ -542,20 +432,17 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
             };
         }
         return null;
-        // `hoverIdx` only changes the Clustering highlight; the time charts follow
-        // the connected cursor and must not be rebuilt on every mouse move.
+        // `hoverIdx` only changes the Clustering highlight; time charts follow the connected cursor and must not rebuild on every mouse move.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [stats, series, setPoints, unit, model.xSensor, model.ySensor, scopes, lookup, stats.kind === 'clustering' ? hoverIdx : null]);
 
     const isTime = !!built?.time;
-    // Relation model: Actual and Predicted on top of the residual, because the residual is
-    // those two lines subtracted. It names the train periods, once, above the whole stack.
+    // Relation model: Actual and Predicted above the residual (their difference); train periods named once above the stack.
     const fitOption = useMemo(
         () => (stats.kind === 'relationship' && series.kind === 'relationship' ? asStackUpper(buildHealthFitOption(series, unit, scopes)) : null),
         [stats.kind, series, unit, scopes],
     );
-    // With the score chart under it a time chart is the UPPER half of one plot (no X labels
-    // of its own); alone — the score is locked — it keeps them.
+    // With the score chart below, a time chart is the upper half (no X labels); alone (score locked) it keeps them.
     const upperOption = useMemo(() => {
         if (!built) return null;
         if (!built.time) return built.option;
@@ -577,11 +464,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         zoomExpanded.restore();
     }, [fitOption, upperOption, lowerOption, isTime, zoom, zoomExpanded]);
 
-    // The charts' event handlers are made ONCE (they read the latest `onHover` and
-    // timestamps through refs). A new `onEvents` object on every render — and every hovered
-    // hour re-renders this card — makes echarts-for-react bind the handlers again without
-    // ever removing the old ones (its unbind passes a different function than its bind
-    // registered), so each mouse move would cost more than the one before it.
+    // Make handlers once, reading the latest values via refs: a new `onEvents` per render makes echarts-for-react rebind without unbinding.
     const hoverRef = useRef(onHover);
     hoverRef.current = onHover;
     const stampsRef = useRef(series.timestamps);
@@ -606,8 +489,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
     if (!built || !upperOption) return null;
 
     const text = readoutText(readoutAt(series, hoverIdx), unit);
-    // The subtitle says what the upper chart plots, that every point of BOTH charts is a
-    // 1-hour average of the running rows, and (time charts) that they share the axis.
+    // Subtitle: what the upper chart plots, the 1-hour averages of running rows, and (time charts) the shared axis.
     const sub = built.time ? (
         <>
             {built.what && <>{built.what} · </>}
@@ -622,10 +504,7 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
         />
     );
 
-    // No key row under these charts: the time charts only zoom in time, so the names of
-    // their level lines stay at the right edge; the Clusters chart zooms on both axes,
-    // but its rings are keyed by the score ruler above it (1× / 3× / N× SD in the rings'
-    // colours).
+    // No key row: level lines are named at the right edge; Clusters rings are keyed by the score ruler.
     const body = (expanded: boolean) => {
         // The enlarged copy is a pair of its own: its own cursor group and zoom window.
         const z = expanded ? zoomExpanded : zoom;
@@ -680,12 +559,8 @@ function StackCharts({ data, props, hoverIdx, onHover, stale, unit, scopes, zoom
     );
 }
 
-// ---------------------------------------------------------------------------
-// KPI tiles
-// ---------------------------------------------------------------------------
 
-/** A share of the scored hours as text: one decimal, and a share that is not zero never
- *  reads "0.0%" (it is "< 0.1%"). Every share on the page uses this rule. */
+/** Share of scored hours as text: one decimal; a nonzero share never reads '0.0%' (it is '< 0.1%'). */
 export function shareText(v: number): string {
     return v > 0 && v < 0.1 ? '< 0.1%' : `${v.toFixed(1)}%`;
 }
@@ -697,20 +572,13 @@ const SHARES: { key: 'share_80_100' | 'share_40_80' | 'share_0_40'; label: strin
     { key: 'share_0_40', label: '0–40', color: 'var(--danger)' },
 ];
 
-/** What the tiles show: the score (`ready`), nothing yet because the set points are not
- *  valid (`locked`), or nothing because the health score did not load (`error`). */
+/** KPI tile state: score shown (`ready`), set points invalid (`locked`), or score failed to load (`error`). */
 export type ScoreKpiState = 'ready' | 'locked' | 'error';
 
 /** The caption of a tile that has no number to show. */
 const NOT_LOADED = 'not available until the score loads';
 
-/**
- * The KPI strip of the Health score page: `Lowest score · Below 80 · Share of scored
- * hours`, for ALL scored hours (there is never a tile per scoring period — user decision
- * 2026-10-12). Tiles do not judge: the only colour is on a number that IS a score — the
- * lowest score (green from 80, red below) — and the bar's three score bands.
- * `summary` is null whenever there is no score to show (`state` says why).
- */
+/** KPI strip for ALL scored hours. Only the lowest score is coloured (ok from 80, warn from 40, else bad); `summary` null = nothing to show. */
 export function ScoreKpis({ summary, state }: { summary: ScoreSummary | null | undefined; state: ScoreKpiState }) {
     const ready = state === 'ready' && !!summary;
     const lowest = ready ? summary.min_score : null;
@@ -722,8 +590,7 @@ export function ScoreKpis({ summary, state }: { summary: ScoreSummary | null | u
             <Kpi
                 label="Lowest score"
                 testId="kpi-lowest"
-                // Coloured by the band its score is in — the same three bands as the score
-                // chart's line and the share bar: 80–100, 40–80, below 40 (SPEC §6).
+                // Same three bands as the score chart and share bar: 80-100, 40-80, below 40.
                 tone={lowest ? (lowest.score >= 80 ? 'ok' : lowest.score >= 40 ? 'warn' : 'bad') : undefined}
                 value={lowest ? <span data-testid="score-lowest">{Math.round(lowest.score)}</span> : '—'}
                 sub={lowest

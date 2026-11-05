@@ -103,8 +103,7 @@ describe('ResponsiveECharts', () => {
     it('forwards onChartReady straight to echarts-for-react, not grabbed via a mount effect (regression: echarts-for-react initializes asynchronously -- it creates a temporary instance, disposes it once its first render finishes, then creates the real one; a synchronous effect right after mount would observe the temporary/disposed instance instead of the long-lived one, so this MUST be a plain prop the library itself calls once the real instance exists)', () => {
         const onChartReady = vi.fn();
         render(<ResponsiveECharts option={{}} onChartReady={onChartReady} />);
-        // The library is handed a ready-callback (the wrapper's own, which also keeps the
-        // instance for the even time-axis ticks) and the caller's is NOT called at mount ...
+        // The library gets the wrapper's own ready-callback; the caller's isn't called at mount ...
         expect(typeof receivedProps[0].onChartReady).toBe('function');
         expect(onChartReady).not.toHaveBeenCalled();
         // ... only when the library reports its real instance — and with that same instance.

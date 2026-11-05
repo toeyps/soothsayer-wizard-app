@@ -1,30 +1,12 @@
-//! Structured diagnostics for the special-sensor formula gate (Formula editor
-//! + Quick build).
-//!
-//! The VERDICT on a formula is still decided by the one gate in `lib.rs`
-//! (`check_formula_limits` → `resolve_formula_sources` → `compile_formula`):
-//! fasteval parses it, a trial evaluation proves every name/arity resolves,
-//! and the app's own refusals (`round(x, n)`, division by a literal 0) run
-//! last. This module only CLASSIFIES a refusal the gate already made — a
-//! stable `code` plus, where it can be located, a `range` into the user's own
-//! text — so `preview_formula`, `validate_formula` and Create/Save can never
-//! disagree about whether a formula is valid or what the message says.
-//!
-//! Ranges are `[start, end)` in UTF-16 code units of the ORIGINAL formula text
-//! (what a JS string index / textarea selection uses). For Thai and every
-//! other BMP character that is the same as the character index.
-//!
-//! Also home of the legacy `round(x, n)` → `round(x * 10^n) / 10^n`
-//! converter (old workspaces are auto-converted on load). It walks the
-//! SAME call scan (`crate::excel_round_calls`) as the refusal, so a formula is
-//! converted exactly when, and exactly where, it would be refused.
+//! Classifies refusals the gate in `lib.rs` already made (stable `code` plus a `range`), so preview, validate and Create/Save agree.
+//! Ranges are `[start, end)` in UTF-16 code units of the formula. Also holds the legacy `round(x, n)` converter.
 
 use crate::{
     excel_round_calls, is_formula_atom, ref_mask, round_places, scan_sensor_refs, SensorRefSpan,
 };
 use serde::Serialize;
 
-// ── Stable issue codes (the frontend keys fix buttons on these) ─────────────
+// Stable issue codes: the frontend keys fix buttons on these.
 pub(crate) const UNKNOWN_FUNCTION: &str = "unknown_function";
 pub(crate) const UNKNOWN_SENSOR: &str = "unknown_sensor";
 pub(crate) const BAD_ARG_COUNT: &str = "bad_arg_count";
@@ -61,8 +43,7 @@ pub(crate) struct FormulaIssue {
     pub range: Option<[usize; 2]>,
 }
 
-/// Every String-returning path (Create / Save / replay) keeps answering with
-/// the message alone, so `?` works unchanged in those functions.
+/// Create / Save / replay paths keep answering with the message alone, so `?` works.
 impl From<FormulaIssue> for String {
     fn from(issue: FormulaIssue) -> String {
         issue.message
@@ -99,9 +80,6 @@ pub(crate) fn issue_at(
     FormulaIssue { code, message: message.into(), range }
 }
 
-// ---------------------------------------------------------------------------
-// Tokenizer (classification only — fasteval stays the parser of record)
-// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TokKind {
@@ -129,10 +107,7 @@ pub(crate) struct Tok {
     pub span: Option<usize>,
 }
 
-/// Split `chars` into tokens the way fasteval reads them (ASCII identifiers,
-/// numbers with an exponent or one SI suffix, two-char comparison/logic
-/// operators), with sensor references taken from the shared
-/// `scan_sensor_refs` spans so a name never splits differently here.
+/// Tokens as fasteval reads them; sensor refs come from `scan_sensor_refs` spans so names never split differently.
 pub(crate) fn tokenize(chars: &[char], spans: &[SensorRefSpan]) -> Vec<Tok> {
     use TokKind::*;
     let len = chars.len();
@@ -323,8 +298,7 @@ pub(crate) fn locate_syntax_issue(toks: &[Tok]) -> Option<(&'static str, usize, 
     })
 }
 
-/// One call `name(…)` / `name[…]`: tokens of the name, the opening and the
-/// matching closing bracket (if any), and its top-level argument count.
+/// One call `name(…)` / `name[…]`: name token, brackets and top-level argument count.
 struct Call {
     word: usize,
     close: Option<usize>,
@@ -436,10 +410,7 @@ impl Ctx {
     }
 }
 
-/// Classify a fasteval PARSE refusal. `message` is the gate's own text;
-/// `expr` / `byte_map` are the rewritten text and its byte → original-char
-/// map (`prepare_formula_for_eval_mapped`), used to place a remaining-text
-/// error the structural scan could not explain.
+/// Classify a fasteval parse refusal; `expr` / `byte_map` place a remaining-text error the structural scan could not explain.
 pub(crate) fn parse_issue(
     formula: &str,
     err: &fasteval::Error,
@@ -475,9 +446,7 @@ pub(crate) fn parse_issue(
     issue_at(formula, code, message, range)
 }
 
-/// Classify a trial-EVALUATION refusal (an unresolved name / arity).
-/// `failed` is `(name, argument count)` of the first name the namespace could
-/// not answer; `safe_names` maps generated variable names back to sensors.
+/// Classify a trial-evaluation refusal; `failed` is the first unresolved `(name, argc)`, `safe_names` maps generated names back to sensors.
 pub(crate) fn eval_issue(
     formula: &str,
     err: &fasteval::Error,
@@ -516,22 +485,12 @@ pub(crate) fn eval_issue(
     issue_at(formula, code, message, range)
 }
 
-/// Message for a literal division by zero (`$A / 0`). Worded about the
-/// divided PART, not the whole sensor: `min($A / 0, $B)` or
-/// `($A / 0 > 0) * $B` still have values, but `$A / 0` itself never does
-/// (±infinity / 0÷0 is "no value"), so it is always a mistake.
+/// Worded about the divided part: `$A / 0` never has a value, even where the whole formula does.
 pub(crate) const DIV_ZERO_MESSAGE: &str =
     "Formula error: division by 0 gives no value on any row. Divide by a sensor or a number other than 0.";
 
-/// `$A / 0` (a literal zero, not raised to a power) — refused when a sensor
-/// is CREATED (and in the editor's create-mode check); a recompute / replay
-/// of a saved recipe skips it (`create_only_formula_issue` in `lib.rs`).
-///
-/// Refused for every formula containing it rather than only when the WHOLE
-/// result would be empty: whether the empty part reaches the result depends
-/// on the operators around it and on the row values (`min`, comparisons,
-/// `&&`), which a text check cannot decide, and no real recipe divides by a
-/// literal 0 on purpose.
+/// Refused at create (replay of a saved recipe skips it: `create_only_formula_issue`).
+/// Refused for any formula containing it: a text check can't tell whether the empty part reaches the result.
 pub(crate) fn division_by_zero(formula: &str) -> Option<FormulaIssue> {
     let ctx = Ctx::new(formula);
     let toks = &ctx.toks;
@@ -545,22 +504,9 @@ pub(crate) fn division_by_zero(formula: &str) -> Option<FormulaIssue> {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Legacy `round(x, n)` converter
-// ---------------------------------------------------------------------------
 
-/// Rewrite every spreadsheet-style `round(<expr with a sensor>, <n>)` into the
-/// form the refusal message recommends: `round(X * 10^n) / 10^n` (brackets
-/// around X unless it is one operand), and `round(X)` for n = 0. A call whose
-/// `n` is not a whole number 0..=15 (`round($A, 0.5)`) is left as it is — it
-/// stays refused with its own message. Nested calls, several calls, `${…}`
-/// names and fasteval's `round[ … ; … ]` spelling are all handled; formulas
-/// without such a call come back unchanged, and converting twice changes
-/// nothing more (the result has no two-value round left to convert).
-///
-/// The replacement gets an outer bracket unless the call stands alone as a
-/// whole operand of `+`/`-`/a group/an argument, so the added `/ 10^n` can
-/// never bind to a neighbour (`2 ^ round($A, 1)` → `2 ^ (round($A * 10) / 10)`).
+/// Rewrite `round(<expr>, <n>)` to `round(X * 10^n) / 10^n` (`round(X)` for n = 0); an n that is not a whole 0..=15 stays refused. Idempotent.
+/// Bracketed unless the call is a whole operand, so `/ 10^n` can't bind to a neighbour.
 pub(crate) fn convert_legacy_round(formula: &str) -> String {
     // Bounded: the scan is quadratic in the number of calls.
     if formula.chars().count() > 2 * crate::MAX_FORMULA_LEN {
@@ -572,8 +518,7 @@ pub(crate) fn convert_legacy_round(formula: &str) -> String {
         let in_ref = ref_mask(chars.len(), &spans);
         excel_round_calls(&chars, &in_ref, &spans).into_iter().map(|c| c.start).collect()
     };
-    // Right to left: a rewrite only moves text AFTER its own start, so every
-    // earlier start (an enclosing call included) is still where it was.
+    // Right to left: a rewrite only moves text after its own start, so earlier starts stay valid.
     for &start in starts.iter().rev() {
         let text: String = chars.iter().collect();
         let spans = scan_sensor_refs(&text);
@@ -606,11 +551,7 @@ pub(crate) fn convert_legacy_round(formula: &str) -> String {
     chars.into_iter().collect()
 }
 
-/// Can `round(…) / k` replace the call at `start..end` without brackets?
-/// Only when the call is a whole operand: preceded by the start, an opening
-/// bracket, a separator or a BINARY `+`/`-`, and followed by the end, a
-/// closing bracket, a separator, `+`, `-`, `*` or `/` (left-to-right, so
-/// `(round(..) / k) * 3` and `round(..) / k * 3` are the same evaluation).
+/// True when the call is a whole operand: after start, `(`, separator or binary `+`/`-`, and before end, `)`, separator, `+ - * /`.
 fn stands_alone(chars: &[char], in_ref: &[bool], start: usize, end: usize) -> bool {
     let prev = (0..start).rev().find(|&i| in_ref[i] || !chars[i].is_whitespace());
     let next = (end..chars.len()).find(|&i| in_ref[i] || !chars[i].is_whitespace());

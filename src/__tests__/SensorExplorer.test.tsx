@@ -57,8 +57,7 @@ describe('SensorExplorer', () => {
         expect(onToggleSensor).toHaveBeenCalledWith('TAG1');
     });
 
-    // A click PICKS the row for Quick build — a "Picked" pill
-    // (was "Added" while rows were sources), a + icon otherwise; the group header counts picks.
+    // A click PICKS the row for Quick build: a 'Picked' pill, a + icon otherwise; the group header counts picks.
     it('shows a "Picked" pill for a picked sensor and a + icon for one that is not; the group counts the picks', () => {
         render(<SensorExplorer {...makeProps({ selectedSensors: ['TAG1'] })} />);
         fireEvent.click(screen.getByText('Pump'));
@@ -149,8 +148,7 @@ describe('SensorExplorer: long sensor names', () => {
         expect(document.querySelector('.special-sensor-row .sl-desc')!.textContent!.replace(/ /g, ' ')).toBe('SegmentNo 1 - avg');
     });
 
-    /** The reviewer's case: 320 px pane, a name has ~174 px. A row measures as cut only when its own text is too wide,
-     *  so a row printing the short rest fits, unlike the everything-is-cut stub. */
+    /** 320 px pane, a name has ~174 px. A row is cut only when its own text is too wide, so a row printing the short rest fits. */
     const stubPane320 = () => {
         Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, value: 174 });
         Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {

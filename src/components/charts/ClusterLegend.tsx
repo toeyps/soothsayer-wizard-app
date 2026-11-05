@@ -5,21 +5,9 @@ import type { Cluster } from './PairPlotCell';
 import { rgbaToHex } from './pairPlotColors';
 import { CLUSTER_NAME_MAX, cleanClusterName } from './pairPlotClusters';
 
-/**
- * Pair Plot cluster legend.
- * A chip row in the strip above the matrix (and in the enlarged view's footer):
- * per cluster the shared ColourPicker swatch + the name (renamable in place) +
- * a small × to remove that one cluster. "Clear" removes every cluster and only
- * shows at 2+ (with one, the × already does it). Renders nothing until the
- * first lasso. Memoised: the Pair Plot re-renders on every hover move, the
- * legend only when its clusters change.
- */
+/** Pair Plot cluster legend: chip row (swatch, renamable name, x per cluster); 'Clear' at 2+ clusters. Renders nothing until the first lasso. Memoised because the Pair Plot re-renders on every hover. */
 
-/** The chip's name. Click it, or focus it and press Enter/Space/F2, to rename: it
- *  becomes a text field sized to its text, with the text selected. Enter or
- *  leaving the field saves; Esc cancels; an empty name keeps the old one.
- *  After Enter/Esc focus returns to the name (after a click elsewhere it stays
- *  where the user clicked). Duplicate names are allowed. */
+/** Chip name: click, or Enter/Space/F2, to rename in place. Enter or blur saves, Esc cancels, an empty name keeps the old one. Duplicates allowed; Enter/Esc returns focus to the name. */
 function ChipName({ label, onRename, onDraftChange }: {
     label: string;
     onRename: (name: string) => void;
@@ -30,8 +18,7 @@ function ChipName({ label, onRename, onDraftChange }: {
     const [draft, setDraft] = useState(label);
     const inputRef = useRef<HTMLInputElement>(null);
     const nameRef = useRef<HTMLSpanElement>(null);
-    /** Set once Enter/Esc has handled the edit, so the blur that follows the
-     *  input unmounting cannot save a second time (or save a cancelled edit). */
+    /** Set once Enter/Esc handled the edit, so the blur from unmounting the input doesn't save again. */
     const doneRef = useRef(false);
     const refocusRef = useRef(false);
 
@@ -109,8 +96,7 @@ export interface ClusterLegendProps {
     onRename: (id: string, name: string) => void;
     onRemove: (id: string) => void;
     onClear: () => void;
-    /** Where focus goes when the legend has nothing left to focus (after Clear, or
-     *  after × on the last chip) — the toolbox, so focus never falls to <body>. */
+    /** Where focus goes when nothing is left to focus (after Clear or x on the last chip): the toolbox, never <body>. */
     focusFallback?: () => void;
     className?: string;
 }
@@ -126,8 +112,7 @@ function ClusterLegend({ clusters, onRecolour, onRename, onRemove, onClear, focu
         setOverflow(el.scrollWidth - el.scrollLeft - el.clientWidth > 1);
     }, []);
 
-    // Many clusters in a narrow window: the row scrolls sideways (the mouse
-    // wheel works too) and a fade on the right edge says there is more.
+    // Many clusters in a narrow window: the row scrolls sideways and a right-edge fade shows there is more.
     useEffect(() => {
         const el = listRef.current;
         if (!el) return;
@@ -139,9 +124,7 @@ function ClusterLegend({ clusters, onRecolour, onRename, onRemove, onClear, focu
     // A new, removed or renamed chip changes the content width.
     useEffect(check, [clusters, check]);
 
-    /** × → focus the next chip's name, else the previous chip's, else the
-     *  fallback. Focused BEFORE removing, while every target still exists (the
-     *  footer legend unmounts with its last cluster). */
+    /** x focuses the next chip, else the previous, else the fallback, then removes (the footer legend unmounts with its last cluster). */
     const removeAt = (i: number) => {
         const items = listRef.current?.children;
         const target = items?.[i + 1] ?? items?.[i - 1];

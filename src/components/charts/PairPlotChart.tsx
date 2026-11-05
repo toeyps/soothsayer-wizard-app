@@ -17,28 +17,20 @@ import { pearsonCorrelation } from './pairPlotStats';
 
 type Tool = 'lasso' | 'pan';
 
-/** Colour used by every scatter cell — keeps the matrix visually cohesive so
- *  the user reads density / shape rather than chasing per-cell hue. Derived
- *  from the shared ACCENT_HEX (pairPlotColors.ts) so it never drifts from
- *  the diagonal histogram's bar colour again. */
+/** Used by every scatter cell; derived from ACCENT_HEX so it matches the histogram bars. */
 const POINT_COLOR: [number, number, number, number] = hexToRgba(ACCENT_HEX, 0.55);
 
 /** Must match PairPlotCell's AXIS_PAD so the diagonal histogram's frame
  *  has the exact same inset as every scatter cell. */
 const CELL_PAD = { left: 36, right: 4, top: 14, bottom: 18 };
 
-/** Compact diagonal histogram — pure SVG so the cell doesn't burn a WebGL
- *  context just to draw 20 bars. Uses the same pixel padding as PairPlotCell
- *  (CELL_PAD) so the bordered frame matches scatter cells exactly. */
+/** Pure SVG so the diagonal does not use a WebGL context; same CELL_PAD as the scatter cells. */
 function DiagonalHistogram({
     values, sensor, isTopRow,
 }: {
     values: number[];
     sensor: string;
-    /** Only row 0's diagonal prints its name — it doubles as that column's
-     *  header. Every other row's diagonal sits at column i (i > 0), which
-     *  row 0 already labeled at the top; repeating it there would be noise
-     *  the "outer frame only" label scheme deliberately avoids. */
+    /** Only row 0's diagonal prints its name; it doubles as the column header. */
     isTopRow: boolean;
 }) {
     const sensorLookup = useSensorLookup();
@@ -98,8 +90,7 @@ function DiagonalHistogram({
                         {fitLabel(sensorPlainLabel(sensorLookup(sensor)), innerW)}
                     </text>
                 )}
-                {/* Horizontal bars: low value at bottom, high at top. Bar
-                    length = count / maxCount across the inner plot width. */}
+                {/* Horizontal bars: low value at bottom, high at top. Bar length = count / max count across the inner plot width. */}
                 {counts.map((c, i) => {
                     const y = CELL_PAD.top + (1 - (i + 1) / bins) * innerH;
                     const h = innerH / bins;
@@ -132,17 +123,8 @@ function DiagonalHistogram({
     );
 }
 
-/** Lower-triangle correlation heatmap cell — mirrors the upper-triangle
- *  scatter cell for the same sensor pair. Computes nothing new: `r` is
- *  derived once for the whole matrix from the same `sensorVals` sample the
- *  diagonal histograms already use. Tinted by sign (indigo accent = positive,
- *  rose = negative) and magnitude (stronger |r| = more saturated fill), so
- *  the strongest relationships in the matrix are visible at a glance before
- *  drilling into any one scatter cell. */
-/** Positioning for the two AxisLabel orientations used across this matrix —
- *  `top` labels span the cell's top padding strip (column headers), `left`
- *  labels span the left padding strip, rotated (row headers). Shared here
- *  so every call site stays consistent with CELL_PAD. */
+/** Lower-triangle correlation cell; r is computed once per matrix, tinted by sign and magnitude. */
+/** Positioning for the two AxisLabel orientations: top = column headers, left = rotated row headers. */
 const AXIS_LABEL_STYLE = {
     top: { top: 0, left: CELL_PAD.left, right: CELL_PAD.right, height: CELL_PAD.top },
     left: { top: CELL_PAD.top, bottom: CELL_PAD.bottom, left: 0, width: CELL_PAD.left },
@@ -155,16 +137,10 @@ function CorrelationCell({
     sensorY: string;
     /** Rule 5: the row's key, when the matrix prints keys. */
     keyNo?: number;
-    /** True only for the left-most correlation cell in its row (column 0) —
-     *  that's the row's shared header, "outer frame only" like every other
-     *  cell type. Correlation cells never sit in row 0, so they never carry
-     *  a top/column label — row 0 already labeled that column. */
+    /** True only for the row's left-most correlation cell (column 0): the row's shared header. */
     showYLabel: boolean;
 }) {
-    // Diverging-by-magnitude, not by sign: weak (|r| near 0) reads red,
-    // strong (|r| near 1) reads green regardless of direction — a strong
-    // negative relationship is exactly as noteworthy as a strong positive
-    // one for this app's use case (spotting *any* tight sensor relationship).
+    // Colour by magnitude, not sign: weak |r| reads red, strong reads green in either direction.
     const mag = r == null ? 0 : Math.abs(r);
     const tintHex = correlationGradientHex(mag);
     const tintAlpha = r == null ? 0 : 0.22 + mag * 0.55;
@@ -188,10 +164,7 @@ function CorrelationCell({
                     </span>
                 </div>
             </div>
-            {/* Sibling of .pair-regl-cell, not nested inside it — .pair-regl-cell
-                clips to the tinted square (see App.css), and the hover
-                tooltip needs to escape that boundary to show a full
-                description without being cut off. */}
+            {/* Sibling of .pair-regl-cell, not nested: the cell clips, and the hover tooltip must escape it. */}
             {showYLabel && (
                 <AxisLabel tag={sensorY} rotate style={AXIS_LABEL_STYLE.left} keyNo={keyNo} />
             )}
@@ -206,8 +179,7 @@ function sameForCells(a: Cluster[], b: Cluster[]): boolean {
         c.id === b[i].id && c.color === b[i].color && c.rowIndices === b[i].rowIndices);
 }
 
-/** A new sample renumbers its rows, so each cluster follows its rows by timestamp. A row the
- *  new sample no longer holds leaves its cluster; a cluster with no row left goes. */
+/** Clusters follow their rows by timestamp into a new sample; a missing row leaves its cluster, an emptied cluster goes. */
 function clustersInNewSample(clusters: Cluster[], from: ChartProps['data'], to: ChartProps['data']): Cluster[] {
     const rowsAt = new Map<string, number[]>();
     to.forEach((row, i) => {
@@ -233,11 +205,7 @@ function focusFirstTool(el: HTMLElement | null) {
 const RESET_VIEW_TITLE = 'Reset zoom and pan — every cell back to its full data range (clusters stay)';
 const RESET_VIEW_IDLE_TITLE = 'Nothing to reset — zoom (scroll) or pan a cell first';
 
-/** The toolbox ↺: resets the zoom/pan of every cell (matrix and enlarged
- *  view) — nothing else; clusters stay (the legend's own × / Clear removes
- *  them). While no cell is zoomed or panned it stays visible but inert and
- *  its tooltip says so (`aria-disabled`, not `disabled`, so the tooltip
- *  still shows). */
+/** Resets zoom/pan only; clusters stay. aria-disabled keeps the tooltip when nothing is zoomed. */
 function ResetViewButton({ canReset, onReset }: { canReset: boolean; onReset: () => void }) {
     return (
         <button
@@ -256,27 +224,17 @@ function ResetViewButton({ canReset, onReset }: { canReset: boolean; onReset: ()
 function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     // Axis hover cards and the hover tooltip resolve labels through this lookup.
     const sensorLookup = useLayeredSensorLookup(sensorMetadata);
-    /** Ordered list of brushed clusters. Each lasso pushes a new entry; the
-     *  user can recolour, rename or remove any cluster from the legend chips
-     *  above the matrix. Session-only — clusters are never persisted. */
+    /** Brushed clusters, one per lasso. Session-only, never persisted. */
     const [clusters, setClusters] = useState<Cluster[]>([]);
     /** Counter for unique cluster IDs (Date.now would collide if two lassos
      *  fire in the same ms while React batches state updates). */
     const clusterSeqRef = useRef(0);
     const [hover, setHover] = useState<HoverInfo | null>(null);
-    /** Active interaction mode, shared by every cell in the matrix (and the
-     *  enlarged-view dialog). Lasso still creates clusters; Pan/zoom lets the
-     *  user look closer at a dense cloud without accidentally brushing one. */
+    /** Interaction mode shared by every cell and the enlarged dialog. */
     const [tool, setTool] = useState<Tool>('lasso');
-    /** Increments on every Reset click; each cell watches it and calls
-     *  `sc.reset()` once when it changes. Lets the toolbox broadcast a
-     *  reset action to every WebGL canvas without holding refs to them all. */
+    /** Bumped on each Reset click; cells watch it and call `sc.reset()`. */
     const [resetTick, setResetTick] = useState(0);
-    /** Ids (each cell instance's own `useId`) of the cells — matrix and
-     *  enlarged view — currently zoomed or panned away from their full
-     *  extent. Empty = the ↺ button has nothing to undo and says so instead
-     *  of silently doing nothing (↺ restores zoom / pan only; it does not
-     *  clear clusters). */
+    /** Ids of cells currently zoomed/panned; empty = the reset button has nothing to undo. */
     const [zoomedCells, setZoomedCells] = useState<ReadonlySet<string>>(() => new Set());
     const handleZoomChange = useCallback((cellId: string, zoomed: boolean) => {
         setZoomedCells(prev => {
@@ -287,9 +245,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         });
     }, []);
     const canResetView = zoomedCells.size > 0;
-    /** Inspect-mode toggle. When true every cell shows an overlay that
-     *  intercepts clicks → opens the enlarged view dialog. Auto-disabled
-     *  after one click so the cursor returns to normal interactions. */
+    /** Inspect mode: cells intercept clicks to open the enlarged view; turns itself off after one click. */
     const [inspectMode, setInspectMode] = useState(false);
     /** When non-null, render the enlarged-view dialog for the picked cell. */
     const [expanded, setExpanded] = useState<
@@ -317,8 +273,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         setClusters(cs => cs.filter(c => c.id !== id));
     }, []);
 
-    /** Rename / recolour return the SAME array when nothing changes (e.g.
-     *  picking the colour a cluster already has), so nothing re-renders. */
+    /** Rename/recolour return the same array when nothing changes, so nothing re-renders. */
     const handleRename = useCallback((id: string, name: string) => {
         setClusters(cs => cs.some(c => c.id === id && c.label !== name)
             ? cs.map(c => c.id === id ? { ...c, label: name } : c)
@@ -332,10 +287,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
             : cs);
     }, []);
 
-    /** What the WebGL cells draw from. A rename only changes a label, which
-     *  the cells never read, so this keeps the previous array (same
-     *  reference) unless an id, colour or row set changed — PairPlotCell is
-     *  memoised, so renaming re-renders the legend and nothing else. */
+    /** What the cells draw from; a rename keeps the same reference because cells never read labels. */
     const [sampleData, setSampleData] = useState(data);
     if (sampleData !== data) {
         // Adjusted while rendering, so no cell ever draws old row numbers on the new sample.
@@ -350,9 +302,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         setCellClusters(clusters);
     }
 
-    /** Toolbox reset = every cell's camera only (bumping `resetTick`
-     *  propagates it to each PairPlotCell). Clusters stay — removing them is
-     *  the legend's own × / Clear: two intents, two controls. */
+    /** Reset affects the cameras only; clusters are removed via the legend. */
     const handleResetView = useCallback(() => {
         setResetTick(t => t + 1);
     }, []);
@@ -363,9 +313,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
 
     const toolboxRef = useRef<HTMLDivElement>(null);
 
-    // Rule 5: S1…Sn keys and a key line only when the set shares a start or a top header would be cut (its tag
-    // is wider than the cell, measured on the matrix's real width). Otherwise today's tag headers, untouched.
-    // Only the grid's WIDTH decides, and the key line changes its height alone, so this cannot flip-flop.
+    // Rule 5: S1…Sn keys and a key line only when names share a start or a header would be cut; only grid width decides.
     const gridRef = useRef<HTMLDivElement>(null);
     const [gridWidth, setGridWidth] = useState(0);
     const hasGrid = n >= 2 && n <= MAX_PAIR_PLOT_SENSORS;
@@ -414,9 +362,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
         });
     }, [data, sensors, headers]);
 
-    /** Pearson r for every lower-triangle pair, keyed `"i-k"` (i = row, k =
-     *  column, k < i). Computed once per matrix from the same sensorVals
-     *  sample — no extra data fetch, just a stat over what's already loaded. */
+    /** Pearson r per lower-triangle pair, keyed `i-k` (row i, column k < i), from the already-loaded sample. */
     const correlations = useMemo(() => {
         const map = new Map<string, number | null>();
         for (let i = 0; i < sensors.length; i++) {
@@ -430,11 +376,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     if (n < 2) {
         return <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>Select at least 2 sensors</div>;
     }
-    // Defense-in-depth: Dashboard's tab-enabling logic already keeps the
-    // selection at MAX_PAIR_PLOT_SENSORS while in Pair Plot mode, but its
-    // bounce-back effect runs AFTER render — this guard covers the one frame
-    // where a selection could still exceed the cap (e.g. a workspace restore
-    // that persisted a larger selection alongside chartType: 'pair').
+    // Covers the one frame before the bounce-back effect trims a selection over the cap (e.g. a restored workspace).
     if (n > MAX_PAIR_PLOT_SENSORS) {
         return (
             <div style={{ color: 'var(--text-secondary)', textAlign: 'center', marginTop: '20%' }}>
@@ -452,8 +394,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
     return (
         <SensorMetaContext.Provider value={sensorLookup}>
         <div className="pair-regl-wrap">
-            {/* Global toolbox — Lasso / Pan-zoom are mutually exclusive, shared
-                by every cell in the matrix (and the enlarged-view dialog). */}
+            {/* Lasso / Pan-zoom are mutually exclusive and shared by every cell and the enlarged dialog. */}
             <div className="pair-regl-toolbox" ref={toolboxRef}>
                 <button
                     onClick={() => setTool('lasso')}
@@ -568,9 +509,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                                 </div>
                             );
                         } else {
-                            // Lower triangle (k < i): correlation heatmap for the
-                            // same sensor pair as the scatter cell mirrored above
-                            // it — no new data fetch, just a stat over sensorVals.
+                            // Lower triangle: correlation for the pair mirrored above.
                             rowCells.push(
                                 <div key={`c-${i}-${k}`} className="pair-regl-cell-slot" style={gridStyle}>
                                     <CorrelationCell
@@ -627,13 +566,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 })}
             </div>
 
-            {/* Global hover tooltip — child cells report page-anchored coords
-                via `onHover`, so we can position it without re-computing
-                offsets inside each cell on every camera move. This same
-                tooltip also serves the enlarged-view dialog's PairPlotCell
-                (shared `onHover={setHover}`), so its z-index must clear
-                .pair-regl-expand-backdrop's 150 or it renders correctly but
-                paints behind the modal. */}
+            {/* Also serves the enlarged dialog, so its z-index (200) must clear .pair-regl-expand-backdrop's 150. */}
             {hover && (
                 <div
                     className="scatter-regl-tooltip"
@@ -671,12 +604,7 @@ function PairPlotChart({ data, sensors, headers, sensorMetadata }: ChartProps) {
                 </div>
             )}
 
-            {/* Enlarged view dialog — opens when the magnifier picks a cell.
-                Reuses the same components (PairPlotCell / DiagonalHistogram)
-                at full dialog size + a mini toolbox (no magnifier here so
-                we don't nest inspections). Selection state flows back to
-                the parent so any lasso in here also lights up the matrix
-                behind the modal. */}
+            {/* Enlarged view: same components at full size, mini toolbox without the magnifier; lasso flows back to the matrix. */}
             {expanded && (
                 <div className="pair-regl-expand-backdrop" onClick={() => setExpanded(null)}>
                     <div className="pair-regl-expand-modal" onClick={e => e.stopPropagation()}>

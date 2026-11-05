@@ -5,17 +5,7 @@ import { normalizeSensorCategories } from './modelGrouping';
 import { isCompleteCondition } from './runningCondition';
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
 
-/*
- * Workspace migrations (`migrateHealthSetPoints` and `migrateSingleRunningCondition` are run by
- * `workspaceManager.ts` on EVERY workspace read). Each step is a PURE,
- * independently idempotent function gated on its OWN marker being `undefined`
- * (`null` and any value both mean "already handled") -- except
- * `migrateSingleRunningCondition`, whose shape check runs whatever the marker
- * says (the marker only decides its notice). Every step spreads the
- * existing slice
- * (via `withFailureGroupState`), so no field is ever dropped. A step that has
- * nothing to do returns the SAME state object.
- */
+/* Read-path migrations run by workspaceManager (migrateHealthSetPoints, migrateSingleRunningCondition): pure, idempotent, gated on their own marker being undefined (null or any value = handled); the single-condition shape check always runs. Each spreads the slice via withFailureGroupState; nothing to do returns the same state object. */
 
 /** Pre-periods shape: the type no longer declares these keys, but old files carry them. */
 type LegacyModelTime = { filterTimeStart?: string; filterTimeEnd?: string };
@@ -25,11 +15,7 @@ function legacyPeriods(start: string | undefined, end: string | undefined): Time
     return start || end ? [{ id: 'legacy-1', start: start ?? '', end: end ?? '' }] : [];
 }
 
-/**
- * (a) Old single time ranges -> period lists (workspace + per model) and seeds
- * `customRunningConditionNoneConfirmed: false`. Old keys are kept unless
- * `dropLegacyKeys` (then they are deleted, even if periods already existed).
- */
+/** (a) Old single time ranges become period lists (workspace and per model) and seed customRunningConditionNoneConfirmed: false. Old keys stay unless `dropLegacyKeys`, which deletes them even if periods exist. */
 export function migratePeriods(state: WorkspaceState, opts: { dropLegacyKeys?: boolean } = {}): WorkspaceState {
     const fg = state.failureGroupState;
     if (!fg) return state;
@@ -67,9 +53,7 @@ export function migratePeriods(state: WorkspaceState, opts: { dropLegacyKeys?: b
     return out;
 }
 
-/** (b) One-time per-sensor category normalisation. Sets the notice only when
- *  `categoryNormalisationNotice === undefined`: the changes if any, else `null`
- *  (so it never re-fires). */
+/** (b) One-time per-sensor category normalisation; sets the notice (the changes, else null) only while categoryNormalisationNotice is undefined. */
 export function normalizeCategories(state: WorkspaceState): WorkspaceState {
     const fg = state.failureGroupState;
     if (!fg || fg.categoryNormalisationNotice !== undefined) return state;
@@ -80,12 +64,7 @@ export function normalizeCategories(state: WorkspaceState): WorkspaceState {
     });
 }
 
-/** (d) Health score set points: a model without `healthSetPoints`
- *  gets the EMPTY shape for its kind. No master snapshot is taken here -- this
- *  step has no sensor metadata, so an Individual model's snapshot stays
- *  "not taken yet" (`undefined`) for `ensureHealthSetPoints` to fill the first
- *  time it is opened with metadata. Idempotent: models that already have the
- *  field are untouched, and nothing to do returns the SAME state object. */
+/** (d) A model without healthSetPoints gets the empty shape for its kind, with no master snapshot (no sensor metadata here). */
 export function migrateHealthSetPoints(state: WorkspaceState): WorkspaceState {
     const fg = state.failureGroupState;
     if (!fg || !Array.isArray(fg.models)) return state;
@@ -98,38 +77,7 @@ export function migrateHealthSetPoints(state: WorkspaceState): WorkspaceState {
     return changed ? withFailureGroupState(state, { models }) : state;
 }
 
-/**
- * (e) ONE running condition: "Machine is running when <sensor> is above <value>"
- * (user decision 2026-10-26). An old condition that is anything else (several
- * conditions, AND / OR, "<", "between", "=", Use all rows, the export's own
- * "Machine is running when …" line) is converted:
- *   - keep the FIRST complete "sensor > value" condition; else
- *   - the export's saved running status (workspace only); else
- *   - nothing: the running condition must be set again (Train is blocked).
- * Complete models whose training rows change go back to Incomplete in the same
- * result (set points, results and fingerprint are kept, so they show "Needs
- * re-train"; a saved `healthVerdict` / `testsChangedAt` is dropped, as
- * `applyIncompleteRule` does for a training-input change). Custom models: the
- * same on their own condition (no saved-status fallback). The old export line
- * (`runningStatus`) is cleared. When only blank / half-filled rows are dropped
- * next to the one ">" (the rows stay the same), the kept row is left
- * byte-for-byte, so no fingerprint moves and no model changes.
- *
- * The SHAPE is data-driven: it is normalised on every read whenever the
- * workspace (or a Custom model) is not one ">" row (or nothing), or still
- * carries an old "Use all rows", whatever the
- * marker says — a file saved by an older build can bring the old shape back
- * after the marker was set. The marker (`runningConditionConversion`) only
- * decides whether a notice record is written: `undefined` (first run) writes
- * one when some model's training rows change (else `null`); `null` or a record
- * (already handled) normalises silently and leaves the marker as it is.
- *
- * Runs on EVERY workspace read (`workspaceManager.ts`), so every window —
- * including the Dashboard's autosave, which adopts the on-disk slice — sees
- * the converted shape and nothing writes the old set back; the first write of
- * any window persists it. Idempotent and deterministic; nothing to do returns
- * the SAME state object.
- */
+/** (e) One running condition ('Machine is running when <sensor> is above <value>'). Others convert: keep the first complete 'sensor > value', else the saved export running status (workspace only), else unset (Train blocked). Shape is normalised on EVERY read whatever the marker says (an old build can bring the old shape back); the marker only decides the notice. Models whose training rows change go Incomplete; set points and fingerprint are kept. */
 type SavedStatus = { sensor: string; stopAtOrBelow: string } | null | undefined;
 const finiteText = (t: string | undefined): string | null => {
     const x = (t ?? '').trim();
@@ -137,10 +85,7 @@ const finiteText = (t: string | undefined): string | null => {
 };
 const isAbove = (f: WorkspaceSensorFilter): boolean =>
     f.operation === 'greater_than' && !!f.sensor?.trim() && finiteText(f.value1) !== null;
-/** Already the one shape: a single ">" row. Its value may still be blank or
- *  being typed (a Custom draft is saved as it is) -- the gate blocks Train
- *  until it is complete, so it is never "converted" (that would wipe the
- *  sensor the user just picked). */
+/** Already the one shape: a single '>' row, even if blank or half-typed (the gate blocks Train; converting would wipe the picked sensor). */
 const isOneShape = (filters: WorkspaceSensorFilter[]): boolean => filters.length === 1 && filters[0].operation === 'greater_than';
 
 interface SingleResult {
@@ -176,9 +121,7 @@ function toSingle(filters: WorkspaceSensorFilter[], none: boolean, saved: SavedS
     return { filters: [], changed: true, rowsChanged: true, kept: null };
 }
 
-/** A model whose training rows changed: Incomplete if it was Complete, and the
- *  verdict / scoring-change stamp of the old fit dropped (set points, results
- *  and fingerprint kept). */
+/** A model whose training rows changed: Incomplete if it was Complete, old healthVerdict/testsChangedAt dropped; set points, results and fingerprint kept. */
 function demote(m: FailureModel): FailureModel {
     if (!m.status && m.healthVerdict === undefined && m.testsChangedAt === undefined) return m;
     const { healthVerdict: _v, testsChangedAt: _t, ...rest } = m;
@@ -197,8 +140,7 @@ export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceS
     let modelsChanged = false;
     const models = fg.models.map((m): FailureModel => {
         const custom = m.runningConditionMode === 'custom';
-        // A Workspace-mode model's own list is converted too (it comes back on a
-        // switch to Custom), but it trains on the workspace's rows, so only those count.
+        // A Workspace-mode model's own list is converted too (it returns on a switch to Custom), but it trains on the workspace's rows, so only those count.
         const own = toSingle(m.customRunningConditionFilters ?? [], !!m.customRunningConditionNoneConfirmed, null);
         let next = m;
         if (own.changed) {
@@ -255,15 +197,7 @@ export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceS
     return Object.keys(patch).length ? withFailureGroupState(state, patch) : state;
 }
 
-/**
- * Rewrites running conditions to the exact header spelling, for models trained
- * while Rust ignored a condition spelled differently (it used all rows). The
- * train fingerprint holds the sensor text, so through `applyIncompleteRule` such
- * a model reads as stale and a Complete one goes Incomplete. Matches like Rust's
- * `resolve_sensor`: exact first, then the first trimmed, case-insensitive header.
- * Needs the session's headers, so it cannot run on the read path. Idempotent;
- * nothing to do returns the SAME state object.
- */
+/** Rewrites running conditions to the exact header spelling for models trained while Rust ignored a differently spelled condition (all rows used); via applyIncompleteRule they read stale. Matches like Rust's resolve_sensor: exact, then the first trimmed case-insensitive header. Needs the session's headers, so it can't run on the read path. */
 export function normalizeConditionSpelling(state: WorkspaceState, headers: readonly string[]): WorkspaceState {
     const fg = state.failureGroupState;
     if (!fg) return state;

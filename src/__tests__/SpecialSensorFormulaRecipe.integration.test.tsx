@@ -1,35 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
-/*
- * Special-sensor Formula editor + Quick build,
- * legacy `round($A, n)` conversion, `trainedFormulas` recipe staleness.
- *
- * The workers' unit tests stop at their own seams: `legacyFormulaConversion.test`
- * runs the pure converter / `applyLegacyConversion` on hand-made states,
- * `DataUploadPage.test` mocks `workspaceManager`, `incompleteRule.test` /
- * `specialSensorSignature.test` check the recipe rule on literals,
- * `SpecialSensorFormulaEditor.test` mounts the editor alone. Nothing ran the
- * whole loop across windows. Two journeys here, through the REAL App,
- * DataUploadPage, Dashboard, Add Special Sensor window, Build Model window and
- * workspaceManager; only Tauri is faked (in-memory plugin-fs / plugin-store /
- * event bus from `helpers/healthEnv`, the dataset session + health backend from
- * `helpers/crossFeatureBackend`) plus two Rust commands
- * (`convert_legacy_formula`, `preview_formula`), modelled below on lib.rs /
- * formula_diagnostics.rs.
- *
- *  (a) an OLD workspace whose special sensor is `round($TAG1, 2)` and is used
- *      by a Complete model: opened from Recent -> converted text + demotion in
- *      ONE write, the Dashboard holds (and autosaves) the converted recipe, the
- *      info dialog comes after the Dashboard, a second open converts / writes
- *      nothing.
- *  (b) Quick build Sum -> predictor of a Relationship model -> Train + Mark
- *      complete -> the sensor is LOCKED (a model uses it) -> reopen where its
- *      replay fails -> Repair its formula in Add Sensor while Build Model is
- *      open -> stale in the Build Model list AND the Dashboard dot -> Re-train
- *      clears it (fresh against the NEW recipes, Mark complete not blocked) ->
- *      Build Model reads the disk only on the `recipesChanged` broadcast.
- */
+/* End-to-end over real windows (only Tauri faked): legacy round() conversion on open; recipe change under a trained model. */
 
 const wins = vi.hoisted(() => ({
     pending: [] as string[],
@@ -136,7 +108,6 @@ vi.setConfig({ testTimeout: 120_000 });
 const PATH_A = 'C:/data/plant-a.csv';
 const DATA_A = plantDataset();
 
-// ── backend: the shared fakes + the two commands of this phase ─────────
 
 /** formula_diagnostics.rs `convert_legacy_round`, for the single-call shapes used here. */
 function fakeConvertLegacyRound(formula: string): string {
@@ -183,7 +154,6 @@ function makeBackend() {
     } as any;
 }
 
-// ── console / rejection recorder ─────────────────────────────────────────
 
 const logged: { level: 'error' | 'warn'; text: string }[] = [];
 const rejections: string[] = [];
@@ -225,7 +195,6 @@ afterEach(() => {
     vi.restoreAllMocks();
 });
 
-// ── windows (same harness as CrossFeatureSmoke) ─────────────────────────
 
 const roots = new Map<string, ReturnType<typeof render>>();
 const closing: string[] = [];
@@ -368,7 +337,6 @@ function dashDot(groupNo: number, key: string, kind: string): string {
 /** Build Model left-list dot state of a model (`data-state`), 'none' when no dot. */
 const bmwDotState = (mid: string) => bmwEl().querySelector(`[data-testid="sensor-kind-badge-dot-${mid}"]`)?.getAttribute('data-state') ?? 'none';
 
-// ── Add Special Sensor window ────────────────────────────────────────────
 
 async function openAddSensorWindow() {
     await openSensorTab();
@@ -408,9 +376,6 @@ function labelledInput(labelText: string): HTMLInputElement {
 }
 const formulaBox = () => aswBody().querySelector('textarea[aria-label="Formula"]') as HTMLTextAreaElement;
 
-// ═════════════════════════════════════════════════════════════════════════
-// (a) legacy round($A, n) conversion on workspace open
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sensor used by a Complete model', () => {
     it('converts on open: new text + demotion in ONE write, the Dashboard holds and autosaves the converted recipe, the info dialog follows the Dashboard, a second open converts and writes nothing', async () => {
@@ -420,9 +385,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         expect(A).toBeTruthy();
         await backToImport();
 
-        // Turn the file into an OLD workspace: SPR = round($TAG1, 2) (the spreadsheet order, which the
-        // engine refuses), an Individual model on SPR and one on TAG1, both trained
-        // (fresh fingerprints, no `trainedFormulas` snapshot -- written before it existed) and Complete.
+        // Old workspace: SPR = round($TAG1, 2) (spreadsheet order, refused by the engine), two Complete models, no `trainedFormulas`.
         const ws = disk(A);
         const slice: any = { ...ws.failureGroupState, ...BASE_FG, groups: [{ no: 0, name: 'Not in Group' }, { no: 1, name: 'FG-A' }] };
         const stamp = (m: Record<string, any>): Record<string, any> => ({ ...m, lastTrainedAt: '2026-10-01T10:00:00.000Z', trainedFingerprint: computeTrainFingerprint(m as any, slice) });
@@ -437,7 +400,6 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
             failureGroupState: { ...slice, models: [mSpr, mTag] },
         }));
 
-        // ── first open ──
         const w0 = env.writes.length;
         const r0 = be.session.cmds('evaluate_formula').length;
         await openRecent('Legacy · Unit');
@@ -472,9 +434,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
 
         // The info dialog: once, after the Dashboard was up, informational.
         expect(probe.messages).toHaveLength(1);
-        // Asked for right after the Dashboard hand-off (`onDataReady`), not awaited: React commits the
-        // Dashboard in the next task, so it is on screen behind the dialog. (At the very call the
-        // Import page is still in the DOM -- see the QA report; harmless with a native dialog.)
+        // Asked right after the Dashboard hand-off, not awaited; the Dashboard is on screen behind the dialog.
         expect(probe.messages[0].convertedOnDisk, 'the conversion was written before the user is told').toBe(true);
         expect(probe.messages[0].dashboardUpNextTask, 'Dashboard on screen behind the dialog').toBe(true);
         expect(probe.messages[0].opts).toEqual({ title: 'Rounding updated', kind: 'info' });
@@ -486,8 +446,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         expect(dashDot(1, 'spr', 'individual')).toBe('none');
         expect(dashDot(1, 'tag1', 'individual')).toBe('complete');
 
-        // The Dashboard's OWN state holds the converted recipe: an ordinary Dashboard edit (plot a
-        // sensor) -> its full-overwrite autosave keeps the converted text and the demotion.
+        // An ordinary Dashboard edit's full-overwrite autosave must keep the converted text and the demotion.
         const w1 = env.writes.length;
         await openSensorTab();
         await searchSensors('TAG3');
@@ -517,7 +476,6 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         await settle(50);
         await closeAddSensorWindow();
 
-        // ── second open: nothing left to convert, no write from the open ──
         await settle(400);
         await backToImport();
         const w2 = env.writes.length;
@@ -527,8 +485,7 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         await openRecent('Legacy · Unit');
         await settle(600);
         expect(extraCalls.filter(c => c.cmd === 'convert_legacy_formula').length - c2, 'convert_legacy_formula calls on the second open').toBe(0);
-        // Nothing changes on disk. (The Dashboard's first autosave after mount re-writes the SAME
-        // bytes once -- the first autosave after opening always writes -- never a conversion write.)
+        // Nothing changes on disk; the first autosave after opening rewrites identical bytes.
         const second = env.writes.slice(w2).filter(x => x.path === wsFile(A));
         expect(second.length, "at most the Dashboard's one identical first autosave").toBeLessThanOrEqual(1);
         for (const x of second) expect(x.content, 'a write on the second open changed the file').toBe(onDiskBefore);
@@ -542,9 +499,6 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
     });
 });
 
-// ═════════════════════════════════════════════════════════════════════════
-// (b) Quick build -> model -> Train -> Repair the formula -> stale -> Re-train
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe changes under a trained model', () => {
     it('Quick build Sum -> predictor -> Train + Mark complete -> locked -> replay fails on reopen -> Repair -> stale in both windows -> Re-train clears it; Build Model reads the disk only on recipesChanged', async () => {
@@ -619,8 +573,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         expect(diskModel(A, mid).status).toBe(true);
         const completeModel = diskModel(A, mid);
 
-        // 4) The lock rule: a model uses SP -> its Name and formula are locked in Manage (so the only
-        //    road to a different formula while the model uses it is a Repair).
+        // Lock rule: a model uses SP, so its name and formula are locked; the only road to a new formula is Repair.
         await act(async () => { fireEvent.click(ASW().getByRole('tab', { name: /Manage/ })); });
         await settle(200);
         await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SP$/)); });
@@ -631,8 +584,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         await act(async () => { fireEvent.click(ASW().getByText('Cancel edit')); });
         await settle(50);
 
-        // 5) Close + reopen the project; this time Rust refuses SP's replay (e.g. the engine changed),
-        //    so SP has no data this session -> the editor's Repair road is open despite the lock.
+        // On reopen Rust refuses SP's replay, so SP has no data and the Repair road opens despite the lock.
         await settle(400);
         await backToImport();
         expect(roots.size).toBe(0);
@@ -704,10 +656,7 @@ describe('(b) Dashboard + Add Sensor + Build Model: a special sensor\'s recipe c
         await settle(300);
         expect(dashDot(1, 'tag1', 'relationship')).toBe('complete');
 
-        // 7) Disk reads of the Build Model window on FG broadcasts. Close Add Sensor (it re-reads the
-        //    models on every broadcast by design) so only Build Model can read; then deliver the
-        //    Dashboard's own broadcasts again, as a late arrival would: an ordinary one costs NO read,
-        //    the recipesChanged one exactly ONE.
+        // Close Add Sensor (it re-reads models on every broadcast): an ordinary broadcast costs no Build Model read, recipesChanged one.
         await closeAddSensorWindow();
         await settle(400);
         const deliver = async (payload: any) => {

@@ -1,22 +1,6 @@
 import type { Invoker } from './specialSensorRecompute';
 
-/**
- * Binding a caller to the dataset it was handed.
- *
- * There is ONE Rust session, shared by every window. `load_csv` replaces it and
- * stamps it with a strictly increasing `generation`. A window that was opened
- * for workspace A and outlived it (its close was lost or late, or two loads
- * overlapped) would otherwise run `evaluate_formula` / `calculate_new_sensor` /
- * `remove_sensor_columns` against whatever session is current -- workspace
- * B's. So those commands take an optional `expectedGeneration`
- * (camelCase JS key -- they keep Tauri's default casing); when it is not the
- * session's generation they mutate NOTHING and fail with a message starting
- * `STALE_SESSION`.
- *
- * Everything here is the frontend half: stamp the generation on those calls,
- * and turn that refusal into a typed error so callers can stop (no retry, and
- * above all no rollback/cleanup commands -- the data is not ours any more).
- */
+/** Binds a caller to its dataset: `load_csv` bumps the shared Rust session `generation`. Guarded commands take `expectedGeneration` (camelCase), mutate nothing on mismatch and fail with `STALE_SESSION`; here that becomes a typed error so callers stop (no retry, no rollback). */
 
 /** Rust's `STALE_SESSION_ERROR` starts with this; match on the prefix only. */
 export const STALE_SESSION_PREFIX = 'STALE_SESSION';
@@ -33,8 +17,7 @@ export class StaleSessionError extends Error {
     }
 }
 
-/** A queued task noticed (after an await) that its window was re-pointed,
- *  closed or invalidated, and stopped without touching anything else. */
+/** A queued task noticed after an await that its window was re-pointed, closed or invalidated, and stopped without touching anything. */
 export class TaskAbortedError extends Error {
     constructor() {
         super('Cancelled: the project this change belonged to is no longer open.');
@@ -42,8 +25,7 @@ export class TaskAbortedError extends Error {
     }
 }
 
-/** True for a rejection whose text starts with `STALE_SESSION` (Tauri rejects
- *  with the command's `Err(String)` itself, not an `Error`). */
+/** True when the rejection text starts with `STALE_SESSION` (Tauri rejects with the command's `Err(String)`, not an `Error`). */
 export function isStaleSessionText(err: unknown): boolean {
     const text = err instanceof Error ? err.message : String(err ?? '');
     return text.startsWith(STALE_SESSION_PREFIX);
@@ -54,20 +36,12 @@ export function isSessionLostError(err: unknown): boolean {
     return err instanceof StaleSessionError || err instanceof TaskAbortedError;
 }
 
-/** The commands that take `expectedGeneration`. `validate_formula` and
- *  `preview_formula` (the Formula editor's live check + preview) are
- *  read-only, but a window bound to an older dataset would
- *  otherwise check a formula against ANOTHER project's columns, or answer
- *  with another project's values. */
+/** Commands that take `expectedGeneration`, including the read-only validate/preview ones, so a stale window can't answer from another project's columns. */
 const GENERATION_GUARDED = new Set([
     'evaluate_formula', 'calculate_new_sensor', 'remove_sensor_columns', 'validate_formula', 'preview_formula',
 ]);
 
-/**
- * Wrap `invoker` so every guarded command carries `expectedGeneration`, and a
- * `STALE_SESSION` rejection becomes a `StaleSessionError`. With no generation
- * (a caller that was never told one) the arguments are left exactly as given.
- */
+/** Wraps `invoker` so guarded commands carry `expectedGeneration` and a `STALE_SESSION` rejection becomes `StaleSessionError`; with no generation, args are left as given. */
 export function bindToGeneration(invoker: Invoker, generation: number | undefined): Invoker {
     return async (cmd, args) => {
         const guarded = generation !== undefined && GENERATION_GUARDED.has(cmd);

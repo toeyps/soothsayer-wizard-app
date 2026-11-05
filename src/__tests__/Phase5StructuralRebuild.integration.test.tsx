@@ -1,30 +1,4 @@
-/**
- * Cross-cutting checks of five rebuilt surfaces
- * structural rebuild (real JSX rewrites, not CSS-value-only): the Dashboard
- * `.timebar`, the rewritten FilterPanel / HighlightsPanel, the Add-to-FG
- * popover (now the Failure Group
- * Assignment sheet, section 1 below), and the rewritten Add Special Sensor window
- * (AddSensorWindow + SensorExplorer + SensorTooling).
- *
- * Every worker test for those files mocks the neighbours away (Dashboard.test
- * stubs FilterPanel/HighlightsPanel/SensorSelection; AddSensorWindow.test stubs
- * SensorExplorer/SensorTooling). This file mounts the REAL pieces together and
- * probes one bug class: popovers/layout state that
- * goes stale when the thing around them changes.
- *
- *   1. Add-to-FG popover at 380px vs AnchoredPopover's viewport clamp/flip.
- *   2. AddSensorWindow's fixed 320px | minmax(0,1fr) grid at small sizes
- *      (CSS contract + a real explorer -> tooling -> footer click-through).
- *   3. HighlightsPanel 2-column dim state + colour popovers through rapid
- *      chart-type switching inside the real Dashboard.
- *   4. FilterPanel's segmented operator -> the exact `value_filters` wire
- *      payload Rust's `ResolvedFilter::keeps` matches on.
- *   5. `.timebar` "Reset period" (now after Aggregation) vs Aggregation and
- *      the Filter tab, judged on the actual chart query, not labels.
- *
- * Anything found broken is recorded as `it.fails` (this repo's convention) so
- * a later fix pass flips it to `it`.
- */
+/** Rebuilt surfaces mounted together with REAL components; cases found broken are recorded as `it.fails`. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 // @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
@@ -32,9 +6,7 @@ import { readFileSync } from 'node:fs';
 import contract from '../../src-tauri/tests/fixtures/filter_contract.json';
 import type { CsvMetadata, FailureGroup, SensorMetadata, TimeHighlight, ValueHighlight, WorkspaceState } from '../types';
 
-// ── Mocks: only infra + chart rendering + data hooks. FilterPanel,
-//    HighlightsPanel, SensorSelection, ColorPlatePicker, AnchoredPopover,
-//    Portal, SensorExplorer, SensorTooling are all REAL. ────────────────────
+// Mocks only infra, chart rendering and data hooks; the panels and pickers are REAL.
 
 const chartProps: any[] = [];
 vi.mock('../components/charts', () => ({
@@ -111,7 +83,6 @@ import { showSensorTab } from './helpers/dashboardLanding';
 import SensorSelection from '../components/dashboard/SensorSelection';
 import AddSensorWindow from '../components/windows/AddSensorWindow';
 
-// ── App.css contract helpers (jsdom never applies the stylesheet) ─────────
 
 const CSS_SRC: string = readFileSync('src/App.css', 'utf-8');
 type CssRule = { selectors: string[]; decls: Record<string, string>; inAtRule: boolean };
@@ -152,7 +123,7 @@ function css(selector: string): Record<string, string> {
 /** Every rule (any nesting) whose selector list mentions this class. */
 const rulesMentioning = (cls: string) => RULES.filter(r => r.selectors.some(s => new RegExp(`\\.${cls}(?![\\w-])`).test(s)));
 
-// ── Geometry helpers: jsdom has no layout, so rects are scripted ──────────
+// Geometry helpers: jsdom has no layout, so rects are scripted
 
 type Rect = { top: number; left: number; width: number; height: number };
 const mkRect = ({ top, left, width, height }: Rect): DOMRect => ({
@@ -200,7 +171,6 @@ const openPopovers = () => Array.from(document.querySelectorAll<HTMLElement>('#w
 function last<T>(arr: T[]): T { return arr[arr.length - 1]; }
 const lastChartQuery = () => last(mockUseChartData.mock.calls)![0] as any;
 
-// ── Dashboard fixture ─────────────────────────────────────────────────────
 
 const sensorMetadata: SensorMetadata[] = [
     { tag: 'TAG1', description: 'Pump Pressure', unit: 'bar', component: 'Pump', alarmH: 90 },
@@ -222,22 +192,16 @@ function renderDashboard(overrides: Partial<WorkspaceState> = {}) {
     return utils;
 }
 
-/** Chart-type buttons — their labels ("Scatter", "Pair Plot") also appear as
- *  <b> text inside HighlightsPanel's notes, so match on the class. */
+/** Chart-type buttons; match on the class because "Scatter"/"Pair Plot" also appear as text in HighlightsPanel's notes. */
 function chartBtn(label: 'Line' | 'Scatter' | 'Pair Plot'): HTMLButtonElement {
     const btn = Array.from(document.querySelectorAll<HTMLButtonElement>('.chart-type-btn')).find(b => b.textContent?.trim() === label);
     if (!btn) throw new Error(`no chart-type button "${label}"`);
     return btn;
 }
 
-// =============================================================================
-// 1. Failure Group Assignment sheet vs the viewport
-//    (replaced the 380px AnchoredPopover add-to-FG menu; the old
-//    popover-clamp cases went with it)
-// =============================================================================
 
 describe('1. the Failure Group Assignment sheet docks to the Sensors panel and stays inside the viewport', () => {
-    // Real group names from the user's workspace (what drove the old 290 -> 380 popover width).
+    // Real group names from the user's workspace.
     const longGroups: FailureGroup[] = [
         { no: 0, name: 'Not in Group' },
         { no: 1, name: 'generator mechanical condition' },
@@ -305,9 +269,6 @@ describe('1. the Failure Group Assignment sheet docks to the Sensors panel and s
     });
 });
 
-// =============================================================================
-// 2. AddSensorWindow 320px | minmax(0,1fr) grid at small sizes
-// =============================================================================
 
 describe('2. Add Special Sensor window layout at small window sizes', () => {
     const tracks = () => css('.special-sensor-body')['grid-template-columns'];
@@ -327,7 +288,6 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(css('.special-sensor-footer')['flex-shrink']).toBe('0');
         expect(css('.special-sensor-footer-hint')['min-width']).toBe('0');
         // Long sensor names ellipsize instead of widening the fixed column.
-        // (the row is the stacked SensorLabel; its description line ellipsises)
         expect(css('.sl-desc')['overflow']).toBe('hidden');
         expect(css('.special-sensor-row-main')['min-width']).toBe('0');
     });
@@ -348,11 +308,7 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
         expect(narrow?.[1]).toContain('grid-template-columns: 230px minmax(0, 1fr)');
     });
 
-    // The right (Tooling) pane must keep a floor: the fixed grid gives the
-    // right track `minmax(0, 1fr)`, so without a window minWidth
-    // (>= 320 + 150) or a right-track floor, shrinking the window would
-    // narrow ONLY the Tooling pane — to 0 at a 320px-wide window. This test
-    // accepts either guard.
+    // Tooling track is `minmax(0, 1fr)`: it needs a window minWidth (>= 320 + 150) or a right-track floor; either passes.
     it('the Tooling pane keeps at least the 150px floor Split.js used to enforce at the smallest size the window can be resized to', async () => {
         renderDashboard();
         fireEvent.click(screen.getByText('Add Special Sensor'));
@@ -425,9 +381,6 @@ describe('2. Add Special Sensor window layout at small window sizes', () => {
     });
 });
 
-// =============================================================================
-// 3. Highlights 2-column dim + popovers through rapid chart-type switching
-// =============================================================================
 
 describe('3. Highlights panel: dim state and colour popovers through rapid chart-type switching (real Dashboard + real HighlightsPanel)', () => {
     type ChartLabel = 'Line' | 'Scatter' | 'Pair Plot';
@@ -453,8 +406,7 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         // Banners: one per column, only when that column is inert.
         expect(!!timeCol.querySelector('.highlights-note')).toBe(k === 'pair');
         expect(!!valueCol.querySelector('.highlights-note')).toBe(k !== 'scatter');
-        // The Band / Line colour switch (and its Scatter-only "Not adjustable
-        // here" note) was removed -- bands only on Line now.
+        // No Band / Line colour switch or Scatter "Not adjustable here" note: bands exist only on Line.
         expect(timeCol.querySelector('.highlights-inline-note')).toBeNull();
         expect(timeCol.querySelectorAll('.highlights-seg button')).toHaveLength(0);
         // Exactly one chart-type button is active — the one we expect.
@@ -481,13 +433,9 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         expectColumnsMatch('Scatter');
     });
 
-    // ── popovers ──
 
     const SWATCH_TOP = 200;
-    /** Scripted swatch geometry that MOVES with the column's layout: the
-     *  inert-column banner sits above the chip list in the same column,
-     *  pushing the swatch down. (A Scatter-only inline note used to do the
-     *  same; it went away with the Band / Line colour switch.) */
+    /** Swatch geometry that MOVES with the layout: the inert-column banner sits above the chip list and pushes the swatch down. */
     function layoutAwareSwatches() {
         rectFor = (el) => {
             if (!(el instanceof HTMLElement) || !el.classList.contains('cp-hit')) return null;
@@ -544,18 +492,8 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         expect(openPopovers()).toHaveLength(0);
     });
 
-    // NEW GAP (not covered by the earlier fix, which only clears a popover
-    // when its column becomes INERT). Line <-> Scatter keeps the By time
-    // column live, so its colour popover stays open — but Scatter inserts the
-    // "Not adjustable here — Scatter always renders highlights as a ring"
-    // note ABOVE the chip list in the same column (and Scatter -> Line
-    // removes it), so the swatch moves while the popover stays at the
-    // position captured before the switch. AnchoredPopover only reacts to
-    // scroll/resize; neither fires here. Pre-existing (the note sat above the
-    // list in the stacked layout too), not introduced by the 2-column rewrite.
-    // Severity LOW-MEDIUM: popover visibly detached from its chip by ~one
-    // note's height. Fix: clear highlightColorFor/Anchor on any chartType
-    // change (simplest), or re-measure the anchor.
+    // Line <-> Scatter keeps the By time column live, so its colour popover stays open, but Scatter adds a note above the chip list and moves the swatch while the popover stays put
+    // (AnchoredPopover reacts only to scroll/resize). The popover must be closed or re-anchored.
     it('By time popover open on Line -> switch to Scatter: popover is closed or re-anchored, not left at the pre-switch position', () => {
         layoutAwareSwatches();
         mountOnHighlights();
@@ -575,10 +513,7 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
         expectNoStaleAnchor(timeSwatch);
     });
 
-    // Same "…For state not cleared when its column goes inert" class, for the
-    // inline rename input: `editLabelFor` is gated on highlightApplies for
-    // rendering but never cleared, so a rename left open across a Pair Plot
-    // round trip re-mounts (autoFocus) with the old draft. Pre-existing; LOW.
+    // `editLabelFor` is never cleared when `highlightApplies` hides it, so an open rename would remount with its old draft.
     it('an in-progress highlight rename does not reappear after a Line -> Pair Plot -> Line round trip', () => {
         mountOnHighlights();
         fireEvent.click(screen.getByTitle('Rename'));
@@ -590,14 +525,9 @@ describe('3. Highlights panel: dim state and colour popovers through rapid chart
     });
 });
 
-// =============================================================================
-// 4. FilterPanel segmented operator -> wire payload
-// =============================================================================
 
 describe('4. Filter tab segmented operator control -> chart/scatter query value_filters (real Dashboard + real FilterPanel)', () => {
-    // What lib.rs `ResolvedFilter::keeps` matches on. Anything else falls into
-    // `_ => true` and silently filters NOTHING — so the 4 buttons must emit
-    // exactly these strings.
+    // `ResolvedFilter::keeps` matches these strings; anything else silently filters nothing, so the buttons must emit exactly them.
     const RUST_OPS = ['greater_than', 'less_than', 'equals', 'between'];
     const SEGMENTS: Array<[string, string, string]> = [
         ['Greater than', '>', 'greater_than'],
@@ -677,14 +607,7 @@ describe('4. Filter tab segmented operator control -> chart/scatter query value_
         expect(lastChartQuery().filter.value_filters[0].operation).toBe('equals');
     });
 
-    // Stale state: the max typed for "between" survives a switch to a
-    // non-between operator (field hidden, value kept in the draft) and is
-    // sent on the wire alongside e.g. greater_than; switching back to
-    // between resurrects the old max. Rust ignores value2 for non-between
-    // today (lib.rs `ResolvedFilter::keeps`), so no wrong rows — but the
-    // payload no longer reflects what's on screen. Pre-existing (the old
-    // native-<select> row behaved the same); the segmented rewrite makes
-    // quick toggling much more likely. LOW.
+    // The "between" max stays in the draft after switching operator; Rust ignores `value2`, but the payload must match the screen.
     it('after between(10..50) -> ">" and Apply, the hidden max is not carried on the wire', () => {
         openFilterWithCondition();
         fireEvent.click(seg('Between'));
@@ -696,9 +619,6 @@ describe('4. Filter tab segmented operator control -> chart/scatter query value_
     });
 });
 
-// =============================================================================
-// 5. .timebar Reset period (now after Aggregation)
-// =============================================================================
 
 describe('5. Time range bar: "Reset period" resets ONLY the period (judged on the real chart query)', () => {
     beforeEach(() => {
@@ -770,16 +690,7 @@ describe('5. Time range bar: "Reset period" resets ONLY the period (judged on th
         });
     });
 
-    // Cross-zone seam (Dashboard timebar <-> FilterPanel draft): FilterPanel
-    // re-syncs its WHOLE draft from the parent whenever the parent's
-    // FilterState differs (its "Sync from parent when parent resets"
-    // effect), and the time period lives in that same FilterState. So
-    // clicking Reset period while the Filter tab has an UN-applied condition
-    // (both are on screen at once) silently discards the drafted condition —
-    // the same happens for Apply-relative-range or editing Start/End. Not
-    // a rebuild regression (the sync effect is older), but it is
-    // exactly "Reset period touched something other than the period".
-    // LOW-MEDIUM: user-typed work lost with no warning.
+    // Timebar and FilterPanel draft: changing the period must not discard an un-applied condition.
     it('an UN-applied Filter-tab condition survives a Reset period click', () => {
         renderDashboard({ filters: emptyFilters });
         fireEvent.click(screen.getByTitle('Apply relative range'));

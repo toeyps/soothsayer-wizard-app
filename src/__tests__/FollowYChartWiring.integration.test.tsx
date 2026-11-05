@@ -1,10 +1,4 @@
-/**
- * QA 2026-10-19 — the follow-Y axis across its two halves: the Workbench chart builders
- * (`healthCharts.ts` / `healthPageCharts.ts`) hang a spec on the option, and
- * `ResponsiveECharts` must attach it to the live instance. The unit tests check each half
- * alone; these hand the REAL builders' options to the REAL wrapper (only echarts-for-react
- * is faked) and check what reaches the chart instance.
- */
+/** Follow-Y axis across its two halves: chart builders hang a spec on the option and `ResponsiveECharts` must attach it to the live instance. Only echarts-for-react is faked. */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, act } from '@testing-library/react';
 

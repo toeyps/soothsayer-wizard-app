@@ -7,57 +7,17 @@ import { fmtNum } from './chartTheme';
 import { fieldState, REL_POINT_LABEL, RING_QUICK, stepRing, type HealthVerdict } from './healthChecks';
 import { NumField } from './SetPointsCard';
 
-/*
- * The SCORE RULER of the Health score page ("Workbench detail pages v2"): it
- * replaces the "Health set points" table.
- *
- * One horizontal band reads value → score left to right. Each tick is a value on
- * the sensor's scale and the score the model gives there; the band between two
- * ticks is coloured by those scores (green 100, amber 80, red 0). The program's
- * own ticks (±1SD, ±3SD, ±2RMSE, 1× / 3× SD) are plain mono text; the user's
- * points are the ONLY inputs, large, in the same row — "what do I type and where
- * does it sit" is one picture:
- *
- *   Individual    0 ─── 80 ─── 100 ══ 100 ─── 80 ─── 0
- *                 [L]   −3SD   −1SD     +1SD   +3SD   [H]
- *   Relation      0 ──── 80 ─── 100 ══ 100 ══ 100 ─── 80 ──── 0     (residual = actual − predicted)
- *                 [0 low] [80 low] −2RMSE  0  +2RMSE [80 high] [0 high]
- *   Clustering    100 ═══ 100 ─── 80 ─── 0                          (one-sided: distance from the centre)
- *                 centre  1× SD   3× SD  [N× SD]
- *
- * Ticks are spaced EVENLY (a schematic, not a scale): the values under them say
- * where each one really is.
- *
- * WRONG VALUES WARN. The rules are Rust's (`validation[].field` / `.code`) — this
- * file never decides a value is wrong; it only shows what Rust said:
- *   - a rejected point: its tick, name and input turn red, and a red MARKER sits on
- *     the band where the typed value really is, labelled as typed ("L = 62");
- *   - an empty point: its tick and input are dashed amber;
- *   - the health score did not load: the user's ticks are "not checked" — grey,
- *     dashed, no score colour (never drawn as valid).
- * The Checks (`children`) sit under the ruler in the same card and every input
- * points at them (`aria-describedby`).
- *
- * Presentational: the page keeps the DRAFT set points; the ruler reports every
- * change (`onChange`) and every "done typing" (`onCommit`, on blur / Enter). A
- * discrete action (use master, a stepper click, a quick button) asks for an
- * immediate commit (`onChange(next, true)`).
- */
+/* Score ruler: ticks are spaced evenly (schematic, not a scale) and read value -> score; the user's set points are the only inputs. Rust decides what is invalid; `onChange` per edit, `onCommit` on blur / Enter. */
 
-// ---------------------------------------------------------------------------
-// Geometry (pure — unit-tested without layout)
-// ---------------------------------------------------------------------------
 
 /** `[value, tick index]`: a tick whose value is known. */
 export type RulerAnchor = readonly [value: number, tick: number];
 
-/** `required` = empty (dashed amber) · `error` = rejected (red) · `unchecked` = the
- *  health score did not load, nothing was checked (dashed grey) · `null` = fine. */
+/** `required` = empty, `error` = rejected, `unchecked` = health score did not load, `null` = fine. */
 export type RulerTickState = 'required' | 'error' | 'unchecked' | null;
 
 export interface RulerTick {
-    /** The user's points: Rust's field name (`lower`, `residual_at_80_upper`, `outer_sd`).
-     *  The program's ticks: a short id (`m3sd`, `p2rmse`, `ring1`). */
+    /** User points use Rust's field name (`lower`, `residual_at_80_upper`, `outer_sd`); program ticks use a short id. */
     key: string;
     score: 100 | 80 | 0;
     /** What the tick is ("−3SD", "L", "80 low"). */
@@ -69,8 +29,7 @@ export interface RulerTick {
     text?: string;
 }
 
-/** Where a REJECTED typed value really sits on the ruler. `pos` is in tick units
- *  (0 = the first tick, `ticks.length - 1` = the last). */
+/** Where a rejected typed value really sits; `pos` is in tick units (0 = first tick). */
 export interface RulerMarker {
     /** The point it belongs to (`RulerTick.key`). */
     key: string;
@@ -92,11 +51,7 @@ const fin = (v: number | null | undefined): v is number => typeof v === 'number'
 /** A typed number as text: every decimal as typed, a real minus sign. */
 const typed = (v: number): string => fmtNumExact(v).replace('-', '−');
 
-/**
- * Position (in tick units) of `v` among `anchors`, which ascend in value AND in tick:
- * linear between two anchors, half a tick outside the first / the last one.
- * `null` when there is no anchor to place it by.
- */
+/** Position in tick units of `v` among ascending `anchors`: linear between them, half a tick outside the ends; null without anchors. */
 export function positionAmong(v: number, anchors: readonly RulerAnchor[]): number | null {
     if (anchors.length === 0) return null;
     if (v < anchors[0][0]) return anchors[0][1] - 0.5;
@@ -109,13 +64,7 @@ export function positionAmong(v: number, anchors: readonly RulerAnchor[]): numbe
     return v === last[0] ? last[1] : last[1] + 0.5;
 }
 
-/**
- * The anchors a rejected value is placed by: the program's ticks plus the user's
- * OTHER points that are valid — so a marker never lands on the wrong side of one of
- * them. A user point is only taken when its value agrees with the order of the ticks
- * (it lies above every anchor left of it and below every anchor right of it); the
- * result ascends in value and in tick.
- */
+/** Anchors for placing a rejected value: program ticks plus the user's other valid points, taken only if they agree with the tick order. */
 export function consistentAnchors(program: readonly RulerAnchor[], user: readonly RulerAnchor[]): RulerAnchor[] {
     const out: RulerAnchor[] = program.filter(a => Number.isFinite(a[0])).sort((a, b) => a[1] - b[1]);
     for (const u of [...user].sort((a, b) => a[1] - b[1])) {
@@ -126,11 +75,7 @@ export function consistentAnchors(program: readonly RulerAnchor[], user: readonl
     return out;
 }
 
-/**
- * The marker of a rejected value `v`. `last` is the index of the ruler's last tick.
- * Past the ruler's end (which only happens beyond the user's own valid point there)
- * the marker sits AT that end and its label carries an arrow.
- */
+/** Marker for a rejected value; beyond the ruler's end it sits at the end and its label gets an arrow. */
 export function rejectedMarker(key: string, v: number, label: string, anchors: readonly RulerAnchor[], last: number): RulerMarker | null {
     const p = positionAmong(v, anchors);
     if (p === null) return null;
@@ -161,9 +106,7 @@ const leftOf = (pos: number, last: number): string => `${Number(((pos / Math.max
 const SCORE_TONE: Record<RulerTick['score'], 'ok' | 'warn' | 'bad'> = { 100: 'ok', 80: 'warn', 0: 'bad' };
 const SCORE_TOKEN: Record<RulerTick['score'], string> = { 100: 'var(--ok)', 80: 'var(--warn)', 0: 'var(--danger)' };
 
-/** The band's background: one colour stop per tick, so each segment fades between the
- *  scores of its two ends. A user point that is empty, rejected or not checked has NO
- *  score colour (grey) — the band never shows a score the model does not give. */
+/** One colour stop per tick; an empty, rejected or unchecked user point has no score colour (grey). */
 export function bandGradient(ticks: readonly Pick<RulerTick, 'score' | 'user' | 'state'>[]): string {
     const last = ticks.length - 1;
     const stops = ticks.map((t, i) => {
@@ -175,9 +118,6 @@ export function bandGradient(ticks: readonly Pick<RulerTick, 'score' | 'user' | 
     return `linear-gradient(90deg, ${stops.join(', ')})`;
 }
 
-// ---------------------------------------------------------------------------
-// The ruler of each kind (pure)
-// ---------------------------------------------------------------------------
 
 interface UserPoint { tick: number; key: string; name: string; value: number | null; markerValue?: number; markerLabel?: string }
 
@@ -189,12 +129,7 @@ export const REL_RULER_POINTS = [
     { key: 'residual_at_0_upper', prop: 'residualAt0Upper', score: 0, tick: 6 },
 ] as const;
 
-/**
- * The ruler of a model: its ticks (with the state Rust's issues give each user point)
- * and one marker per rejected value. `unchecked` = the health score did not load, so
- * nothing was checked: every user tick is "not checked" and there is no marker.
- * `null` when the set points are not of the model's kind.
- */
+/** Ticks (state from Rust's issues) and a marker per rejected value; null if set points are not of the model's kind. `unchecked` = user ticks not checked, no markers. */
 export function rulerModel(stats: HealthStats, sp: HealthSetPoints, issues: readonly HealthIssue[], unchecked = false): RulerModel | null {
     const stateOf = (field: string): RulerTickState => (unchecked ? 'unchecked' : fieldState(issues, field));
     const userTick = (key: string, score: RulerTick['score'], name: string): RulerTick => ({ key, score, name, user: true, state: stateOf(key) });
@@ -261,9 +196,6 @@ export function rulerModel(stats: HealthStats, sp: HealthSetPoints, issues: read
     return null;
 }
 
-// ---------------------------------------------------------------------------
-// The band
-// ---------------------------------------------------------------------------
 
 const TICK_CLASS: Record<Exclude<RulerTickState, null>, string> = {
     error: ' wb3-ruler-tick--bad',
@@ -292,9 +224,7 @@ function Band({ model, inputs }: { model: RulerModel; inputs: Record<string, Rea
     const { ticks, markers, kind } = model;
     const last = ticks.length - 1;
     const { rows, rowOf } = markerRows(markers, last);
-    // Relation model: seven ticks leave no room for four inputs on a narrow pane — there
-    // the inputs sit on their own labelled row under the band (CSS, by container width),
-    // so each input carries its point's name and each program tick its value.
+    // Relation model: inputs sit on their own labelled row on a narrow pane (CSS, by container width).
     const splitRow = kind === 'relationship';
     return (
         <div className={`wb3-ruler wb3-ruler--${kind}`} data-testid="score-ruler" data-kind={kind} role="group" aria-label="Health set points on the score ruler">
@@ -360,9 +290,6 @@ function Band({ model, inputs }: { model: RulerModel; inputs: Record<string, Rea
     );
 }
 
-// ---------------------------------------------------------------------------
-// The card
-// ---------------------------------------------------------------------------
 
 export interface ScoreRulerProps {
     data: HealthPreview;
@@ -375,13 +302,11 @@ export interface ScoreRulerProps {
     verdict: HealthVerdict | null;
     onChange: (next: HealthSetPoints, commit?: boolean) => void;
     onCommit: () => void;
-    /** The health score could not be loaded: nothing was checked. The user's ticks are
-     *  drawn as "not checked" (grey, dashed, no score colour) — never as valid. */
+    /** Health score did not load: user ticks show as not checked (grey, dashed), never as valid. */
     unchecked?: boolean;
     /** The Checks, rendered inside this card under the ruler. */
     children?: ReactNode;
-    /** Why the set points cannot be edited right now (an export is running): every
-     *  input and button of the ruler is disabled, with this as its tooltip. */
+    /** Why set points can't be edited now (export running); disables every input and button, shown as tooltip. */
     disabledReason?: string | null;
 }
 
@@ -414,8 +339,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
     // Every input points at the Checks: they say, in words, what its colour means.
     const describedBy = children ? checksId : undefined;
     const model = rulerModel(data.stats, setPoints, issues, !!unchecked);
-    // No status pill on this card: one dot in the list's colours, the words in its
-    // tooltip. The words themselves are the Checks lines under the ruler.
+    // No status pill: one dot in the list's colours, words in the tooltip.
     const dot = verdict ? VERDICT_DOT[verdict] : null;
     /** The box's own state: Rust's issue for that field (nothing while not checked). */
     const boxState = (field: string) => (unchecked ? null : fieldState(issues, field));
@@ -519,8 +443,7 @@ export default function ScoreRuler({ data, setPoints, unit, issues, verdict, onC
     );
 }
 
-/** Individual: ONE footnote for both sides — where L / H come from, and the master-data
- *  rule. A "Use master …" link shows only for a side that differs from the master data. */
+/** Individual: one footnote for the L / H sources and the master-data rule; "Use master …" shows only for a side that differs. */
 function MasterNote({ sp, onChange, disabledReason }: { sp: IndividualHealthSetPoints; onChange: ScoreRulerProps['onChange']; disabledReason: string | null }) {
     const srcL = setPointSource(sp, 'lower');
     const srcU = setPointSource(sp, 'upper');

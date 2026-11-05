@@ -212,8 +212,7 @@ describe('applyIncompleteRule - the WORKSPACE running condition Apply', () => {
     });
 });
 
-// The two comparisons are also exported at SLICE level, so a caller that only PREDICTS a write
-// (the Running-condition settings' impact line, `runningConditionImpact`) runs the same rule.
+// Slice-level exports so a caller that only predicts a write (`runningConditionImpact`) applies the same rule.
 describe('changedTrainInputIds / changedScoringPeriodIds - the comparisons behind the rule, on two slices', () => {
     const wsModel = (id: string) => ({ ...individual(), id });
     const customModel = (id: string): FailureModel => ({
@@ -439,18 +438,14 @@ describe('applyIncompleteRule - changing ONLY scoring periods (SPEC rules 8 & 9)
         expect(run([t1, t2], [])).toBe(false);
         expect(run([t1, t2], [t2, t1])).toBe(false); // S1 / S2 swapped: the saved results are in the other order
         expect(run([t1], [{ ...t1, id: 'other' }])).toBe(true);
-        // The removed label / event time / highlight caption cannot change a result (Rust ignores
-        // them), so gaining, losing or changing one is NOT a change of the scoring periods.
+        // Label/event time/highlight caption don't affect results (Rust ignores them), so changing them is not a scoring-period change.
         expect(run([t1], [{ ...t1, label: 'problem' }])).toBe(true);
         expect(run([{ ...t1, label: 'normal' }], [{ ...t1, label: 'problem', eventTime: '2026-01-05T00:00' }])).toBe(true);
         expect(run([{ ...t2, label: 'problem', eventTime: '2026-03-20T08:00' }], [{ ...t2, label: 'problem', eventTime: '2026-03-21T08:00' }])).toBe(true);
         expect(run([{ ...t1, label: 'problem', eventTime: '2026-01-05T00:00', fromHighlight: 'Overhaul' }], [t1])).toBe(true);
     });
 
-    // SPEC workbench-redesign §2: "keep them readable so old workspaces load. Stop writing
-    // them and ignore them on load. No migration is needed." The danger this guards: dropping
-    // `label` / `eventTime` from what counts must not turn every Complete model of an existing
-    // workspace into "needs Mark complete again" the first time that workspace is opened or saved.
+    // Old `label`/`eventTime` keys stay readable and are ignored: dropping them from the comparison must not turn Complete models into 'Mark complete again'.
     describe('a workspace saved before 2026-10-10 (scoring periods still carrying label / eventTime / fromHighlight)', () => {
         const oldFg = (models: FailureModel[], over: Partial<FailureGroupStateSlice> = {}) => slice(models, { runningConditionTestPeriods: LEGACY_TESTS, ...over });
 

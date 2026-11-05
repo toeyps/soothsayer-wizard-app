@@ -1,12 +1,10 @@
-# Generates the "long sensor names" test data used by the LN section of docs/testing/MANUAL_TEST_PLAN.md.
-# Which item uses which file: docs/testing/TEST_DATA_GUIDE.md.
+# Generates the "long sensor names" test data (LN section; file-to-item map: docs/testing/TEST_DATA_GUIDE.md).
 #
 # Usage (standard library only):
 #   python scripts/make-all-testdata.py                        # the usual way: every test-data folder
 #   python scripts/make-longname-testdata.py C:\WizardTestData\LN   # this set alone (about 15 MB, a few seconds)
 #
-# Every data file has a tag-name file listing exactly its sensors: a new project needs that (a tag-name file is
-# required on step 2 and must match the data), and this script checks it before it finishes.
+# Each data file gets a tag-name file listing exactly its sensors (required on step 2); this script checks the pair.
 #
 #   LN-long.csv + LN-long-tags.csv            names of 60-150+ characters that share a start and differ at the end
 #   LN-long-tags-no-descriptions.csv          the same tags, every description blank: a project whose sensors show
@@ -42,8 +40,7 @@ def stamp(t):
 
 
 def make_data(name, sensors, days, step_min, seed):
-    """`sensors`: (tag, description, unit, component). Values follow the machine's power, so Relation and
-    Clustering models have something real to fit. The machine stops on day 10."""
+    """`sensors`: (tag, description, unit, component). Values follow machine power; the machine stops on day 10."""
     rnd = random.Random(seed)
     start = datetime(2025, 1, 1)
     n = days * 24 * 60 // step_min
@@ -69,7 +66,7 @@ def make_data(name, sensors, days, step_min, seed):
 
 
 def check_pair(data_name, tag_name):
-    """The rule of step 2, checked here so a generated pair can never be refused by the app."""
+    """Step 2's tag-file rule, checked so a generated pair is never refused by the app."""
     with open(path(data_name), newline='', encoding='utf-8') as f:
         head = next(csv.reader(f))
     with open(path(tag_name), newline='', encoding='utf-8') as f:
@@ -82,7 +79,6 @@ def check_pair(data_name, tag_name):
     return len(data_tags)
 
 
-# ---------------------------------------------------------------- long names
 CROSSHEAD = []
 for slide in ('11A', '11B'):
     for seg in range(1, 5):
@@ -120,7 +116,6 @@ n_long = make_data('LN-long.csv', LONG, 30, 5, 1)
 write_csv('LN-long-tags.csv', TAG_HEAD, [list(s) for s in LONG])
 write_csv('LN-long-tags-no-descriptions.csv', TAG_HEAD, [[s[0], '', s[2], s[3]] for s in LONG])
 
-# ---------------------------------------------------------------- medium names
 MEDIUM = []
 for pump_name, short, comp in (('Boiler feed pump', 'BFP', 'Boiler feed pumps'), ('Condensate extraction pump', 'CEP', 'Condensate pumps')):
     for side in ('A', 'B'):
@@ -130,7 +125,6 @@ MEDIUM += [(RUN_TAG, 'Unit 8 gross load', 'kW', 'Unit')]
 n_medium = make_data('LN-medium.csv', MEDIUM, 30, 5, 2)
 write_csv('LN-medium-tags.csv', TAG_HEAD, [list(s) for s in MEDIUM])
 
-# ---------------------------------------------------------------- short names
 SHORT = [
     ('TT_BRG_DE', 'Bearing DE temp', 'DEGC', 'Generator'),
     ('TT_BRG_NDE', 'Bearing NDE temp', 'DEGC', 'Generator'),
@@ -144,7 +138,6 @@ SHORT = [
 n_short = make_data('LN-short.csv', SHORT, 30, 5, 3)
 write_csv('LN-short-tags.csv', TAG_HEAD, [list(s) for s in SHORT])
 
-# ---------------------------------------------------------------- 4,748 sensors
 WIDE_COUNT = 4748
 WIDE = [(RUN_TAG, 'Main motor active power', 'kW', 'Machine')]
 FAMILIES = (('Crosshead (P-P Trend) - Vibration crosshead slide', 'Crosshead'),
@@ -181,7 +174,6 @@ for seg in (1, 2):
 n_same = make_data('LN-same-description.csv', SAME_DESC, 30, 5, 5)
 write_csv('LN-same-description-tags.csv', TAG_HEAD, [list(s) for s in SAME_DESC])
 
-# ---------------------------------------------------------------- check + EXPECTED.txt
 count_same = check_pair('LN-same-description.csv', 'LN-same-description-tags.csv')
 count_long = check_pair('LN-long.csv', 'LN-long-tags.csv')
 check_pair('LN-long.csv', 'LN-long-tags-no-descriptions.csv')

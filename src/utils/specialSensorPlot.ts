@@ -1,16 +1,6 @@
 import type { SensorMetadata, SensorOperationConfig, SpecialSensorRecipe } from '../types';
 
-/**
- * What the Add Special Sensor window tells the Dashboard through
- * `add-sensor-selection`.
- *
- * `sensors` is a DELTA, not a selection: the tags the Dashboard should ADD to
- * whatever it is plotting right now — never the window's own copy of the
- * selection (the window only learns the plotted list once, when it opens, so
- * its copy is not the truth).
- *
- *   created sensor -> just its own tag (never the sensors it was built from)
- */
+/** What the Add Special Sensor window sends the Dashboard in `add-sensor-selection`. `sensors` is a DELTA: tags to ADD to what the Dashboard plots now (the window's own copy is learned once, at open). */
 export interface AddSensorSelectionPayload {
     workspaceId?: string;
     sensors: string[];
@@ -30,13 +20,7 @@ export interface PlotMerge {
 
 const key = (tag: string) => tag.trim().toLowerCase();
 
-/**
- * Merge `toAdd` into the current plotted selection: case-insensitive dedupe
- * (against `current` and within `toAdd`), preserving `current`'s order, with
- * `toAdd` appended in the order given. `cap` is the chart type's maximum
- * number of sensors (Pair Plot's `MAX_PAIR_PLOT_SENSORS`); once reached, the
- * rest are reported in `blocked` instead of silently dropped.
- */
+/** Merge `toAdd` into the plotted selection: case-insensitive dedupe, `current`'s order kept, `toAdd` appended. Past `cap` (Pair Plot's `MAX_PAIR_PLOT_SENSORS`) the rest go to `blocked` instead of being dropped silently. */
 export function mergeIntoPlot(current: string[], toAdd: string[], cap?: number): PlotMerge {
     const next = [...current];
     const seen = new Set(current.map(key));

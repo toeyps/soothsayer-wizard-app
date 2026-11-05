@@ -2,23 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openTabStatus } from './helpers/workbenchStatus';
 import { render, screen, fireEvent, act, cleanup, waitFor, within } from '@testing-library/react';
 
-/*
- * Dashboard and the Build
- * Model window side by side against ONE workspace file, checking the two
- * train fields (`lastTrainedAt` / `trainedFingerprint`) and the Workbench's
- * staleness against the class of bug CLAUDE.md documents for Dashboard's
- * `fgGroups`/`fgModels` mirror (a stale mirror overwriting another window's
- * fresher write).
- *
- * Same harness as Feature4CrossWindow.integration.test.tsx: both REAL
- * components mounted at once, the real workspaceManager over an in-memory
- * plugin-fs, one event bus with a switch that DROPS Build Model's broadcasts
- * so Dashboard's mirror goes stale. Dashboard has no running-condition writer
- * of its own (grep: only the mirror + the disk-adopting autosave), so the
- * running-condition case below is "Build Model edits it, Dashboard's stale
- * mirror must not revert it", which is the only way that mirror could make a
- * stale model read as fresh again.
- */
+/* Dashboard and Build Model side by side on one workspace file: train fields and staleness against a stale-mirror overwrite. Real components, workspaceManager over in-memory fs, one event bus that can drop Build Model's broadcasts. Dashboard has no running-condition writer: Build Model edits it, and Dashboard's stale mirror must not revert it. */
 
 const h = vi.hoisted(() => ({
     listeners: {} as Record<string, Set<(e: any) => void>>,
@@ -46,8 +30,7 @@ vi.mock('@tauri-apps/plugin-fs', () => ({
         if (v === undefined) throw new Error(`ENOENT ${p}`);
         return v;
     },
-    // Workspace saves go to a temp sibling and are renamed over the real file
-    // (workspaceManager.writeWorkspaceJsonAtomically): record the write when it LANDS.
+    // Saves go to a temp sibling then a rename; record the write when it lands.
     writeTextFile: async (p: string, c: string) => { h.files.set(p, c); if (!p.endsWith('.tmp')) h.writes.push(p); },
     rename: async (from: string, to: string) => { h.files.set(to, h.files.get(from)!); h.files.delete(from); h.writes.push(to); },
     exists: async (p: string) => p === 'workspaces' || h.files.has(p),
@@ -184,8 +167,7 @@ async function mountBoth() {
 }
 
 const bmw = () => within(screen.getByTestId('build-model-window'));
-/** "Complete" / "Trained" / "Incomplete" of the model whose kind tab is open — read from the status words on
- *  that tab (the footer pill is gone: Workbench detail v2 §4). */
+/** Status word on the open kind tab. */
 const pill = () => openTabStatus(screen.getByTestId('build-model-window'));
 const selectTag1 = () => fireEvent.click(bmw().getByTestId('sensor-list-row-fg:1-tag1'));
 const dropBuildModelBroadcasts = () => {

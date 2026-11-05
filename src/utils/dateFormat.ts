@@ -1,20 +1,4 @@
-/*
- * THE date format of the whole app — one source for every date a user reads
- * (user decision 2026-10-12: "the format of a date must be the same in the
- * whole system"; the Dashboard's format was chosen as the standard).
- *
- *   date alone                         2025/03/14            `formatDate`
- *   where space is tight               2025/03               `formatYearMonth`
- *   a data row's time                  2025/03/14 21:25:00   `formatDateTime` / `formatRowTime`
- *   a period bound the user typed,
- *   an instant the app recorded        2025/03/14 21:25      `formatDateTimeMinutes`
- *   a chart's time-axis tick           2025/03/14            `formatAxisTick`
- *                                      (+ " 06:00" when the tick is not a midnight)
- *
- * Always numerals, zero-padded, 24-hour clock — never a month name, and never
- * the PC's locale (`toLocaleDateString()` gives the ambiguous MM/DD/YYYY order
- * under en-US). Nothing else in `src/` may build a date string by hand.
- */
+/* The app's one date format; no other code in `src/` builds a date string by hand. Numerals, zero-padded, 24-hour; never a month name or the PC locale (`toLocaleDateString()` gives MM/DD/YYYY under en-US). */
 
 const pad2 = (n: number): string => String(n).padStart(2, '0');
 
@@ -59,9 +43,7 @@ export function formatDateTime(d: Date): string {
     return formatWallClock(wallClockOf(d), 'seconds');
 }
 
-/** YYYY/MM/DD HH:mm, 24-hour clock, no seconds — a period bound the user typed
- *  (the date fields have minute resolution) or an instant the app recorded
- *  ("Trained …", "Files saved …", a project's last-opened time). */
+/** YYYY/MM/DD HH:mm, 24-hour, no seconds: a period bound the user typed or an instant the app recorded. */
 export function formatDateTimeMinutes(d: Date): string {
     return formatWallClock(wallClockOf(d), 'minutes');
 }
@@ -79,13 +61,7 @@ export function formatClock(d: Date): string {
 /** `YYYY-MM-DD[ T]HH:MM[:SS[.fff]]` (or with `/`) and an optional `Z` / `+07:00`. */
 const ROW_TIME_RE = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T ]+(\d{1,2}):(\d{2})(?::(\d{2})(?:[.,]\d+)?)?)?\s*(?:Z|[+-]\d{2}(?::?\d{2})?)?$/i;
 
-/**
- * The wall clock WRITTEN in a timestamp text — a CSV row's time as Rust hands it
- * back. Read from the text's own digits and never passed through a `Date`, so an
- * explicit offset ("2026-02-09T23:50:00+07:00", "…Z") is ignored: the row reads
- * 23:50 on a PC in any time zone. A date with no time reads as 00:00:00. `null`
- * for text in any other shape.
- */
+/** Wall clock written in a timestamp text, read from its digits, so any offset or Z is ignored; date only = 00:00:00, else `null`. */
 export function readWallClock(text: string): WallClock | null {
     const m = ROW_TIME_RE.exec(text.trim());
     if (!m) return null;
@@ -97,28 +73,13 @@ export function readWallClock(text: string): WallClock | null {
     };
 }
 
-/**
- * A data row's time from its own text: `2025/03/14 21:25:00` (the row's OWN wall
- * clock — see `readWallClock`). `null` when the text is not in the usual
- * timestamp shape; the caller decides what to show then.
- */
+/** A data row's own wall-clock time (see `readWallClock`) formatted to `precision`; `null` if the text isn't a usual timestamp. */
 export function formatRowTime(text: string, precision: DatePrecision = 'seconds'): string | null {
     const w = readWallClock(text);
     return w ? formatWallClock(w, precision) : null;
 }
 
-/**
- * The label of one tick of a chart's TIME axis (`value` = epoch ms, read in the
- * PC's time zone like the axis itself): the date alone when the tick is a
- * midnight — `2025/03/14` — and date + time when it is not — `2025/03/14 06:00`
- * (`…06:00:30` / `…06:00:30.250` when the tick is finer than a minute / a second).
- *
- * Why not the date alone on every tick: zoomed in to a day or less, several
- * ticks fall on the same day and would all read the same date. An axis puts its
- * ticks on round times, so with day-or-longer steps every tick is a midnight and
- * the axis shows plain dates; only finer steps add the time — and then at most
- * one tick per day is a midnight, so no two labels are ever the same.
- */
+/** Time-axis tick label (epoch ms, PC time zone): date at midnight, else date + time, adding seconds/ms only when finer. Date-only labels would repeat when zoomed to a day or less. */
 export function formatAxisTick(value: number): string {
     const d = new Date(value);
     if (Number.isNaN(d.getTime())) return '';

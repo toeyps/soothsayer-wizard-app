@@ -40,10 +40,7 @@ async function freshModule() {
     return await import('../workspaceManager');
 }
 
-/** Where every workspace save LANDED, in order: `[path, content]`. A save writes
- *  a temp sibling and renames it over the real file (so another
- *  window never reads a half-written file); a direct write (the fallback when
- *  the rename is refused) counts as landing at its own path. */
+/** Where saves landed, in order, as `[path, content]`. A save writes a temp file then renames it; the direct-write fallback counts at its own path. */
 function savedFiles(): Array<[string, string]> {
     const out: Array<[string, string]> = [];
     const tmp = new Map<string, string>();
@@ -353,10 +350,7 @@ describe('saveWorkspaceData', () => {
 
         const { saveWorkspaceData } = await freshModule();
         const first = saveWorkspaceData({ ...state, id: 'ws1' });
-        // Two more saves arrive while the first write is still pending.
-        // Give the first call's own awaits (exists/getRecentWorkspaces) a
-        // chance to reach the pending writeTextFile call before the next
-        // two saves are issued "while it's in flight".
+        // Wait for the first write to be pending before issuing the next two saves.
         await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
 
         const secondCall = saveWorkspaceData({ ...state, id: 'ws2' });
@@ -368,8 +362,7 @@ describe('saveWorkspaceData', () => {
         await first;
         await secondCall;
         await thirdCall;
-        // All three actually write now -- ws2 is NOT dropped in favour of
-        // ws3, unlike the old single-slot queue.
+        // All three write: ws2 is not dropped in favour of ws3.
         await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(3));
         expect(savedFiles()).toEqual([
             ['workspaces/ws1.json', JSON.stringify({ ...state, id: 'ws1' })],
@@ -628,10 +621,7 @@ describe('loadWorkspaceData', () => {
             const { loadWorkspaceData } = await freshModule();
             const result = await loadWorkspaceData('ws1');
             const models = result?.failureGroupState?.models ?? [];
-            // Empty, not 'TAG1' — the display layer (FailureGroupsPanel/
-            // BuildModelWindow) falls back to the sensor's description when
-            // name is unset; defaulting name to the tag here would defeat
-            // that fallback (a non-empty name always wins over it).
+            // Empty, not the tag: the display falls back to the description only when name is unset.
             expect(models[0].name).toBe('');
         });
 
@@ -893,10 +883,7 @@ describe('updateWorkspaceData', () => {
         ]);
         mockExists.mockResolvedValue(true);
 
-        // A minimal fake disk: readTextFile always returns whatever the
-        // most recent writeTextFile call actually wrote (not a fixed canned
-        // value) -- otherwise this test can't distinguish a correctly
-        // sequenced read from a racy stale one.
+        // Fake disk: reads return the latest written content, so a racy stale read is detectable.
         let diskContent = JSON.stringify({
             id: 'ws1', name: 'A',
             failureGroupState: { groups: [], models: [] },
@@ -919,9 +906,7 @@ describe('updateWorkspaceData', () => {
         }));
         await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
 
-        // Call 2 fires while call 1's write is still in flight -- an
-        // unrelated edit (adding a model), not a repeat of call 1's own
-        // change.
+        // Call 2 starts while call 1's write is in flight, with an unrelated change.
         mockReadTextFile.mockClear();
         const second = updateWorkspaceData('ws1', (s: any) => ({
             ...s,
@@ -931,16 +916,7 @@ describe('updateWorkspaceData', () => {
             },
         }));
 
-        // The actual property under test: call 2 must not even START its
-        // own read while call 1's write is still pending. Flush several
-        // microtask turns WITHOUT resolving `firstWrite` -- with the old
-        // mutex-on-write-only design, `updateWorkspaceData`'s
-        // `loadWorkspaceData` was never gated at all, so call 2's
-        // `readTextFile` would already have fired by now (and read the
-        // pre-Group-A snapshot). A final-state-only assertion can pass "by
-        // accident" here since microtask scheduling can coincidentally
-        // still land the read after the write resolves; asserting the call
-        // hasn't happened yet is what actually pins down the guarantee.
+        // Call 2 must not START its read while call 1's write is pending (asserts the order, not just the final state).
         for (let i = 0; i < 5; i++) await Promise.resolve();
         expect(mockReadTextFile).not.toHaveBeenCalled();
 
@@ -948,37 +924,13 @@ describe('updateWorkspaceData', () => {
         await first;
         const result = await second;
 
-        // Both survive: call 2's read only happened after call 1's write
-        // fully landed, so its patch is applied on top of Group A instead
-        // of silently erasing it.
+        // Both survive: call 2 read only after call 1's write landed.
         expect(result?.failureGroupState?.groups).toEqual([{ no: 1, name: 'Group A' }]);
         expect(result?.failureGroupState?.models).toEqual([{ id: 'm1', name: 'Model X' }]);
         expect(writeCount).toBe(2); // neither write was dropped
     });
 
-    // [data-loss fix — real root cause of the repeated
-    // "Running Condition Filter edit, then it's gone" reports]: a plain
-    // `loadWorkspaceData()` call (not an `updateWorkspaceData` read-modify-
-    // write) used to be a bare, unqueued read -- it could start and finish
-    // WHILE an `updateWorkspaceData` write from the SAME window was still
-    // in flight, resolving with pre-write data. `BuildModelWindow.tsx`'s own
-    // hydration listener calls `loadWorkspaceData` directly (not through
-    // `updateWorkspaceData`) every time it re-hydrates -- which happens more
-    // than once per window: React StrictMode double-invokes the mount
-    // effect that requests it, and Dashboard's `spawnBuildModel` re-sends
-    // `build-model-data` every time "Build Model" is clicked while the
-    // window is already open (re-pointing it, not just focusing it). If one
-    // of those re-hydration reads landed in the gap between a user's RC
-    // edit's `updateWorkspaceData` write starting and finishing, it would
-    // `applyFg` the stale pre-edit snapshot straight over the just-saved
-    // local state the instant the write actually completed -- reverting the
-    // on-screen value back to the old one, even though the edit itself had
-    // already landed correctly on disk. From the user's side this is
-    // indistinguishable from "the edit never saved at all," which is
-    // exactly what was reported ("regardless of how I close it, the value
-    // doesn't stay"). Confirmed with a real repro against `BuildModelWindow`
-    // (see that file's own test, same date) before this fix, which reliably
-    // showed the on-screen value revert.
+    // Re-hydration reads (StrictMode double mount, re-pointing Build Model) must not return pre-edit data mid-write.
     it('a `loadWorkspaceData` call started before an `updateWorkspaceData` write landed must not resolve with pre-write data (the fix: `loadWorkspaceData` now shares the same `enqueue` queue)', async () => {
         mockStoreGet.mockResolvedValue([
             { id: 'ws1', name: 'A', description: '', lastModified: 1, filePath: 'workspaces/ws1.json' },
@@ -1008,17 +960,11 @@ describe('updateWorkspaceData', () => {
         }));
         await vi.waitFor(() => expect(mockWriteTextFile).toHaveBeenCalledTimes(1));
 
-        // A re-hydration pass's own `loadWorkspaceData` call starts now,
-        // while the edit's write is still in flight (StrictMode's double
-        // mount, or a second "Build Model" click re-pointing the window).
+        // A re-hydration read starts while the edit's write is still in flight.
         mockReadTextFile.mockClear();
         const rehydratePromise = loadWorkspaceData('ws1');
 
-        // Pinned, not inferred from final state (same reasoning as the
-        // `updateWorkspaceData`-vs-`updateWorkspaceData` test above): the
-        // re-hydration's read must not even have STARTED yet while the edit's
-        // write is still pending. Before the fix this would already be true
-        // (readTextFile already called, holding the stale pre-edit content).
+        // The re-hydration read must not have started while the write is pending.
         for (let i = 0; i < 5; i++) await Promise.resolve();
         expect(mockReadTextFile).not.toHaveBeenCalled();
 
@@ -1163,10 +1109,7 @@ describe('updateWorkspaceData applies the Incomplete-immediately rule to every w
         expect(next!.failureGroupState!.models[0].status).toBe(true);
     });
 
-    // "Just score it": a scoring period is only
-    // start -> end. A workspace saved BEFORE that still has `label` / `eventTime` /
-    // `fromHighlight` on its periods: it must load, stay Complete, and never be sent back to
-    // "Mark complete again" just because those keys stop counting or get dropped by an edit.
+    // Old scoring periods carry label/eventTime/fromHighlight: they must load, stay Complete, and not trigger 'Mark complete again'.
     describe('a workspace saved before 2026-10-10 (scoring periods still carrying label / eventTime / fromHighlight)', () => {
         const OLD_TESTS = [
             { id: 'o1', start: '2024-01-01T00:00', end: '2024-01-31T23:59', label: 'normal' },
@@ -1265,9 +1208,7 @@ describe('deleteWorkspace', () => {
         expect(mockStoreSet).not.toHaveBeenCalled();
     });
 
-    // "Mark complete" writes model files into
-    // `{app_data}/workspaces/{id}/output`; deleting the workspace must remove
-    // that folder too, not only `{id}.json`.
+    // Deleting a workspace must also remove its `workspaces/{id}` output folder.
     describe('model output folder cleanup', () => {
         const entry = (id: string) => ({ id, name: 'A', description: '', lastModified: 1, filePath: `workspaces/${id}.json` });
 
@@ -1432,9 +1373,7 @@ describe('recent-project Failure Group fields (customer batch 2026-10, item 5)',
 
 });
 
-// The legacy `round($A, 2)` auto-conversion
-// on workspace open is persisted in ONE write (new text + model demotion), and
-// writes nothing at all when there was nothing to convert.
+// The legacy `round($A, 2)` conversion persists in ONE write (text + model demotion), and writes nothing when there is none.
 describe('saveLegacyFormulaConversion', () => {
     const conversions = [{ tag: 'A', from: 'round($RAW, 2)', to: 'round($RAW * 100) / 100' }];
 

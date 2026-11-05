@@ -71,7 +71,7 @@ describe('commitSetPoints', () => {
         const next = await commitSetPoints('ws1', 'i1', { kind: 'individual', lower: 0, upper: 99 });
         const m = next!.failureGroupState!.models[0];
         expect(m).toMatchObject({ status: false, healthSetPoints: { lower: 0, upper: 99 }, lastTrainedAt: '2026-10-03T00:00:00Z', healthExport: record });
-        // commitSetPoints itself drops the verdict of the OLD numbers (unchanged behaviour)
+        // commitSetPoints itself drops the verdict of the old numbers
         expect(m.healthVerdict).toBeUndefined();
         // the broadcast carries the demoted model
         expect(mockEmit.mock.calls[0][1].models[0].status).toBe(false);
@@ -203,9 +203,6 @@ describe('persistModelComplete', () => {
     });
 });
 
-// ---------------------------------------------------------------------------
-// The real Mark complete flow: validate (no files), then ONE write
-// ---------------------------------------------------------------------------
 
 describe('Mark complete = checkModelForComplete + persistModelComplete (no files)', () => {
     const HEADERS = ['T', 'SPEED'];
@@ -227,9 +224,6 @@ describe('Mark complete = checkModelForComplete + persistModelComplete (no files
     });
 });
 
-// ---------------------------------------------------------------------------
-// Races of a long export, and the persisted verdict
-// ---------------------------------------------------------------------------
 
 describe('persistModelComplete - changes made while the export ran (QA 2026-10-04)', () => {
     const saved: HealthSetPoints = { kind: 'individual', lower: 20, upper: 80 };

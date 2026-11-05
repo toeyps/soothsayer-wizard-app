@@ -1,91 +1,4 @@
-/**
- * A fake Rust backend for the health-score integration tests.
- *
- * It is a small, faithful TypeScript port of the REAL Rust contract — written
- * from `src-tauri/src/{health_score,health_preview,model_export,lib}.rs` and the
- * Rust doc comments, NOT from the app's own TypeScript — so a frontend that
- * assumes something Rust does not do shows up as a wrong number / wrong error:
- *
- *  - Session: `load_csv` (via `loadDataset`) starts a NEW session: generation
- *    bumped, the Relationship fit cache (`rel_cache`) cleared.
- *  - `check_expected_generation`: a pinned `expected_generation` that is not the
- *    session's -> `STALE_SESSION: the dataset changed since this window was opened`.
- *  - Training scope = `PreviewFilter` / `ResolvedFilter`: `timestamp_ranges`
- *    (inclusive, ANY period), `value_filters` on EXACT header match (unknown
- *    sensors dropped silently), AND by default, OR when `combine === 'or'`.
- *  - `compute_sensor_stats` (`sensor`, `filter`): mean / sample SD / ±1σ / ±3σ.
- *  - `compute_clustering_preview` (`rename_all = snake_case`): GMM(1) ellipse per
- *    criteria range (half-open `[min, max)`), biased covariance, SVD major axis.
- *  - `preview_relationship_model` (`rename_all = snake_case`; NO generation
- *    parameter): a least-squares stand-in for the sidecar (cumulative steps ->
- *    `r2_per_step`, `rmse2_per_step`, `predicted`, `residual`) plus
- *    `predictor_raw`/`target_raw`; with `cache_key` the full fit is cached and
- *    `cache_key`, `cached`, `health_preview` are added.
- *  - `compute_health_preview` (`request`): Individual / Clustering compute from
- *    the session; Relationship reads ONLY the cache (`NOT_FITTED` without a
- *    `cache_key`, for an unknown key, or when target/predictors differ from the
- *    cached fit); `BAD_REQUEST` for a missing sensor / field / unknown kind;
- *    `NO_DATA` for an empty scope. Validation = a port of `validate_individual`,
- *    `validate_relationship`, `validate_clustering` (codes, fields, messages —
- *    a set point the user typed is echoed EXACTLY, `fmt_typed`; only values Rust
- *    computed keep the INFO-file rounding, `fmt_num`);
- *    score = the piecewise-linear knots.
- *  - The health score is computed on 1-HOUR AVERAGES (`health_hourly.rs`,
- *    ported as `groupHours` / `hourLabel`): hour = clock hour of the row's
- *    timestamp (floor), the point's timestamp = the hour's START
- *    (`2024-01-05T13:00:00`); only rows that pass the running condition enter a
- *    mean, an hour with no such row has NO point, a row without a timestamp is
- *    in no hour, the file's row order does not matter, a one-row hour is that
- *    row. Every preview therefore answers with
- *      `series` — the RAW rows (Model fit), `score: null`, always;
- *      `hourly` — one point per clock hour (same shape), scored once the set
- *                 points are valid, `null` where an hour has no score (never 0);
- *      `scoring_interval_secs: 3600`;
- *      `score_summary` — over the TRAINING hours, counts hours,
- *                 `share_basis: 'hour_count'`, minimum located by hour start.
- *    Individual = the score of the hour's mean value. Clustering = the cluster
- *    shared by EVERY row of the hour (each row's own cluster, from its own
- *    criteria value), then the score of (mean x, mean y) against it; an hour
- *    whose rows do not all share one cluster — two clusters, or a row with no
- *    cluster among them — has `cluster` / `sd_distance` / `score` null (never
- *    0), is still an hourly point and still counts in `hours` (`sharedPerHour`;
- *    user decision 2026-10-11 — it used to be the cluster of the hour's MEAN
- *    criteria value).
- *    Relation model = residual of (mean target, the model's answer for the
- *    hour's MEAN predictors) — the least-squares stand-in predicts it here, the
- *    way the real engine is asked for the hourly rows. Statistics, band,
- *    ellipses, 2RMSE, histogram and both scatters still come from the RAW
- *    training rows.
- *  - `count_period_rows` (`periods`, `filter`, `expected_generation`;
- *    `rename_all = snake_case`): a port of `period_counts.rs` — per period the
- *    rows inside it (bounds inclusive, blank / null = open) and how many pass
- *    the running condition (`filter.value_filters` + `combine` ONLY: the
- *    filter's own time fields are ignored), `running_days` = rows x the median
- *    sample interval (one decimal), `union` over the valid periods with a row
- *    counted once. An uncountable period is `valid: false` + zeroes, never an
- *    error. `STALE_SESSION` (checked first), `BAD_REQUEST` above 64 periods.
- *  - Tauri arg-key casing: an unexpected or missing top-level key rejects.
- *  - Scoring periods (`test_periods`, on the request of `compute_health_preview`
- *    and as an argument of `preview_relationship_model`):
- *    each item is `{ start, end }`. ONE deliberate difference from real Rust:
- *    Rust still ACCEPTS and ignores a legacy `label` / `event_time`, but the
- *    frontend must not send them, so
- *    this fake REJECTS any other key — a caller that still sends one fails its
- *    test instead of passing unnoticed.
- *  - `test_validation` (`health_validation.rs`, `build_hourly`) is computed
- *    whenever `compute_health_preview` carries `test_periods`: the scoring rows
- *    of a period = rows inside it that have the kind's inputs and pass the
- *    running condition's VALUE conditions (the training time periods do not
- *    apply). `rows` / `days` / `train_rows` / `train_days` / `train.rows` /
- *    `train.days` stay RAW (days = rows x the median sample interval); `hours`,
- *    `train_hours`, `train.hours`, `scored`, `pct_below_80` count 1-hour points;
- *    `lowest` = the lowest hourly score (whole number), `lowest_at` = that
- *    hour's start; a period's kind metrics are over its hourly points, the train
- *    block's are the raw training rows'. An invalid period adds a `test_*` issue
- *    (never part of `valid`) and comes back with zeroes.
- *    (A UI test that only needs a canned block can still use
- *    `helpers/validationFixture.ts`.)
- */
+/** TypeScript port of the real health contract; unlike real Rust, it rejects `test_periods` keys other than `start`/`end`. */
 
 export interface HealthDataset {
     /** headers[0] is the timestamp column. */
@@ -105,9 +18,6 @@ interface Gate { cmd: string; pred: Pred; release: () => void; promise: Promise<
 export const STALE_SESSION_ERROR = 'STALE_SESSION: the dataset changed since this window was opened';
 export const APP_DATA = 'C:/Users/qa/AppData/Roaming/com.wizard.app';
 
-// ---------------------------------------------------------------------------
-// round_metric (metrics.rs)
-// ---------------------------------------------------------------------------
 
 function metricDecimals(x: number): number {
     if (x === 0 || !Number.isFinite(x)) return 3;
@@ -123,15 +33,9 @@ function roundTo(x: number, d: number): number {
 export const roundMetric = (x: number) => roundTo(x, metricDecimals(x));
 export const roundMetricScaled = (x: number, scale: number) =>
     roundTo(x, Math.max(metricDecimals(x), scale === 0 || !Number.isFinite(scale) ? 3 : metricDecimals(scale)));
-/** Rust's `fmt_num`: a value Rust COMPUTED (SD, 2RMSE, a band edge) — rounded like the
- *  INFO files. Never for a set point the user typed (`fmtTyped`). */
+/** Rust's `fmt_num` for computed values (SD, 2RMSE, band edge); a typed set point uses `fmtTyped`. */
 const fmtNum = (x: number) => (Number.isFinite(x) ? String(roundMetric(x)) : String(x));
-/**
- * Rust's `fmt_typed` (`format!("{}", x + 0.0)`): a set point the USER supplied, echoed
- * exactly — the shortest text that reads back as the same number ("-2", "4.6", "0.05",
- * "4.61234"), never padded, never rounded, "-0" printed as "0". Rust's `{}` never uses
- * an exponent, so 1e-7 is "0.0000001" and 2.5e21 is "2500000000000000000000".
- */
+/** Rust's `fmt_typed`: echoes a user-typed set point exactly (shortest round-trip text, "-0" as "0", never an exponent). */
 export function fmtTyped(x: number): string {
     if (!Number.isFinite(x)) return Number.isNaN(x) ? 'NaN' : x > 0 ? 'inf' : '-inf';
     const s = String(x + 0); // -0 + 0 === 0
@@ -145,9 +49,6 @@ export function fmtTyped(x: number): string {
     return pad >= 0 ? `${sign}${digits}${'0'.repeat(pad)}` : `${sign}${digits.slice(0, 1 + exp)}.${digits.slice(1 + exp)}`;
 }
 
-// ---------------------------------------------------------------------------
-// Validation (health_score.rs) — codes / fields / messages as Rust writes them
-// ---------------------------------------------------------------------------
 
 export interface Issue { code: string; severity: 'error' | 'warning'; message: string; field: string }
 const issue = (code: string, field: string, message: string): Issue => ({ code, severity: 'error', message, field });
@@ -164,8 +65,7 @@ const optNum = (v: unknown): number | null => {
     if (typeof v !== 'number') throw `invalid type: expected f64, got ${typeof v}`;
     return v;
 };
-/** Mirror of Rust's `relationship_sample_indices`: every row when `n <= max`, else an even
- *  stride over `max - 4` rows plus the rows of the min / max of `y` and of `predicted`. */
+/** Mirrors Rust's `relationship_sample_indices`: every row if `n <= max`, else a stride over `max - 4` rows plus min/max rows. */
 export function relationshipSampleIndices(n: number, maxPoints: number, y: number[], predicted: number[]): number[] {
     const max = Math.max(1, maxPoints);
     if (n <= max) return Array.from({ length: n }, (_, i) => i);
@@ -300,9 +200,6 @@ export function validateClustering(clusters: ClusterGeom[], sp: SetPointsArg): I
     return out;
 }
 
-// ---------------------------------------------------------------------------
-// Scores (health_score.rs)
-// ---------------------------------------------------------------------------
 
 const lerp = (x: number, x0: number, y0: number, x1: number, y1: number) => (x1 <= x0 ? y1 : y0 + (y1 - y0) * (x - x0) / (x1 - x0));
 const clamp = (s: number) => Math.min(100, Math.max(0, s));
@@ -338,9 +235,6 @@ export function scoreClusterDistance(d: number, N: number): number | null {
     return clamp(s);
 }
 
-// ---------------------------------------------------------------------------
-// Hourly grouping (health_hourly.rs) — what the health score is computed on
-// ---------------------------------------------------------------------------
 
 const HOUR_MS = 3_600_000;
 
@@ -350,15 +244,13 @@ export const SCORING_INTERVAL_SECS = 3600;
 /** `health_hourly::SCORING_AGGREGATION` (one point per clock hour = the mean of its running rows). */
 export const SCORING_AGGREGATION = 'mean';
 
-/** `chart_query::hour_label`: the START of clock hour `hour` (hours since the
- *  epoch), e.g. `2024-01-05T13:00:00`. */
+/** `chart_query::hour_label`: start of clock hour `hour` (hours since epoch), e.g. `2024-01-05T13:00:00`. */
 export function hourLabel(hour: number): string {
     const d = new Date(hour * HOUR_MS);
     return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 19) : '';
 }
 
-/** `health_hourly::HourGroups`. Positions index the `rows` given to
- *  `groupHours`; hour indexes (`0..len`) index every per-hour array. */
+/** `health_hourly::HourGroups`: positions index the `rows` given to `groupHours`; hour indexes index every per-hour array. */
 export interface HourGroups {
     /** Number of hourly points. */
     len: number;
@@ -381,12 +273,7 @@ export interface HourGroups {
     members(positions: Iterable<number>): number[];
 }
 
-/**
- * `HourGroups::build`: group the universe `rows` (dataset row numbers; `tsMs`
- * is indexed by them, `null` = the row has no timestamp) by CLOCK HOUR.
- * `keep(position)` = does this row take part at all. The dataset is NOT assumed
- * to be in time order; the points come out in ascending time.
- */
+/** `HourGroups::build`: groups `rows` by clock hour; `keep(position)` excludes a row; output ascends in time. */
 export function groupHours(tsMs: (number | null)[], rows: number[], keep: (pos: number) => boolean = () => true): HourGroups {
     const keys: (number | null)[] = rows.map((r, i) => {
         const t = tsMs[r];
@@ -435,16 +322,7 @@ export function groupHours(tsMs: (number | null)[], rows: number[], keep: (pos: 
     };
 }
 
-/**
- * The value EVERY row of an hour shares, per hour: `valueAt[position]` is one
- * entry per universe position (`null` = the row has none). An hour whose rows
- * do not all carry the same non-null value answers `null` — two different
- * values, or a `null` row mixed in with the others. A row that is in no hour
- * (no timestamp) is not looked at.
- *
- * This is the Clustering rule for the cluster of an hourly point (user
- * decision 2026-10-11): the cluster shared by every row of the hour, else none.
- */
+/** Per hour, the value every row shares; `null` if rows differ or one has none. Rows with no timestamp are ignored. */
 export function sharedPerHour<T>(groups: HourGroups, valueAt: (T | null)[]): (T | null)[] {
     const seen = new Array<boolean>(groups.len).fill(false);
     const out = new Array<T | null>(groups.len).fill(null);
@@ -465,14 +343,11 @@ const r3dp = (x: number) => roundTo(x, 3) + 0;
 const sharePct = (hits: number, total: number): number | undefined => (total > 0 ? r1(hits * 100 / total) : undefined);
 /** A score for the wire: `NaN` (no score) -> `null`, never 0. */
 const opt = (v: number): number | null => (Number.isNaN(v) ? null : v);
-/** `file_residual`: the residual as `REL_DATASET_*.csv` stores it. */
+/** `file_residual`: the residual with the sidecar's rounding. */
 export const fileResidual = (actual: number, predicted: number): number =>
     (Number.isFinite(actual) && Number.isFinite(predicted) ? roundMetric(actual - roundMetric(predicted)) : NaN);
 
-/** `summarize_hours` over the TRAINING hours (`hourly_summary`): `scores` is one
- *  entry per hourly point (`NaN` = no score); a point that is not a training
- *  hour is left out. Counts HOURS; the minimum is located by its hour start and
- *  the hour's first dataset row. */
+/** `summarize_hours` over training hours: NaN = no score, non-training hours skipped; minimum keyed by hour start and its first row. */
 function hourlySummary(scores: number[], isTrain: boolean[], groups: HourGroups) {
     const masked = scores.map((s, h) => (isTrain[h] ? s : NaN));
     return summarize(masked, isTrain.filter(Boolean).length, h => ({ row: groups.firstRows[h], timestamp: groups.label(h) }));
@@ -512,9 +387,6 @@ function selectIdx(n: number, max: number): number[] {
     return [...out].sort((a, b) => a - b);
 }
 
-// ---------------------------------------------------------------------------
-// The backend
-// ---------------------------------------------------------------------------
 
 /** Allowed top-level argument keys, as Tauri v2 deserializes them. */
 const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = {
@@ -550,19 +422,11 @@ export interface FakeHealthRustOptions {
     datasets: Record<string, HealthDataset>;
     /** Dataset loaded at start (the first key when omitted). */
     initial?: string;
-    /** Shared file map (the test's plugin-fs). Nothing writes into it since
-     *  Mark complete stopped writing files (2026-10-20); kept so a test can share it. */
+    /** Shared file map (the test's plugin-fs). */
     files?: Map<string, string>;
 }
 
-/**
- * `csv_processor::parse_timestamp` (what `ts_parsed` holds), in milliseconds.
- * A stamp with a UTC offset (`2026-02-09T23:50:00+07:00`, seconds required)
- * keeps ITS OWN wall clock — Rust takes `naive_local()`, the offset is dropped,
- * never applied. A `Z` suffix is NOT a format Rust parses (`%:z` does not
- * accept it): such a row has no timestamp, so it passes no time period and —
- * since the health score is computed per clock hour — belongs to no hour.
- */
+/** `csv_processor::parse_timestamp` in ms. A UTC offset is dropped (wall clock kept); a `Z` suffix is not parsed, so that row belongs to no hour. */
 const tsMicros = (s: string | null | undefined): number | null => {
     if (!s) return null;
     const zoned = /^(.*[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?)[+\-−]\d{2}:\d{2}$/.exec(s.trim());
@@ -659,13 +523,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
     const daysOf = (rows: number, intervalSecs: number | null) => (intervalSecs === null ? 0 : r1(rows * intervalSecs / 86_400));
     const blankToNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
-    /**
-     * `TestPlan::resolve` (+ `collect_rows`): the scoring periods of a request,
-     * `null` when it carries none. A period's rows = rows inside it that pass
-     * the running condition's VALUE conditions (+ AND/OR) of the training scope
-     * `base`; the training TIME periods do not apply. An invalid period gets an
-     * issue (codes as in Rust) and no rows.
-     */
+    /** `TestPlan::resolve`: the request's scoring periods, `null` if none. Rows pass the training value conditions (+ AND/OR), not the training time periods. An invalid period gets an issue and no rows. */
     const testPlan = (periods: unknown, base: any) => {
         if (!Array.isArray(periods) || periods.length === 0) return null;
         const issues: Issue[] = [];
@@ -713,12 +571,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         });
     };
 
-    /**
-     * `build_hourly`: the whole `test_validation` block from HOURLY points.
-     * `scores` = one per hour (`NaN` = no score), `null` while the set points
-     * are invalid. `trainRows` / `trainMetrics` = the kind's RAW train summary;
-     * `metricsFor(hours)` = the kind's metrics over a period's hourly points.
-     */
+    /** `build_hourly`: the `test_validation` block from hourly points; `scores` is `NaN` per hour with no score, `null` while set points are invalid. `metricsFor(hours)` = kind metrics over a period's hours. */
     const buildHourly = (
         plan: TestPlan,
         periods: PeriodHours[],
@@ -962,8 +815,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             return c;
         });
 
-        // ---- universe: the fitted (training) rows, plus the rows of the scoring periods ----
-        // A scoring row needs the target and every predictor (`rel_test_rows`).
+        // Universe: fitted rows plus scoring-period rows; a scoring row needs the target and every predictor (`rel_test_rows`).
         const plan = testPlan(req.test_periods, req.filter);
         const testRows = plan ? plan.collectRows(r => Number.isFinite(tcol[r]) && pcols.every(c => Number.isFinite(c[r]))) : [];
         const fitRows = new Set(fit.rows);
@@ -975,10 +827,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const valid = validation.length === 0;
         if (plan) validation.push(...plan.issues);
 
-        // ---- hourly points: what the health score is computed on ----
-        // Mean target and mean of each predictor over the hour's universe rows; the
-        // prediction is the model's answer for those MEAN predictors (never the mean of
-        // per-row predictions); residual as the file stores it.
+        // Hourly prediction is the model's answer for the MEAN predictors, not the mean of per-row predictions.
         const groups = groupHours(tsParsed(), urows);
         const hActual = groups.mean(i => tcol[urows[i]]);
         const hX = pcols.map(c => groups.mean(i => c[urows[i]]));
@@ -1063,8 +912,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const plan = testPlan(req.test_periods, req.filter);
         const testRows = plan ? plan.collectRows(r => Number.isFinite(c[r])) : [];
         const inTest = new Set(testRows.flat());
-        // Row universe (ascending dataset rows): the training rows and, with scoring
-        // periods, their rows too (scored with the train-only model).
+        // Row universe: training rows plus scoring-period rows (scored with the train-only model).
         const rows: number[] = [];
         for (let r = 0; r < nRows(); r++) if (Number.isFinite(c[r]) && (f.noop || inTest.has(r) || f.keeps(r))) rows.push(r);
         const isTrain = rows.map(r => f.noop || f.keeps(r));
@@ -1079,9 +927,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const valid = validation.length === 0;
         if (plan) validation.push(...plan.issues);
 
-        // ---- hourly points: what the health score is computed on ----
-        // Every universe row is in scope here (training rows + scoring-period rows): the
-        // value of a point is the MEAN of the hour's rows, its score the score of that mean.
+        // Hourly points: a point's value is the mean of the hour's rows; its score is the score of that mean.
         const groups = groupHours(tsParsed(), rows);
         const hValue = groups.mean(i => values[i]);
         const hTrain = groups.any(i => isTrain[i]);
@@ -1194,8 +1040,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         for (let r = 0; r < nRows(); r++) if (Number.isFinite(c1[r]) && Number.isFinite(c2[r]) && (f.noop || inTest.has(r) || f.keeps(r))) rows.push(r);
         if (!rows.length) throw 'NO_DATA: No rows remain after dropping nulls.';
         const isTrain = rows.map(r => f.noop || f.keeps(r));
-        /** `assign_cluster`: `(lo, hi]`, first match; with 2+ ranges the lowest range has no
-         *  lower bound and the highest no upper bound (outer edges open); `null` = none. */
+        /** `assign_cluster`: `(lo, hi]`, first match; with 2+ ranges the lowest has no lower bound and the highest no upper bound; `null` = none. */
         const lowKey = (lo: number | null) => (lo === null ? -Infinity : lo);
         const lowest = ranges.length >= 2 ? ranges.reduce((b, r, i) => (lowKey(r[0]) < lowKey(ranges[b][0]) ? i : b), 0) : -1;
         const highest = ranges.length >= 2 ? ranges.reduce((b, r, i) => (lowKey(r[0]) > lowKey(ranges[b][0]) ? i : b), 0) : -1;
@@ -1214,15 +1059,8 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const valid = validation.length === 0;
         if (plan) validation.push(...plan.issues);
 
-        // ---- hourly points: what the health score is computed on ----
-        // Means of X and Y per hour, over EVERY row of the hour. The hour's cluster is the
-        // cluster shared by every one of those rows (each row's own cluster, from its own
-        // criteria value — `assign`). Rows that do not all agree — two different clusters,
-        // or a row with no cluster (criteria outside every range, or missing) among them —
-        // leave the hour with NO cluster: no SD distance and no score (null, never 0).
-        // The hour is still a point (mean x, mean y) and still counts in `hours`. It is
-        // never judged by the MEAN criteria value: an hour split between ranges A and C
-        // would average into B and be scored against a cluster the machine was never in.
+        // Hourly points: X/Y means over the hour's rows. Cluster = the one every row shares, else null (no SD distance or score) but still counted in `hours`.
+        // Never average the criteria value: an hour split between A and C would land in B.
         const groups = groupHours(tsParsed(), rows);
         const hX = groups.mean(i => c1[rows[i]]);
         const hY = groups.mean(i => c2[rows[i]]);
@@ -1244,8 +1082,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         const trainPos = rows.flatMap((_, i) => (isTrain[i] ? [i] : []));
         const sc = selectIdx(trainPos.length, req.max_scatter_points ?? 8000).map(k => trainPos[k]);
 
-        // Distance to the assigned cluster's centre in SD units, from the TRAIN-fitted
-        // clusters (independent of the set points; a collapsed cluster has none).
+        // SD distance to the assigned cluster's centre from the TRAIN-fitted clusters; a collapsed cluster has none.
         const distOf = (k: number | null, x: number, y: number): number | null => {
             if (k === null) return null;
             const g = geoms[k];
@@ -1258,8 +1095,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             return sharePct(ok.filter(d => d <= 3).length, ok.length);
         };
         const ring = (ds: (number | null)[]) => metrics({ inside_3sd_ring_pct: ringPct(ds) });
-        // The RAW training rows against their own clusters — in the stats with or without
-        // scoring periods, and the train block's metric when there are some.
+        // Raw training rows against their own clusters; used in the stats and for the train block's metric.
         const trainDists = rows.flatMap((r, i) => (isTrain[i] ? [distOf(assign[i], c1[r], c2[r])] : []));
         const test_validation = plan
             ? buildHourly(
@@ -1323,8 +1159,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         if (expected !== generation) throw STALE_SESSION_ERROR;
     };
 
-    /** Where the old Mark complete wrote a workspace's files — only for seeding
-     *  legacy `healthExport` records in tests (nothing writes there now). */
+    /** Output folder path of a workspace; only used to seed `healthExport` records in tests. */
     const outputDirAbs = (ws: string) => `${APP_DATA}/workspaces/${ws}/output`;
     const fitRelationship = (predictors: string[], target: string, lambda: number, filter: any) => {
         if (!predictors?.length) throw 'At least one predictor is required.';
@@ -1352,15 +1187,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         return { X, y, rows, predicted: last, r2_per_step: r2s, rmse2_per_step: rm2, lambda, beta: olsBeta(X, y) };
     };
 
-    /**
-     * `period_counts::count` (the Running-condition modal's per-period counts):
-     * ONE pass over the rows for all periods together; bounds inclusive, blank /
-     * null = open; a row without a parseable timestamp is in no period; only the
-     * filter's `value_filters` + `combine` are read (its own time fields are
-     * ignored); an uncountable period is answered `valid: false` with zeroes and
-     * left out of `union`; `union` counts a row inside two periods once;
-     * `running_days` = rows x the median sample interval, one decimal.
-     */
+    /** `period_counts::count`: one pass; bounds inclusive, blank/null = open; a row with no timestamp is in no period; only `value_filters` + `combine` are read. Invalid period: `valid: false`, zeroes, not in `union` (a row counts once); `running_days` = rows x median interval, one decimal. */
     const countPeriodRows = (a: Args) => {
         const periods: any[] = Array.isArray(a.periods) ? a.periods : [];
         if (periods.length > MAX_COUNT_PERIODS) {
@@ -1439,8 +1266,8 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
             case 'preview_relationship_model': {
                 const startedIn = generation;
                 const fit = fitRelationship(a.predictors, a.target, a.lambda, a.filter);
-                // Mirrors Rust's `shape_relationship_arrays`: with `max_points` the arrays are ONE
-                // aligned strided sample (extremes kept) and `residual` is dropped; always `n_rows`.
+                // Mirrors `shape_relationship_arrays`: with `max_points` the arrays are one aligned strided sample (extremes kept), no `residual`;
+                // `n_rows` is always sent.
                 const bounded = typeof a.max_points === 'number';
                 const sel = bounded ? relationshipSampleIndices(fit.y.length, a.max_points, fit.y, fit.predicted) : null;
                 const pick = <T,>(v: T[]): T[] => (sel ? sel.map(i => v[i]) : v);
@@ -1508,9 +1335,7 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
         if (list === undefined || list === null) return;
         if (!Array.isArray(list)) throw `invalid args for command ${cmd}: test_periods must be a list`;
         list.forEach((item: unknown, i: number) => {
-            // Real Rust: `Vec<TestPeriodArg>` - serde refuses a list item that is not a struct
-            // ("invalid type: null, expected struct TestPeriodArg"), so the whole invoke rejects.
-            // A `null` / string / number / nested list item must fail here too, not pass as "no extra keys".
+            // Real Rust (serde) rejects a non-struct `test_periods` item, so the fake must too rather than pass it as 'no extra keys'.
             if (item === null || typeof item !== 'object' || Array.isArray(item)) {
                 const got = item === null ? 'null' : Array.isArray(item) ? 'a list' : `a ${typeof item}`;
                 throw `invalid args for command ${cmd}: test_periods[${i}] is ${got} — a scoring period is sent as { start, end }`;
@@ -1600,11 +1425,8 @@ export function createFakeHealthRust(opts: FakeHealthRustOptions) {
 
 export type FakeHealthRust = ReturnType<typeof createFakeHealthRust>;
 
-// ---------------------------------------------------------------------------
-// Datasets used by the integration tests
-// ---------------------------------------------------------------------------
 
-/** `n` hourly timestamps from 2026-01-01 00:00:00. */
+/** `n` hourly timestamps from 2026-01-`startDay` 00:00:00. */
 export function hourly(n: number, startDay = 1): string[] {
     return Array.from({ length: n }, (_, i) => {
         const d = new Date(Date.UTC(2026, 0, startDay, 0, 0, 0) + i * 3600_000);
@@ -1613,13 +1435,7 @@ export function hourly(n: number, startDay = 1): string[] {
     });
 }
 
-/**
- * The default plant: 60 hourly rows.
- *  - TAG1 "Pump Pressure" (bar): ~50 with a deterministic wobble — the Individual / Relationship target.
- *  - TAG2 "Pump Speed": 0..59 ramp — the running condition sensor (TAG2 > 10 keeps 49 rows).
- *  - TAG3 "Flow": a predictor, TAG1 ≈ 30 + 0.4·TAG3 + noise.
- *  - TAG4 "Mode": the clustering criteria (0..99 in steps), TAG5 "Temp" the clustering Y.
- */
+/** Default plant, 60 hourly rows: TAG1 pressure (target), TAG2 0..59 ramp (running condition; TAG2 > 10 keeps 49 rows), TAG3 flow predictor (TAG1 ≈ 30 + 0.4·TAG3 + noise), TAG4 clustering criteria, TAG5 clustering Y. */
 export function plantDataset(n = 60): HealthDataset {
     const noise = (i: number) => (((i * 37) % 11) - 5) / 5; // -1..1
     const tag3 = Array.from({ length: n }, (_, i) => 40 + ((i * 7) % 23));

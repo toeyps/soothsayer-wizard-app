@@ -1,13 +1,6 @@
 import { CsvRecord, SensorMetadata, ScatterAxisPins, TimeHighlight, ValueHighlight, LineTaggedPoint } from '../../types';
 
-/** Pair Plot renders one regl-scatterplot WebGL context per scatter cell
- *  AND per time-series cell — n(n-1)/2 + n contexts for n sensors. Chromium
- *  (WebView2 included) starts silently evicting the oldest context past
- *  ~16 simultaneous contexts (a cell then shows its "Rendering paused" overlay
- *  with Retry). 4 sensors = 10 contexts, comfortably
- *  under that ceiling; 5 would already be 15. Single source of truth for
- *  both Dashboard.tsx's tab-enabling logic and PairPlotChart.tsx's own
- *  defensive render guard. */
+/** Pair Plot makes one WebGL context per scatter cell AND per time-series cell: n(n-1)/2 + n for n sensors. Chromium (WebView2) evicts the oldest past ~16 (cell shows "Rendering paused" with Retry): 4 sensors = 10, 5 would be 15. Single source for Dashboard's tab-enabling and PairPlotChart's render guard. */
 export const MAX_PAIR_PLOT_SENSORS = 4;
 
 export interface ChartMarkLine {
@@ -25,12 +18,7 @@ export interface ChartMarkLine {
     width?: number;
 }
 
-/**
- * Columnar line-chart feed: one shared x-axis plus one value array per
- * header. Produced by the Rust `get_chart_data` command; already bounded
- * and in ECharts' native shape, so the chart consumes it with zero
- * per-row object allocation.
- */
+/** Columnar line-chart feed from Rust `get_chart_data`: one shared x-axis plus one array per header, no per-row objects. */
 export interface ColumnarSeries {
     timestamps: string[];
     /** `series[i]` aligns with `headers[i]`; null = missing. */
@@ -39,10 +27,7 @@ export interface ColumnarSeries {
 
 export interface ChartProps {
     data: CsvRecord[];
-    /**
-     * Preferred data source for the line chart when provided — `data` is
-     * then ignored by LineChart. Scatter / pair plots ignore this field.
-     */
+    /** Preferred data source for the line chart when given: `data` is then ignored by LineChart. Scatter/pair plots ignore it. */
     columnar?: ColumnarSeries;
     sensors: string[];
     headers: string[];
@@ -53,10 +38,7 @@ export interface ChartProps {
     /** Per-sensor line/axis color override (any CSS color). Sensors absent
      *  from this map fall back to the default palette. */
     sensorColors?: Record<string, string>;
-    /** Per-sensor fixed Y-axis bounds. `min`/`max` are independent — either
-     *  may be omitted to keep that side auto-fitting (`scale: true`) while
-     *  the other stays pinned so the axis doesn't jump around as the
-     *  visible time range changes. */
+    /** Per-sensor fixed Y bounds; `min`/`max` are independent: an omitted side keeps auto-fitting (`scale: true`). */
     sensorAxisRange?: Record<string, { min?: number; max?: number }>;
     /** Scatter chart's persisted X-axis sensor (Dashboard-owned). Ignored
      *  by Line/Pair Plot. */
@@ -66,43 +48,24 @@ export interface ChartProps {
     /** Fired whenever the Scatter chart's X/Y selection settles on a
      *  value, so the parent can persist it. */
     onScatterAxesChange?: (x: string, y: string) => void;
-    /** Scatter chart's persisted axis-scale pins (Dashboard-owned) — the
-     *  ruler-icon editor's min/max, independent of `scatterX`/`scatterY`
-     *  above. Ignored by Line/Pair Plot. */
+    /** Scatter's persisted axis-scale pins (Dashboard-owned): the ruler editor's min/max. Ignored by Line/Pair Plot. */
     scatterAxisPins?: ScatterAxisPins;
     /** Fired whenever the Scatter chart's axis pins change (apply/clear),
      *  so the parent can persist them. */
     onScatterAxisPinsChange?: (pins: ScatterAxisPins) => void;
-    /** Sensor master data (description/unit/component), including
-     *  runtime-created "special" sensors merged in by Dashboard.tsx. Used
-     *  by LineChart's hover tooltip to append each sensor's unit next to
-     *  its value. */
+    /** Sensor master data incl. special sensors merged in by Dashboard; LineChart's tooltip appends each unit. */
     sensorMetadata?: SensorMetadata[] | null;
-    /** Time windows to highlight (Dashboard-owned, edited from the
-     *  Highlights tab's "By time" group). Line renders a tinted band per
-     *  entry; Scatter rings matching points. Ignored by Pair Plot on
-     *  purpose — its lasso-cluster gesture already covers "mark points I
-     *  care about", and layering a second, differently-scoped highlighting
-     *  mechanism on top read as more confusing than useful. */
+    /** Time windows to highlight (Highlights tab "By time"): Line draws a tinted band, Scatter rings matching points. Ignored by Pair Plot. */
     timeHighlights?: TimeHighlight[];
-    /** Line chart's persisted tagged points (Dashboard-owned) — see
-     *  `LineTaggedPoint`. Ignored by Scatter/Pair Plot; Scatter has its own
-     *  tag-point interaction but keeps it as local, non-persisted state
-     *  (see `LineTaggedPoint`'s docstring for why). */
+    /** Line chart's persisted tagged points (Dashboard-owned). Ignored by Pair Plot; Scatter keeps its own local tags. */
     lineTaggedPoints?: LineTaggedPoint[];
     /** Fired whenever the Line chart's tagged points change (add/remove/
      *  clear), so the parent can persist them. */
     onLineTaggedPointsChange?: (points: LineTaggedPoint[]) => void;
-    /** Where the Line / Scatter chart renders the table of its tagged points' values: the
-     *  element of the Dashboard's "Tagged points" tab, or `null` while that tab is not open
-     *  (nothing is drawn). Leave it out (`undefined`) and the table docks under the chart. */
+    /** Where the Line/Scatter chart renders the tagged-points table: the "Tagged points" tab element, or null while that tab is closed (nothing drawn). `undefined` docks it under the chart. */
     tagTableHost?: HTMLElement | null;
-    /** How many points are tagged on the chart right now; `added` is true when the user has
-     *  just tagged one more (not on mount, and not when one is removed). */
+    /** How many points are tagged now; `added` is true when the user just tagged one more (not on mount or removal). */
     onTagCountChange?: (count: number, added: boolean) => void;
-    /** "By value" highlighting (Dashboard-owned, edited from the Highlights
-     *  tab's "By value" group) — colours Scatter points by where a 3rd
-     *  sensor's value falls among user-defined ranges. Scatter-only;
-     *  ignored by Line/Pair Plot. See `ValueHighlight`. */
+    /** "By value" highlighting (Dashboard-owned, Highlights tab): colours Scatter points by which range a 3rd sensor's value falls in. Scatter-only. */
     valueHighlight?: ValueHighlight;
 }

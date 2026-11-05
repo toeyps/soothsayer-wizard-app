@@ -1,23 +1,8 @@
-//! Tests for the Hybrid Rust/Python predictive-model code.
-//!
-//! These tests cover what is testable in pure Rust without spinning up a
-//! Tauri app instance or running the actual Nuitka-compiled sidecar:
-//!
-//!   1. `clustering::fit_single_cluster_ellipse` end-to-end via the public
-//!      module surface (parity check on a hand-prepared 2D Gaussian).
-//!   2. JSON-contract shape verification for the sidecar response
-//!      (`preview_relationship`). The harness
-//!      simulates a sidecar response payload and checks that the field
-//!      names + types match the wizard contract.
-//!   3. JSON field names of the public ellipse fit (catches accidental renames).
+//! Predictive-model tests needing no Tauri app or sidecar: ellipse fit, sidecar JSON contract (`preview_relationship`), ellipse field names.
 
 use serde::{Deserialize, Serialize};
 use tauri_app_lib::clustering;
 
-// ────────────────────────────────────────────────────────────────────────
-// 1. clustering — public-API smoke test (mirrors the in-module unit tests
-//    but goes through the `tauri_app_lib::clustering` re-export).
-// ────────────────────────────────────────────────────────────────────────
 
 #[test]
 fn ellipse_fit_axis_aligned_via_public_api() {
@@ -43,13 +28,7 @@ fn ellipse_fit_errors_on_empty() {
     assert!(err.is_err());
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// 2. Sidecar JSON contract.
-//    We simulate what the Python sidecar would emit and confirm Rust can
-//    parse it under the documented schema. This catches drift between the
-//    sidecar response and the Rust-side parser used by the train/preview
-//    Tauri commands.
-// ────────────────────────────────────────────────────────────────────────
+// Sidecar JSON contract: parse a simulated response to catch drift from the Rust-side parser.
 
 #[derive(Debug, Deserialize, Serialize)]
 struct PreviewRelationshipResponse {
@@ -82,8 +61,7 @@ fn preview_relationship_response_shape_parses_cleanly() {
 
 #[test]
 fn preview_relationship_no_legacy_fields_required() {
-    // Confirm the shape parses WITHOUT the legacy `output / r2_dict /
-    // rmse2_dict` fields.
+    // The response parses with only the current fields.
     let payload = r#"{
         "request": "PreviewModel/relationship",
         "r2_per_step": [],
@@ -109,10 +87,7 @@ fn sidecar_error_envelope_parses_cleanly() {
     assert_eq!(parsed.error.as_deref(), Some("boom"));
 }
 
-// ────────────────────────────────────────────────────────────────────────
-// 3. The ellipse fit flows back to TS via Tauri. This catches accidental
-//    field renames (which would silently break the TypeScript bindings).
-// ────────────────────────────────────────────────────────────────────────
+// Field renames would silently break the TS bindings.
 
 #[test]
 fn ellipse_fit_serialises_with_expected_field_names() {

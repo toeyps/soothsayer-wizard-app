@@ -252,11 +252,7 @@ describe('runSpecialSensorEdit -- outcome', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// Edit lock: a sensor used by a model cannot be renamed or have
-// its values changed -- decided in the read-only phase, before any column is
-// touched.
-// ═════════════════════════════════════════════════════════════════════════
+// Edit lock: a model-used sensor can't be renamed or have its values changed; decided before any column is touched.
 
 describe('runSpecialSensorEdit -- edit lock', () => {
     const state = (over: Partial<EditFailureState> = {}): EditFailureState => ({
@@ -399,12 +395,8 @@ describe('recipesEquivalent', () => {
     });
 });
 
-// REPAIR mode -- the edited sensor had no
-// column (its recipe was refused on reopen) and everything built on it was
-// skipped. A rollback must REMOVE what the edit created (recomputing the
-// known-bad original is refused before it writes and left the rejected fix's
-// values behind), and a downstream sensor that is broken on its OWN is not a
-// reason to throw the fix away.
+// REPAIR mode: the edited sensor had no column (recipe refused on reopen) and its dependents were skipped.
+// A rollback must REMOVE what the edit created (recomputing the known-bad original is refused); a downstream sensor broken on its own doesn't discard the fix.
 describe('runSpecialSensorEdit -- repair mode', () => {
     /** A session holding only `present`'s columns (the broken ones were never built). */
     async function partialSession(present: SpecialSensorRecipe[]) {

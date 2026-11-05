@@ -4,10 +4,7 @@ import { describeSpecialSensor } from './specialSensorDescribe';
 import { formulaRefNames } from './formulaRefs';
 import { splitRoundResult } from './formulaRounding';
 
-/*
- * How a special (calculated) sensor is built, in plain words for the export's
- * `derived_sensors[].how_to_build`, and the RAW sensors it is built from.
- */
+/* How a special sensor is built, in plain words (export derived_sensors[].how_to_build), and from which raw sensors. */
 
 const places = (n: number): string => `${n} decimal place${n === 1 ? '' : 's'}`;
 
@@ -63,11 +60,7 @@ function directSources(recipe: SpecialSensorRecipe): string[] {
     return recipe.kind === 'formula' ? formulaRefNames(recipe.formula) : [...(recipe.sourceSensors ?? [])];
 }
 
-/**
- * The RAW sensors the special sensor `tag` is built from: nested special
- * sensors are expanded to their own raw sources. Unique, in order of first
- * use; `[]` for a tag with no recipe. A dependency cycle never loops.
- */
+/** RAW sensors behind a special sensor: nested ones expanded, unique, first-use order; [] without a recipe; cycles end. */
 export function rawSourceTags(recipes: readonly SpecialSensorRecipe[] | null | undefined, tag: string): string[] {
     const out: string[] = [];
     const seenOut = new Set<string>();

@@ -138,11 +138,7 @@ describe('App', () => {
         expect(last(titleBarProps).workspaceName).toBeUndefined();
     });
 
-    // Dashboard is React.lazy-loaded (see App.tsx) to keep echarts/regl-scatterplot
-    // out of the initial bundle, so it only mounts after its dynamic import()
-    // resolves — even with the module mocked, that's still a microtask. Tests that
-    // click through to it must await its appearance via findByText/find*, not
-    // assert on it synchronously right after the click.
+    // Dashboard is React.lazy, so it mounts after a dynamic import resolves; await it with find*, never assert synchronously.
     it('switching to a loaded dataset renders Dashboard with the workspace name in the TitleBar', async () => {
         render(<App />);
         fireEvent.click(screen.getByText('trigger-data-ready'));

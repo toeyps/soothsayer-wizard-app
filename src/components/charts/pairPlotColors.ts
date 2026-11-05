@@ -14,10 +14,7 @@ export function rgbaToHex(c: [number, number, number, number]): string {
     return `#${r}${g}${b}`;
 }
 
-/** Single source of truth for the matrix's default (non-cluster) colour —
- *  the app's indigo accent (matches LINE_CHART_COLORS, App.css, etc). Both
- *  the WebGL scatter cells (PairPlotCell) and the SVG diagonal histograms
- *  (PairPlotChart) derive from this one hex value so they never drift apart. */
+/** Default (non-cluster) colour, the app's indigo accent; WebGL cells and SVG histograms derive from this one hex. */
 export const ACCENT_HEX = '#6366f1';
 
 /** `#rrggbb` + alpha → a CSS `rgba(...)` string, for backgrounds that need
@@ -27,16 +24,10 @@ export function hexToRgbaCss(hex: string, a: number): string {
     return `rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a})`;
 }
 
-/** Red → amber → green — same hues as LINE_CHART_COLORS' rose/amber/emerald
- *  stops, reused here for the correlation heatmap's diverging-by-magnitude
- *  scale (weak = red, strong = green, regardless of sign). */
+/** Red -> amber -> green for the correlation heatmap (weak = red, strong = green, regardless of sign). */
 const CORRELATION_GRADIENT_STOPS: [string, string, string] = ['#ef4444', '#f59e0b', '#10b981'];
 
-/** Interpolates the red→amber→green gradient at `t` (0..1, meant to be fed
- *  `|r|` for a correlation coefficient). Three stops rather than a plain
- *  2-colour lerp — red straight to green through RGB space passes through a
- *  muddy olive/brown at the midpoint; routing through amber keeps every step
- *  of the gradient looking like a deliberate colour, not an accident. */
+/** Interpolates the gradient at t (0..1, fed |r|); amber in the middle avoids the muddy olive of a straight red-to-green lerp. */
 export function correlationGradientHex(t: number): string {
     const clamped = Math.max(0, Math.min(1, t));
     const [lo, mid, hi] = CORRELATION_GRADIENT_STOPS;
@@ -50,24 +41,12 @@ export function correlationGradientHex(t: number): string {
     return `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
 }
 
-/** Cell background — pure black, deliberately NOT `--bg-primary`
- *  (`#0a0a0b`). Every cell type (WebGL canvas clear colour, the
- *  histogram's own div, and the plain scatter cell's non-canvas margin
- *  area) must render this exact value or the grid shows visibly different
- *  shades in the padding strips and the 1px gaps between cells. */
+/** Pure black, not `--bg-primary`: every cell type must use this exact value or padding strips and 1 px gaps differ in shade. */
 export const CANVAS_BG_HEX = '#000000';
 
 export const CANVAS_BG: [number, number, number, number] = hexToRgba(CANVAS_BG_HEX);
 
-/** Distinct colours auto-assigned to new time highlights / tagged points —
- *  shared across ScatterChart (time highlights, re-exported from there for
- *  callers that already import it from that module) and LineChart (Tag
- *  Point) for visual consistency across the app's range/lasso/tag-based
- *  colouring features. Cycles if more items are added than colours. Lives
- *  here (not in ScatterChart.tsx) specifically so LineChart.tsx doesn't
- *  have to import ScatterChart.tsx just for this array — that would pull
- *  regl-scatterplot's whole module graph into the Line chart's dependency
- *  chain for a plain colour list. */
+/** Colours auto-assigned to new highlights and tagged points; here so LineChart doesn't import regl-scatterplot. */
 export const RANGE_PALETTE: Array<[number, number, number, number]> = [
     [0.99, 0.75, 0.18, 1.0],  // amber
     [0.20, 0.83, 0.60, 1.0],  // emerald
@@ -79,12 +58,8 @@ export const RANGE_PALETTE: Array<[number, number, number, number]> = [
     [0.78, 0.66, 0.99, 1.0],  // violet
 ];
 
-/** Numbered badges for tagged points (Line and Scatter's Tag Point
- *  feature) — one per `RANGE_PALETTE` entry, so a chart never runs out of
- *  distinct number+colour pairs before it runs out of tag slots. */
+/** Numbered badges for tagged points, one per `RANGE_PALETTE` entry. */
 export const TAG_BADGES = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧'];
 
-/** One tag per palette colour, then stop — past this a new tag would have
- *  to reuse a colour/number already on the chart, which reads as a bug
- *  ("did tag ① move?") rather than a new tag. */
+/** One tag per palette colour: more would reuse a colour/number already on the chart, which reads as a bug. */
 export const MAX_TAGGED_POINTS = RANGE_PALETTE.length;

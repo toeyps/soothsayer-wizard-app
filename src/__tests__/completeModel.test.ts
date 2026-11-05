@@ -10,11 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import { checkModelForComplete, HEALTH_ERROR_TEXT, parseHealthError } from '../utils/completeModel';
 
-// An open-ended train period (= no time filter on the wire) and one scoring
-// period, which Mark complete requires. The period is deliberately in the shape
-// a workspace saved BEFORE holds it (the removed `label` /
-// `eventTime` / `fromHighlight` still on it): every request below must carry
-// start / end ONLY — an old workspace is validated like a new one.
+// Open-ended train period and one scoring period (required by Mark complete); every request must carry start/end only.
 const fg: FailureGroupStateSlice = {
     groups: [], models: [],
     runningConditionFilters: [], runningConditionCombine: 'and',

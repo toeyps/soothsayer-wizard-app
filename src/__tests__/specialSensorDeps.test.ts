@@ -75,8 +75,7 @@ describe('buildSpecialSensorUsage', () => {
     });
 
     it('does not treat a name that is a prefix of another name as a dependency', () => {
-        // The whole reason formula refs are parsed in Rust instead of matched
-        // with formula.includes(tag): `test` is a substring of `test extend`.
+        // Formula refs are parsed in Rust, not matched with includes(tag): `test` is a substring of `test extend`.
         const usage = build({
             recipes: [
                 formula('test', '$RAW.PV'),
@@ -99,11 +98,7 @@ describe('buildSpecialSensorUsage', () => {
     });
 
     it('blocks a sensor named in any of the six model sensor fields', () => {
-        // Was seven, including `pmSensorFilters` -- that field
-        // moved off FailureModel to the workspace-wide
-        // `runningConditionFilters`, which this delete-check does NOT yet
-        // cover (a known, scoped gap -- see specialSensorDeps.ts's own
-        // comment on MODEL_SENSOR_FIELDS).
+        // Running-condition filters are workspace-wide and not covered by this delete-check (a known gap).
         const fields: Array<[string, Partial<FailureModel>, string]> = [
             ['targetSensor', { targetSensor: 'S' }, 'target sensor'],
             ['predictorSensors', { predictorSensors: ['S'] }, 'predictor'],
@@ -176,8 +171,7 @@ describe('buildSpecialSensorUsage', () => {
 });
 
 describe('dependentsToRecompute', () => {
-    // A -> B -> C, plus an unrelated D. Array order is creation order, which
-    // is what makes the returned list safe to run straight through.
+    // Chain A -> B -> C plus unrelated D; array order is creation order, which makes the returned list safe to run straight through.
     const chain = [
         formula('A', '$RAW.PV'),
         formula('B', '${A} + 1'),
@@ -324,7 +318,6 @@ describe('reorderRecipesByTags', () => {
     });
 });
 
-// ── (second pass): running condition + build-order recompute ─────
 
 describe('buildSpecialSensorUsage -- the Running condition', () => {
     const cond = (sensor: string) => ({ id: `c-${sensor}`, sensor, operation: 'greater_than' as const, value1: '3', value2: '' });
@@ -394,9 +387,6 @@ describe('dependentsToRecompute -- build order', () => {
 });
 
 
-// ═════════════════════════════════════════════════════════════════════════
-// Edit lock: a special sensor used by a model is locked.
-// ═════════════════════════════════════════════════════════════════════════
 
 describe('buildSpecialSensorUsage -- editLock', () => {
     const lockOf = (usage: ReturnType<typeof build>, tag: string) => usageFor(usage, tag)!.editLock;

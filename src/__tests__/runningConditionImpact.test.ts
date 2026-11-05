@@ -193,11 +193,7 @@ describe('runningConditionImpact — the line next to Apply (SPEC §5 "Before Ap
     });
 });
 
-/*
- * The helper predicts a write; these check the prediction against the write
- * itself (`applyIncompleteRule` — what `persistRunningCondition` runs), so the
- * count in the footer is the count the user then sees.
- */
+/* Checks the helper's prediction against the real write (`applyIncompleteRule`), so the footer count matches what the user sees. */
 describe('runningConditionImpact agrees with what Apply really does', () => {
     const models = () => [
         ind('complete', { status: true }), ind('trained'), ind('never'),

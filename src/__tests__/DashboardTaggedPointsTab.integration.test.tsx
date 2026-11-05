@@ -2,27 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useEffect } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
-/*
- * Spec: docs/design/handoff/dashboard-tagged-points/README.md (layout of the "Tagged points"
- * tab) on top of the tab itself (the values of the points tagged on the chart live in the
- * Dashboard's bottom panel, not on the chart).
- *
- * The two halves are tested apart, each against a stand-in for the other:
- *   - `Dashboard.test.tsx` ("Tagged points tab") mocks the whole chart and calls
- *     `onTagCountChange` / reads `tagTableHost` by hand;
- *   - `LineChart.test.tsx` / `TagCompareTable.test.tsx` render the chart with a bare <div>
- *     as the host and metadata passed as a prop.
- *
- * Nothing mounts the REAL Dashboard with the REAL Line chart, so nothing checks what the user
- * actually sees after clicking the chart: the table of that chart, portalled INTO the
- * Dashboard's tab, with the sensor names / units that reach it through the Dashboard, the
- * count in the tab's name, and the tab changing by itself only when a point was just tagged.
- * The 2026-10-12 layout pass also changed what the chart hands the table (`tagCell(text)` no
- * longer takes the unit — it is printed once per row from the sensor's metadata), which is
- * exactly the kind of change that only fails where the two meet.
- */
+/* Real Dashboard with the real Line chart (Dashboard.test.tsx mocks it). Spec: docs/design/handoff/dashboard-tagged-points/README.md */
 
-// ── a fake ECharts instance: enough for the Line chart's Tag tool (zrender click → nearest point) ──
+// A fake ECharts instance: enough for the Line chart's Tag tool (zrender click -> nearest point).
 const chartOptions: any[] = [];
 let zrClick: ((e: { offsetX: number; offsetY: number }) => void) | null = null;
 const convertFromPixel = vi.fn((): [number, number] => [0, 0]);

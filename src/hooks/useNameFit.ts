@@ -1,8 +1,4 @@
-/**
- * Measured gates for long sensor names (DESIGN_SYSTEM §4): every rule is a no-op for a name that fits, and fit is
- * measured in the rendered font with hysteresis. Decisions live in `utils/nameFitGate.ts` (pure); these hooks only
- * measure and re-measure. An element that is not rendered (width 0: collapsed group, hidden tab, jsdom) is left alone.
- */
+/** Measured gates for long sensor names: fit is measured in the rendered font with hysteresis; decisions live in `utils/nameFitGate.ts`. */
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
     LINE_CUT_INITIAL,
@@ -23,11 +19,7 @@ import { fontOf, textWidth, type MeasureText } from '../utils/textMeasure';
 
 type ElementRef = (el: HTMLElement | null) => void;
 
-/**
- * Runs `check` after every commit, one frame later, and whenever a target resizes. The check must only set state
- * when something changed. Safe with an inline ref that detaches and re-attaches on each render: observers follow
- * what the targets are after the commit, not each ref call.
- */
+/** Runs `check` one frame after every commit and on resize; `check` must set state only when something changed. */
 function useResizeCheck(getTargets: () => Element[], check: () => void, enabled: boolean) {
     const latest = useRef(check);
     const watch = useRef<{ targets: Element[]; ro: ResizeObserver; raf: number } | null>(null);
@@ -68,19 +60,11 @@ const NONE: ReadonlySet<string> = new Set();
 
 export interface CutRunsOptions {
     measure?: MeasureText;
-    /**
-     * The element whose width decides "wide enough to go back". Default: the root. Required when the root shrinks to
-     * its content (inline-flex, a flex item): it narrows with the cut, so its own width never grows back. Return the
-     * nearest ancestor that does not shrink with its content.
-     */
+    /** The element whose width decides 'wide enough to go back'; default the root. Required when the root shrinks with the cut: return the nearest ancestor that does not. */
     roomOf?: (root: HTMLElement) => HTMLElement | null | undefined;
 }
 
-/**
- * Rule 2 gate: the set ids (`data-name-run`) under the root with at least one name that does not fit. A set that was
- * shortened is judged by the width of its room (it goes back once wide enough), not by its now-shorter text.
- * `key`: names of the set(s); a change starts over.
- */
+/** Rule 2 gate: set ids (`data-name-run`) with at least one name that does not fit. A shortened set is judged by its room's width. A new `key` starts over. */
 export function useCutRuns(
     getRoot: () => HTMLElement | null,
     key: string,
@@ -124,8 +108,7 @@ export function useCutRuns(
     return enabled ? cut : NONE;
 }
 
-/** One line of plain text with a richer cut form: `cut` is true only while the plain text really is cut.
- *  Put the ref on the element that holds the line. */
+/** One plain-text line with a richer cut form; `cut` is true only while the plain text is really cut. Ref goes on the line's element. */
 export function useLineCut(text: string): [ElementRef, boolean] {
     const [state, setState] = useState({ key: text, cut: false });
     const cut = state.key === text && state.cut;
@@ -165,11 +148,7 @@ export interface TwoLineOptions {
 
 const defaultRowOf = (el: HTMLElement) => el.closest('.sl')?.parentElement;
 
-/**
- * Rule 3 two-line form. `wrap` false (stacked row): true while the kept start + end (`compact`) do not fit on one
- * line. `wrap` true (wrapping row): true while the whole name (`full`) needs more than two lines. A row with room
- * for the whole name never stacks, and a row on two lines stays there until its room or text changes.
- */
+/** Rule 3 two-line form. `wrap` false: true while kept start + end (`compact`) do not fit on one line. `wrap` true: true while `full` needs more than two lines. */
 export function useTwoLine(compact: string, full: string, enabled: boolean, wrap: boolean, options: TwoLineOptions = {}): [ElementRef, boolean] {
     const { measure = textWidth, rowOf = defaultRowOf, reservePx = 72 } = options;
     const key = `${wrap ? 'w' : 's'}\0${compact}\0${full}`;
@@ -201,10 +180,7 @@ export function useTwoLine(compact: string, full: string, enabled: boolean, wrap
     return [ref, enabled && two];
 }
 
-/**
- * Rule 3 "the tail grows back": for a label that is cut anyway, how many extra words of `forms` (`widerTailForms`)
- * fit. Returns 0 for a label that is not cut.
- */
+/** Rule 3 'tail grows back': how many extra words of `forms` fit for a label that is cut anyway; 0 if not cut. */
 export function useWideTail(forms: readonly string[], enabled: boolean, measure: MeasureText = textWidth): [ElementRef, number] {
     const key = forms.join('\0');
     const [state, setState] = useState({ key, k: 0 });
@@ -230,10 +206,7 @@ export function useWideTail(forms: readonly string[], enabled: boolean, measure:
     return [ref, enabled ? k : 0];
 }
 
-/**
- * Keeps a split name's head adjusted (whole-word cut, short head dropped, chip minimum): before paint when the text
- * or element changes, then on every resize. Put the ref on the element holding the `data-name-part` children.
- */
+/** Keeps a split name's head adjusted before paint and on resize. Ref goes on the element holding the `data-name-part` children. */
 export function useNameFit(text: string, enabled = true): ElementRef {
     const elRef = useRef<HTMLElement | null>(null);
     const current = useRef<{ el: HTMLElement | null; text: string; stop?: () => void }>({ el: null, text: '' });

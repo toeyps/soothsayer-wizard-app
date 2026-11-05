@@ -1,23 +1,7 @@
 import { createFakeRust, type FakeRust, type RawCsv } from './fakeRustSession';
 import { createFakeHealthRust, type FakeHealthRust, type HealthDataset } from './fakeHealthRust';
 
-/**
- * ONE fake Rust backend for the cross-feature smoke tests:
- * the special-sensor session fake (`fakeRustSession.ts` — load_csv,
- * derived columns, formula refs, chart data, generation guard) and the health
- * fake (`fakeHealthRust.ts` — stats, previews, health score, Mark-complete
- * export) behind a single `invoke`, kept on the SAME data:
- *
- *  - `load_csv` loads the dataset its paths name into the session, then the
- *    health side is re-pointed at the session's columns and its generation is
- *    advanced to match (a new session = new generation + empty fit cache);
- *  - every successful derived-column change (create / replace / remove) is
- *    copied into the health side, so a model trained on a special sensor sees
- *    that sensor's CURRENT values, and a removed sensor is gone for it too.
- *
- * The timestamps come from the source HealthDataset (the session fake's own
- * timestamps are only labels for the line chart).
- */
+/** Special-sensor fake and health fake behind one `invoke`, on the SAME data; `load_csv` re-points the health side. */
 
 export interface CrossFeatureBackend {
     invoke: (cmd: string, args?: Record<string, any>) => Promise<unknown>;

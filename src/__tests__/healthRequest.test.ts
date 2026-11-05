@@ -235,8 +235,7 @@ describe('relationshipLambda', () => {
 });
 
 describe('test_periods — scoring periods are sent as start / end only ("just score it", 2026-10-10)', () => {
-    // The workspace list as a workspace saved BEFORE holds it: the removed
-    // label / event time / highlight caption are still on the periods. None of it may be sent.
+    // A list as an old workspace holds it: the removed label/event time/highlight are still on the periods; none may be sent.
     const wsTests = [
         { id: 'w1', start: '2026-01-01T00:00', end: '2026-01-31T23:59', label: 'normal' as const },
         { id: 'w2', start: '2026-03-01T00:00', end: '2026-03-31T23:59', label: 'problem' as const, eventTime: '2026-03-15T08:00', fromHighlight: 'Bearing' },
@@ -291,8 +290,7 @@ describe('test_periods — scoring periods are sent as start / end only ("just s
     });
 });
 
-// End to end against the fake Rust backend (a port of the real contract): a workspace
-// saved before — scoring periods still carrying label / eventTime — is scored.
+// End to end against the fake Rust backend: an old workspace whose scoring periods carry label/eventTime is scored.
 describe('an old workspace is scored like a new one (request -> fake Rust)', () => {
     const data = plantDataset();
     const model = mk({ id: 'i', kind: 'individual', targetSensor: 'TAG1', category: 'condition' });
@@ -325,9 +323,7 @@ describe('an old workspace is scored like a new one (request -> fake Rust)', () 
         await expect(rust.invoke('preview_relationship_model', { predictors: ['TAG3'], target: 'TAG1', lambda: 1, test_periods: [{ start: '2024-01-01T00:00', end: '2024-01-31T23:59' }] })).resolves.toBeTruthy();
     });
 
-    // Real Rust deserialises `test_periods` as `Vec<TestPeriodArg>`: an item that is not a
-    // struct (null, a string, a number) makes serde refuse the whole call. The fake used to let
-    // a `null` item through as "no extra keys".
+    // Real Rust (`Vec<TestPeriodArg>`) refuses a non-struct item in `test_periods`, so the fake must too.
     it('guard: the fake REJECTS a list item that is not a period object (null / string / number / list), on both commands', async () => {
         const rust = createFakeHealthRust({ datasets: { plant: data } });
         const good = { start: '2024-01-01T00:00', end: '2024-01-31T23:59' };

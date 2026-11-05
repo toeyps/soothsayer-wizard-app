@@ -5,9 +5,7 @@ import { isModelComplete, isModelStale } from '../utils/modelStatus';
 import { isModelTrainedFresh, computeTrainFingerprint } from '../utils/trainFingerprint';
 import { mk } from './helpers/failureModelFixture';
 
-// Fixing a special sensor that could not be
-// restored gives it NEW values, but no train fingerprint covers special-sensor
-// recipes -- so the models trained on it are demoted explicitly.
+// Repair gives a special sensor new values but no train fingerprint covers recipes, so models trained on it are demoted explicitly.
 
 const cond = (sensor: string): WorkspaceSensorFilter => ({ id: `c-${sensor}`, sensor, operation: 'greater_than', value1: '1', value2: '' });
 const fg = { runningConditionFilters: [cond('RC_SENSOR')] };
