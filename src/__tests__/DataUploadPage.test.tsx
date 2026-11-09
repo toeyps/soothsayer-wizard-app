@@ -1950,10 +1950,10 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByTestId('home-step')).toBeTruthy();
     const logo = screen.getByTestId('home-logo') as HTMLImageElement;
     expect(decodeURIComponent(logo.getAttribute('src') ?? '')).toContain('#51b4ec');
-    expect(logo.getAttribute('width')).toBe('52');
+    expect(logo.getAttribute('width')).toBe('40');
     expect(screen.getByTestId('home-step').querySelector('path[d^="M3 15c2-6"]')).toBeNull();
     expect(screen.getByText('Machine health studio')).toBeTruthy();
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Abnormal behaviour, found in your history.');
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Find abnormal behaviour in your machine’s data.');
     expect(newProjectButton()).toBeTruthy();
     // Step 2's surface must not be mounted yet…
     expect(screen.queryByText('Sensor data')).toBeNull();
@@ -1977,7 +1977,7 @@ describe('J. Onboarding flow', () => {
     expect(screen.getByText('Which machine')).toBeTruthy();
     expect(screen.getByText('Add data')).toBeTruthy();
     expect(screen.getByText('Explore in Dashboard')).toBeTruthy();
-    expect(screen.queryByPlaceholderText('Find project')).toBeNull();
+    expect(screen.queryByPlaceholderText('Find a project')).toBeNull();
     // The sidebar's differently-worded empty state belongs to step 1+
     expect(screen.queryByText('No workspaces yet')).toBeNull();
   });
@@ -2367,12 +2367,19 @@ describe('L. Get started page (step 0)', () => {
     fireEvent.keyDown(target, { key: 'n', ctrlKey: true, ...init });
 
   describe('hero + footer', () => {
-    it('L1. shows brand, eyebrow, description, the shortcut hint and the hero illustration (variant "hero")', async () => {
+    it('L1. shows brand, the three facts, the shortcut hint and the hero illustration (variant "hero"); no kicker line', async () => {
       renderPage();
       expect(screen.getByText('Wizard')).toBeTruthy();
       expect(screen.getByText('Machine health studio')).toBeTruthy();
-      expect(screen.getByText(/Offline sensor data → machine behaviour/)).toBeTruthy();
-      expect(screen.getByText(/Import the CSVs you already have/)).toBeTruthy();
+      expect(screen.queryByText(/Offline sensor data/)).toBeNull();
+      const facts = within(screen.getByTestId('home-step')).getAllByRole('listitem').map(li => li.textContent);
+      expect(facts).toEqual([
+        'Import the CSVs you already have and explore every tag.',
+        'Group failure modes and learn what normal looks like.',
+        'See which periods went abnormal with a 0–100 health score, offline on this computer.',
+      ]);
+      expect(screen.getByText(/or press/).tagName).toBe('SPAN');
+      expect(screen.queryByTitle('Keyboard shortcut')).toBeNull();
       // No forecasting promise anywhere on the welcome screen (DESIGN_SYSTEM §5).
       expect(screen.getByTestId('home-step').textContent).not.toMatch(/predict|before it happens|forecast/i);
       expect(screen.getByText('Ctrl+N')).toBeTruthy();
@@ -2380,10 +2387,10 @@ describe('L. Get started page (step 0)', () => {
       await act(async () => { await Promise.resolve(); });
     });
 
-    it('L2. footer shows the app version and nothing else', async () => {
+    it('L2. footer shows "Wizard <version>" and nothing else', async () => {
       renderPage();
-      await waitFor(() => expect(screen.getByText('v9.8.7')).toBeTruthy());
-      expect(screen.getByText('v9.8.7').style.fontSize).toBe('12px');
+      await waitFor(() => expect(screen.getByText('Wizard 9.8.7')).toBeTruthy());
+      expect(screen.getByText('Wizard 9.8.7').style.fontSize).toBe('12px');
       expect(screen.queryByText(/Data stays/)).toBeNull();
     });
 
@@ -2391,7 +2398,7 @@ describe('L. Get started page (step 0)', () => {
       mockGetVersion.mockRejectedValue(new Error('not in tauri'));
       renderPage();
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      expect(screen.queryByText(/^v\d/)).toBeNull();
+      expect(screen.queryByText(/^Wizard \d/)).toBeNull();
     });
   });
 

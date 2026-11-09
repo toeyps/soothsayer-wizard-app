@@ -584,13 +584,12 @@ export default function MachineMorphCanvas({ variant = 'hero', className, style 
               data-testid="machine-name"
               aria-live="polite"
               style={{
-                border: '1px solid oklch(0.7 0.15 235 / 0.6)',
-                borderRadius: 99,
-                padding: '3px 10px',
-                background: 'oklch(0.6 0.13 235 / 0.18)',
+                padding: '3px 0',
                 color: INK,
+                fontSize: 12.5,
+                fontWeight: 600,
                 // Wide enough for the longest name, so the › button does not move as the name changes.
-                minWidth: 164,
+                minWidth: 150,
                 boxSizing: 'border-box',
                 textAlign: 'center',
                 whiteSpace: 'nowrap',

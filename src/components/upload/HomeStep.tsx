@@ -29,6 +29,12 @@ interface HomeStepProps {
   onDeleteWorkspace: (id: string) => void;
 }
 
+const FACTS: [string, string][] = [
+  ['Import the CSVs you already have', 'and explore every tag.'],
+  ['Group failure modes', 'and learn what normal looks like.'],
+  ['See which periods went abnormal', 'with a 0–100 health score, offline on this computer.'],
+];
+
 const FIRST_STEPS = [
   { n: '01', label: 'Which machine' },
   { n: '02', label: 'Add data' },
@@ -89,8 +95,8 @@ export default function HomeStep({
       <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, paddingBottom: 56 }}>
       {/* `safe center`: a short window scrolls from the top instead of cutting the logo off. */}
       <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'safe center', flex: 1, minHeight: 0, padding: '40px 36px 0 56px', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 34, flexShrink: 0 }}>
-          <span style={{ position: 'relative', display: 'block', width: 52, height: 52, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 40, flexShrink: 0 }}>
+          <span style={{ position: 'relative', display: 'block', width: 40, height: 40, flexShrink: 0 }}>
             <span
               aria-hidden="true"
               style={{ position: 'absolute', inset: -30, borderRadius: '50%', background: 'radial-gradient(circle, oklch(0.55 0.14 245 / 0.22), transparent 70%)', pointerEvents: 'none' }}
@@ -98,40 +104,37 @@ export default function HomeStep({
             <img
               src={wizardLogo}
               alt=""
-              width={52}
-              height={52}
+              width={40}
+              height={40}
               data-testid="home-logo"
-              style={{ position: 'relative', display: 'block', borderRadius: 12, boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 12px 36px oklch(0.45 0.13 245 / 0.45)' }}
+              style={{ position: 'relative', display: 'block', borderRadius: 10, boxShadow: '0 0 0 1px rgba(255,255,255,0.05), 0 12px 36px oklch(0.45 0.13 245 / 0.45)' }}
             />
           </span>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 650, letterSpacing: '-0.02em', lineHeight: 1.1, color: T.text }}>Wizard</div>
-            <div style={{ fontSize: 13, lineHeight: 1.2, color: T.textMuted, marginTop: 3 }}>Machine health studio</div>
-          </div>
+          <span style={{ fontSize: 17, fontWeight: 600, letterSpacing: '-0.01em', color: T.text }}>Wizard</span>
+          <span aria-hidden="true" style={{ width: 1, height: 16, margin: '0 2px', background: T.borderStrong }} />
+          <span style={{ fontSize: 13.5, color: T.textMuted }}>Machine health studio</span>
         </div>
 
         <div style={{ flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: mono, fontSize: 11, fontWeight: 500, letterSpacing: '0.14em', textTransform: 'uppercase', color: T.accentHi }}>
-            <i
-              aria-hidden="true"
-              className="motion-safe:animate-pulse"
-              style={{ width: 6, height: 6, borderRadius: '50%', background: T.ok, boxShadow: `0 0 10px ${T.ok}` }}
-            />
-            Offline sensor data → machine behaviour
-          </div>
-          <h1 style={{ margin: '14px 0 0', fontSize: 'clamp(36px, 3.4vw, 44px)', lineHeight: 1.05, fontWeight: 700, letterSpacing: '-0.035em', color: T.text, textWrap: 'balance' }}>
-            Abnormal behaviour,{' '}
+          <h1 style={{ margin: 0, fontSize: 'clamp(32px, 2.65vw, 48px)', lineHeight: 1.06, fontWeight: 700, letterSpacing: '-0.035em', color: T.text }}>
+            <span style={{ display: 'block' }}>Find abnormal behaviour</span>{' '}
             <span style={{
+              display: 'block',
               background: `linear-gradient(90deg, ${T.accentHi}, ${T.s1} 45%, ${T.s3})`,
               WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent',
             }}>
-              found in your history.
+              in your machine&rsquo;s data.
             </span>
           </h1>
-          <p style={{ margin: '16px 0 0', maxWidth: '44ch', fontSize: 14.5, lineHeight: 1.6, color: T.textMuted }}>
-            Import the CSVs you already have, explore every tag, group failure modes and score each period against learned normal — all on this computer.
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 28 }}>
+          <ul style={{ listStyle: 'none', margin: '22px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 9, maxWidth: '54ch' }}>
+            {FACTS.map(([lead, rest]) => (
+              <li key={lead} style={{ display: 'flex', gap: 12, alignItems: 'baseline', fontSize: 14.5, lineHeight: 1.45, color: T.textMuted }}>
+                <i aria-hidden="true" style={{ flexShrink: 0, width: 6, height: 6, borderRadius: '50%', background: T.accentHi, transform: 'translateY(-3px)' }} />
+                <span><b style={{ fontWeight: 500, color: T.text }}>{lead}</b> {rest}</span>
+              </li>
+            ))}
+          </ul>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginTop: 30 }}>
             <button
               type="button"
               onClick={onNewProject}
@@ -147,12 +150,9 @@ export default function HomeStep({
               <Plus size={17} strokeWidth={2.4} />
               New project
             </button>
-            <kbd
-              title="Keyboard shortcut"
-              style={{ fontFamily: mono, fontSize: 10.5, fontWeight: 500, color: T.textFaint, border: `1px solid ${T.borderStrong}`, borderRadius: 5, padding: '1px 6px' }}
-            >
-              {shortcut}
-            </kbd>
+            <span style={{ fontSize: 12.5, color: T.textFaint }}>
+              or press <b style={{ fontFamily: mono, fontWeight: 500, color: T.textMuted }}>{shortcut}</b>
+            </span>
           </div>
         </div>
 
@@ -210,19 +210,19 @@ export default function HomeStep({
           ) : loaded ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                <b style={sectionLabel}>Recent projects</b>
-                <span style={{ fontFamily: mono, fontSize: 11, color: T.textFaint }}>{workspaces.length}</span>
+                <b style={{ fontSize: 13.5, fontWeight: 600, color: T.text }}>Recent projects</b>
+                <span style={{ fontSize: 12.5, color: T.textFaint }}>{workspaces.length}</span>
                 <div style={{ flex: 1 }} />
                 <label style={{
-                  display: 'flex', alignItems: 'center', gap: 7, height: 28, width: 170, padding: '0 9px',
-                  border: `1px solid ${T.borderStrong}`, borderRadius: 8, background: T.chipBg, color: T.textFaint,
+                  display: 'flex', alignItems: 'center', gap: 7, height: 30, width: 200, padding: '0 9px',
+                  border: `1px solid ${T.borderStrong}`, borderRadius: 9, background: T.chipBg, color: T.textFaint,
                 }}>
                   <Search size={12} style={{ flexShrink: 0 }} />
                   <input
                     aria-label="Search projects"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Find project"
+                    placeholder="Find a project"
                     style={{ width: '100%', background: 'none', border: 'none', outline: 'none', fontSize: 12, fontFamily: 'inherit', color: T.text }}
                   />
                 </label>
@@ -249,7 +249,7 @@ export default function HomeStep({
         </section>
       </div>
       {version && (
-        <div style={{ position: 'absolute', left: 56, bottom: 18, fontFamily: mono, fontSize: 12, color: T.textMuted }}>v{version}</div>
+        <div style={{ position: 'absolute', left: 56, bottom: 18, fontSize: 12, color: T.textFaint }}>Wizard {version}</div>
       )}
       </div>
 

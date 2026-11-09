@@ -33,7 +33,7 @@ const noop = () => {};
 interface PressRecord { inActions: boolean; touch: boolean; actionsShown: boolean }
 const NO_PRESS: PressRecord = { inActions: false, touch: false, actionsShown: false };
 
-/** "n failure groups" with a colour square per group, or a neutral dashed "No failure groups" (none is not a warning). Nothing when the count is unknown. */
+/** "n failure groups" as plain text with a colour square per group, or a faint "No failure groups" (none is not a warning). Nothing when the count is unknown. */
 function FailureGroupChip({ project }: { project: RecentProjectCardProps['project'] }) {
   const chip = recentProjectFgChip(project);
   if (!chip) return null;
@@ -208,9 +208,9 @@ function InteractiveProjectCard({
       style={{
         position: 'relative',
         display: 'grid', gap: 12, alignItems: 'center',
-        padding: '10px 12px', borderRadius: 12,
+        padding: '10px 12px 10px 10px', borderRadius: 12,
         border: `1px solid ${highlighted ? T.borderStrong : T.border}`,
-        background: highlighted ? T.surfaceHi : T.surface,
+        background: highlighted ? T.surfaceHi : 'transparent',
         cursor: confirming ? 'default' : 'pointer',
         transition: 'border-color 120ms ease, background 120ms ease',
       }}
@@ -228,8 +228,8 @@ function InteractiveProjectCard({
       <span
         aria-hidden="true"
         style={{
-          width: 38, height: 38, borderRadius: 10, display: 'grid', placeItems: 'center',
-          fontFamily: mono, fontWeight: 600, fontSize: 13, color: T.text,
+          width: 34, height: 34, borderRadius: 9, display: 'grid', placeItems: 'center',
+          fontFamily: mono, fontWeight: 600, fontSize: 12, color: T.text,
           border: '1px solid rgba(255,255,255,0.08)', background: projectColor(project.id || name),
         }}
       >
@@ -238,7 +238,7 @@ function InteractiveProjectCard({
 
       <div style={{ minWidth: 0, position: 'relative', zIndex: 1, pointerEvents: 'none' }}>
         <div title={name} style={{
-          fontSize: 13.5, fontWeight: 600, color: T.text, letterSpacing: '-0.005em',
+          fontSize: 14, fontWeight: 600, color: T.text, letterSpacing: '-0.005em',
           whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         }}>
           {name}
