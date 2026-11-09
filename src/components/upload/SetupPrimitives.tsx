@@ -23,7 +23,7 @@ export function Pill({
   };
   const t = tones[tone];
   return (
-    <span style={{
+    <span key={String(children)} className="up-pill" style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
       padding: '2px 9px', fontSize: 10.5, fontWeight: 600, whiteSpace: 'nowrap',
       color: t.fg, background: t.bg, border: `1px solid ${t.bd}`,

@@ -24,7 +24,7 @@ export function Kpi({ label, value, unit, sub, tone, small, title, testId, child
     return (
         <div className={`wb3-kpi${tone ? ` wb3-kpi--${tone}` : ''}`} title={title} data-testid={testId}>
             <div className="wb3-kpi-l">{label}</div>
-            <div className={`wb3-kpi-v${small ? ' wb3-kpi-v--sm' : ''}`}>
+            <div key={String(value)} className={`wb3-kpi-v${small ? ' wb3-kpi-v--sm' : ''}`}>
                 {value}
                 {unit && <span className="wb3-kpi-u">{unit}</span>}
             </div>

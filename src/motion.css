@@ -1,0 +1,258 @@
+/* ===== Motion system (DESIGN_SYSTEM §3.4) =====
+   Tokens only: every duration is a token × --motion-scale, so reduced motion (and a future setting) turns the
+   whole system off in one place. Opacity / transform for anything that moves; colour only on small controls. */
+:root {
+    --motion-scale: 1;
+    --dur-fast: calc(120ms * var(--motion-scale));   /* hover colour, press, pill colour */
+    --dur: calc(180ms * var(--motion-scale));        /* open: modal, popover, menu, section, toast, indicator */
+    --dur-exit: calc(120ms * var(--motion-scale));   /* close */
+    --dur-slow: calc(240ms * var(--motion-scale));   /* a window's content, a page */
+    --ease-out: cubic-bezier(0.2, 0, 0, 1);
+    --ease-in: cubic-bezier(0.4, 0, 1, 1);
+    --ease-move: cubic-bezier(0.4, 0, 0.2, 1);       /* something that travels: the selected highlight */
+}
+@media (prefers-reduced-motion: reduce) {
+    :root { --motion-scale: 0; }
+}
+
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes m-pop { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes m-drop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+@keyframes m-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes m-reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@keyframes m-pulse { 50% { opacity: 0.45; } }
+@keyframes m-grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes m-pop-in { from { opacity: 0; transform: scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes m-flash { from { opacity: 0.6; } to { opacity: 1; } }
+@keyframes m-slide-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
+@keyframes m-page { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* 1. Buttons: colour eases on hover, scale on press, in-button busy state fades in. */
+button, [role="button"] {
+    transition:
+        background-color var(--dur-fast) var(--ease-out),
+        border-color var(--dur-fast) var(--ease-out),
+        color var(--dur-fast) var(--ease-out),
+        box-shadow var(--dur-fast) var(--ease-out),
+        opacity var(--dur-fast) var(--ease-out),
+        filter var(--dur-fast) var(--ease-out),
+        transform var(--dur-fast) var(--ease-out);
+}
+button:not(:disabled):active:not([role="tab"]):not([role="radio"]):not([role="option"]):not([role="menuitem"]):not(.f4-tab):not(.wb3-page):not(.chart-type-btn):not(.collapsed-tab):not(.dash-tab):not(.component-group-header):not(.pk-row):not(.pk-g):not(.fg-srow-btn):not(.bmw-sets-h):not([data-testid^="sensor-list-row"]):not(.tb-menu *):not(.tq-menu *):not(.line-chart-zoom-menu-item) {
+    /* The press lands at once (so it shows even when the click swaps the page); the release eases back. */
+    transform: scale(0.97);
+    filter: brightness(0.86);
+    transition-duration: 0ms;
+}
+button[aria-busy="true"] .pm-spin,
+button .pm-spin {
+    animation: spin 1s linear infinite, m-fade var(--dur) var(--ease-out);
+}
+
+/* 2. Switches and tabs: the selected highlight slides (slideIndicator.ts measures; CSS draws). */
+[data-ind] { position: relative; }
+[data-ind]::after {
+    content: '';
+    position: absolute;
+    left: 0; top: 0;
+    width: var(--ind-w, 0px);
+    height: var(--ind-h, 0px);
+    transform: translate(var(--ind-x, 0px), var(--ind-y, 0px));
+    pointer-events: none;
+    opacity: var(--ind-o, 0);
+}
+[data-ind="ready"]::after {
+    transition:
+        transform var(--dur) var(--ease-move),
+        width var(--dur) var(--ease-move),
+        height var(--dur) var(--ease-move),
+        background-color var(--dur) var(--ease-move),
+        border-color var(--dur) var(--ease-move),
+        opacity var(--dur-fast) var(--ease-out);
+}
+/* underline tabs: kind tabs, page tabs, Dashboard sensor tabs */
+.f4-tabs[data-ind]::after, .wb3-pages[data-ind]::after, .dash-tabs[data-ind]::after {
+    top: auto; bottom: -1px; height: 2px;
+    border-radius: 1px;
+    background: var(--ind-c, var(--accent-color));
+}
+.wb3-pages[data-ind]::after { bottom: 0; }
+.f4-tabs[data-ind] .f4-tab--on { border-bottom-color: transparent; }
+.wb3-pages[data-ind] .wb3-page--on { border-bottom-color: transparent; }
+/* pill segments: Performance / Condition, Stiffness, Workspace / Custom, Line / Scatter / Pair Plot */
+.f4-seg[data-ind]::after { background: var(--blue-bg); border-color: var(--blue-line); }
+.f4-seg[data-ind]::after, .f4-catseg[data-ind]::after, .chart-type-group[data-ind]::after {
+    border-radius: 5px;
+    background: var(--ind-c, rgba(255, 255, 255, 0.07));
+    border: 1px solid var(--ind-b, transparent);
+    box-sizing: border-box;
+}
+.f4-catseg[data-ind]:has(.on-perf)::after { background: var(--perf-muted); border-color: rgba(16, 185, 129, 0.45); }
+.f4-catseg[data-ind]:has(.on-cond)::after { background: var(--cond-muted); border-color: rgba(139, 92, 246, 0.5); }
+.dash-tabs[data-ind] { --ind-c: #3b82f6; }
+.dash-tabs[data-ind] .dash-tab--on { border-bottom-color: transparent !important; }
+.f4-seg[data-ind] button.on, .f4-catseg[data-ind] button.on-perf, .f4-catseg[data-ind] button.on-cond,
+.chart-type-group[data-ind] .chart-type-btn.active { background: transparent; border-color: transparent; }
+.f4-seg[data-ind] > button, .f4-catseg[data-ind] > button, .chart-type-group[data-ind] > button { position: relative; z-index: 1; }
+/* card switch: Only when running / Use all data */
+.rcx-rows-mode[data-ind]::after {
+    border-radius: 9px;
+    background: var(--blue-bg);
+    border: 1px solid var(--blue-line);
+    box-sizing: border-box;
+}
+.rcx-rows-mode[data-ind] .rcx-mode--on { background: transparent; border-color: transparent; }
+.rcx-rows-mode[data-ind] > .rcx-mode { position: relative; z-index: 1; }
+
+/* 3. Modals, popovers, menus: scrim fades, box pops 0.98 → 1, menus drop 4 px. (Close is instant until a
+   shared presence hook exists — see the hand-off.) */
+.bmw-modal-backdrop, .pk-scrim, .pm-chart-modal-backdrop, .pm-preview-modal-backdrop, .pair-regl-expand-backdrop {
+    animation: m-fade var(--dur) var(--ease-out);
+}
+.bmw-modal, .pk-modal, .tq-confirm, .pm-chart-modal-card, .pair-regl-expand-modal {
+    animation: m-pop var(--dur) var(--ease-out);
+}
+.sensor-popover, .tb-menu, .tq-menu, .fg-sheet, .cp-pop {
+    animation: m-drop var(--dur) var(--ease-out);
+}
+
+/* 3b. A page or step change in the main window (Welcome → New project → Import → Dashboard, Back, a recent project). */
+.app-page-transition, .page-step { animation: m-page var(--dur-slow) var(--ease-out); }
+
+/* 4. A new window: the frame is the OS's; its content fades in once it is ready (the Suspense fallback is
+   skipped so a dark, empty frame never fades). The flash itself is prevented by the window's background colour. */
+#root > :not(.win-wait) { animation: m-fade var(--dur-slow) var(--ease-out); }
+/* Closing a sub-window: the content fades out (windowFade.ts), then the window closes. */
+html.m-leaving #root { opacity: 0; transition: opacity var(--dur-exit) var(--ease-in); }
+
+/* 5. Smaller items */
+.bmw-sets-body, .fg-group-edit, .pk-g[aria-expanded="true"] + * {
+    animation: m-reveal var(--dur) var(--ease-out);
+}
+.bmw-sets-chev { transition: transform var(--dur) var(--ease-out); }
+.fg-undo-toast { animation: m-rise var(--dur) var(--ease-out); }
+.fg-undo-toast[data-leaving] { opacity: 0; transform: translateY(6px); transition: opacity var(--dur-exit) var(--ease-in), transform var(--dur-exit) var(--ease-in); }
+.f4-pill, .kind-badge, .f4-kb-dot, .special-sensor-added-pill {
+    transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+/* skeleton while a chart loads: quiet bars in place of the empty board */
+.bmw-stage:has([data-testid="results-loading"]) { position: relative; }
+.bmw-stage:has([data-testid="results-loading"])::before {
+    content: '';
+    position: absolute; inset: 16px 20px;
+    border-radius: 10px;
+    background:
+        linear-gradient(var(--border) 0 0) 0 0 / 38% 10px no-repeat,
+        linear-gradient(var(--border) 0 0) 0 18px / 22% 8px no-repeat,
+        linear-gradient(var(--border) 0 0) 0 44px / 100% calc(100% - 44px) no-repeat;
+    opacity: 0.55;
+    animation: m-pulse calc(var(--dur-slow) * 6) ease-in-out infinite;
+    pointer-events: none;
+}
+.bmw-stage:has([data-testid="results-loading"]) > * { position: relative; }
+
+/* 6. Content that swaps under a tab / selection (Dashboard chart type, Sensor | Failure Groups, the Workbench detail
+   pane per sensor, Model fit | Health score per model): the new content fades and settles. */
+.m-swap { animation: m-reveal var(--dur) var(--ease-out); }
+
+/* 7. Lists and notices: a new row, chip, card or notice reveals; leaving ones are handled by presence.ts (below). */
+.fg-group-card, .filter-row-wrap, .highlights-chip, .bmw-chips > *, .f4-fgchip, .comp-chip, .fg-step-list > *, .tq-qrow,
+.fg-recent-list > *, [data-testid="file-row"], .wb2-card, .hs-chk, .hs-fix, .fx-errjump,
+.f4-notice, .rc-notice, .tq-why, .vt-fail, .hs-save, .wb2-stale, .rcm-warn, .up-banner,
+[role="alert"], [role="status"] { animation: m-reveal var(--dur) var(--ease-out); }
+.wb3-kpi-v { animation: m-fade var(--dur) var(--ease-out); }   /* a new value fades in; it never counts up */
+.bmw-side { animation: m-slide-in var(--dur) var(--ease-out); }
+
+/* 8. Exit: presence.ts puts a copy back for --dur-exit and it leaves like this. */
+.m-ghost { pointer-events: none !important; animation: none !important; }  /* a copy never replays its enter animation */
+.m-ghost--fade { transition: opacity var(--dur-exit) var(--ease-in), transform var(--dur-exit) var(--ease-in); }
+.m-ghost--fade.m-ghost--out { opacity: 0; }
+.bmw-modal.m-ghost--out, .pk-modal.m-ghost--out, .tq-confirm.m-ghost--out { transform: scale(0.98); }
+.m-ghost--fade:is(.sensor-popover, .tb-menu, .tq-menu, .fg-sheet, .cp-pop).m-ghost--out { transform: translateY(-4px); }
+.fg-undo-toast.m-ghost--out { transform: translateY(6px); }
+.m-ghost--collapse { transition: height var(--dur-exit) var(--ease-in), opacity var(--dur-exit) var(--ease-in), margin var(--dur-exit) var(--ease-in), padding var(--dur-exit) var(--ease-in); }
+.m-ghost--collapse.m-ghost--out { height: 0 !important; opacity: 0; margin-top: 0 !important; margin-bottom: 0 !important; padding-top: 0 !important; padding-bottom: 0 !important; }
+.m-ghost--slide { transition: opacity var(--dur-exit) var(--ease-in), transform var(--dur-exit) var(--ease-in); }
+.m-ghost--slide.m-ghost--out { opacity: 0; transform: translateX(-10px); }
+
+/* 9. Selection and fields: the selected row's background eases; a field's border / ring eases (invalid state too). */
+.bmw-srow, .sensor-row-label, .pk-row, .fg-srow-btn, .component-group-header, .fg-recent-list > *, .tb-menu button, .tq-menu button,
+.collapsed-tab, .f4-tab, .wb3-page, .chart-type-btn, .dash-tab, .rcx-mode {
+    transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+input, select, textarea { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+
+/* 10. Jumps: a selected or jumped-to row scrolls smoothly into view (programmatic scrolls in these panes). */
+.sensor-list-widget, .bmw-list, .bmw-detail, .wb2-board, .pk-pop, .pk-modal, .fg-recent-list, .widget-content { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+
+/* 11. Content that appears or changes in place (data upload and every summary / result card): it reveals; lists stagger
+   the first 6 items by 30 ms, the rest come together. A value that changes fades to the new one. */
+.m-stagger > *, .m-stagger > tr { animation-fill-mode: backwards; }
+.m-stagger > :nth-child(2) { animation-delay: calc(30ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.m-stagger > :nth-child(3) { animation-delay: calc(60ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.m-stagger > :nth-child(4) { animation-delay: calc(90ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.m-stagger > :nth-child(5) { animation-delay: calc(120ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.m-stagger > :nth-child(n+6) { animation-delay: calc(150ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.m-stagger > *:not([class*="m-"]) { animation-name: m-reveal; animation-duration: var(--dur); animation-timing-function: var(--ease-out); }
+.up-reveal, .up-tile, .up-tag-head, .up-lane, .ex-card, .ex-line, .ex-nc-item, .exb-state, .ex-err, .ex-sec, .pdm-sec, .mf-f, .hs-card, .rcc-card,
+.bmw-stage-empty, .wb2-empty, .fg-step-quick, .fg-step-fields, .special-sensor-body > *, .hs-stateboard { animation: m-reveal var(--dur) var(--ease-out) backwards; }
+.up-val { animation: m-fade var(--dur) var(--ease-out); }
+.up-pill { animation: m-pop-in var(--dur) var(--ease-out); transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+.up-lane:nth-child(2) { animation-delay: calc(30ms * var(--motion-scale)); animation-fill-mode: backwards; } .up-lane:nth-child(3) { animation-delay: calc(60ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.up-lane:nth-child(4) { animation-delay: calc(90ms * var(--motion-scale)); animation-fill-mode: backwards; } .up-lane:nth-child(n+5) { animation-delay: calc(120ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.up-bar { transform-origin: left center; animation: m-grow-x var(--dur-slow) var(--ease-out) backwards; animation-delay: inherit; }
+.up-lane:nth-child(2) .up-bar { animation-delay: calc(30ms * var(--motion-scale)); animation-fill-mode: backwards; } .up-lane:nth-child(3) .up-bar { animation-delay: calc(60ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.up-lane:nth-child(4) .up-bar { animation-delay: calc(90ms * var(--motion-scale)); animation-fill-mode: backwards; } .up-lane:nth-child(n+5) .up-bar { animation-delay: calc(120ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.ex-kinds, .ex-tree, .mf-grid, .hs-checks, .wb2-board, .ex-nc-row, .special-sensor-body { --m-list: 1; }
+.ex-kinds > :nth-child(2), .ex-tree > :nth-child(2), .mf-grid > :nth-child(2), .hs-checks > :nth-child(2), .wb2-board > :nth-child(2) { animation-delay: calc(30ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.ex-kinds > :nth-child(3), .ex-tree > :nth-child(3), .mf-grid > :nth-child(3), .hs-checks > :nth-child(3), .wb2-board > :nth-child(3) { animation-delay: calc(60ms * var(--motion-scale)); animation-fill-mode: backwards; }
+.ex-kinds > :nth-child(n+4), .ex-tree > :nth-child(n+4), .mf-grid > :nth-child(n+4), .hs-checks > :nth-child(n+4), .wb2-board > :nth-child(n+4) { animation-delay: calc(90ms * var(--motion-scale)); animation-fill-mode: backwards; }
+
+/* 12. The dashed pick area (tag-name CSV): hover brightens the border and tints, the icon lifts 2 px; press lands at once. */
+.up-pick { transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out), filter var(--dur-fast) var(--ease-out); }
+.up-pick > span:first-child { transition: transform var(--dur-fast) var(--ease-out); }
+.up-pick:hover:not(:disabled) { border-color: oklch(0.62 0.14 300 / 0.8) !important; box-shadow: inset 0 0 0 100vmax oklch(0.62 0.14 300 / 0.06); }
+.up-pick:hover:not(:disabled) > span:first-child { transform: translateY(-2px); }
+.up-pick:active:not(:disabled) { transform: scale(0.99); filter: brightness(0.9); transition-duration: 0ms; }
+.up-pick:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 2px; }
+.tn-tabs[data-ind] { --ind-c: oklch(0.62 0.14 300); }
+.tn-tabs[data-ind]::after { top: auto; bottom: 0; height: 2px; border-radius: 1px; background: var(--ind-c); }
+.tn-tabs[data-ind] button[aria-selected="true"] { border-bottom-color: transparent !important; }
+.tn-tabs button { transition: color var(--dur-fast) var(--ease-out); }
+
+/* 13. Dashboard windowed sensor list: only the rows of the group just opened reveal (staggered, played on mount in
+   SensorSelection.tsx with the same m-reveal values: --dur, 30 ms steps, backwards fill), never rows mounted by scrolling. */
+
+/* 14. Dashboard panels and the bottom tab group (Selected Sensor · Filter · Highlights · Tagged points): underline slides,
+   content crossfades, a hidden panel fades out and reveals when shown again; empty states reveal; tagged rows stagger. */
+.dashboard-slot { animation: m-reveal var(--dur) var(--ease-out); }
+.dashboard-slot.m-ghost--out { transform: scale(0.99); }
+.collapsed-tab { animation: m-reveal var(--dur) var(--ease-out); }
+.tag-panel-empty, .m-empty { animation: m-reveal var(--dur) var(--ease-out); }
+.line-chart-tool, .scatter-regl-tool { transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+/* 15. More segment groups: Create | Manage (Add Sensor), All | Assigned (assign sheet), the filter operator and the rounding switch. */
+.special-sensor-tabs[data-ind]::after { border-radius: 6px; background: var(--surface-hi); }
+.special-sensor-tabs[data-ind] button.is-on { background: transparent; }
+.special-sensor-tabs[data-ind] > button { position: relative; z-index: 1; }
+.fg-sheet-seg[data-ind]::after, .filter-op-seg[data-ind]::after, .fx-seg[data-ind]::after { border-radius: 5px; background: var(--blue-bg); border: 1px solid var(--blue-line); box-sizing: border-box; }
+.fg-sheet-seg[data-ind] button.on, .filter-op-seg[data-ind] button.is-on, .fx-seg[data-ind] button.on { background: transparent; border-color: transparent; }
+.fx-seg[data-ind]::after { background: var(--accent-muted); border-color: transparent; }
+.fg-sheet-seg[data-ind] > button, .filter-op-seg[data-ind] > button, .fx-seg[data-ind] > * { position: relative; z-index: 1; }
+
+/* 16. Generic (presence.ts): anything that appears reveals, anything that changes in place replays a short fade,
+   anything that leaves fades / collapses / crossfades. Fills, borders and the resize handle ease too. */
+.m-in { animation: m-reveal var(--dur) var(--ease-out); }
+.m-flash { animation: m-flash var(--dur-fast) var(--ease-out); }
+/* Charts and their hover tooltips are left out: nothing eases while the pointer moves over a chart.
+   Default for every element (zero specificity, so any rule with its own transition wins): a state change (class,
+   inline style, disabled) eases colour and opacity from what was on screen. Never an opacity dip: nothing blinks. */
+:where(body *:not(.chart-wrapper *, .echarts-for-react, .echarts-for-react *, [_echarts_instance_] *, .echarts-tooltip, .echarts-tooltip *, [style*="z-index: 9999999"], [style*="z-index: 9999999"] *, .scatter-regl-wrap, .scatter-regl-wrap *, .scatter-regl-tooltip, .scatter-regl-tooltip *, .pair-regl-wrap, .pair-regl-wrap *)) { transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out), outline-color var(--dur-fast) var(--ease-out), fill var(--dur-fast) var(--ease-out), stroke var(--dur-fast) var(--ease-out); }
+.fx-edwrap, .fx-check, .tq-why, .wb3-notice, .fg-step-hint, .hs-chk { transition: border-color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); }
+[data-testid="file-row"] i, .up-bar, .ex-bar span, .exb-bar span { transition: width var(--dur-slow) var(--ease-out), left var(--dur-slow) var(--ease-out), background-color var(--dur-fast) var(--ease-out); }
+.pane-resize::after { transition: background-color var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out); }
+.special-sensor-body { transition: opacity var(--dur-exit) var(--ease-in), visibility var(--dur-exit); }
+/* 17. A stale value dims (App.css .rct-stale, 0.45) only when it stays stale past 300 ms: a quick recount never dips and
+   comes back (a blink). Back to fresh is immediate and eased by the default transition. */
+.rct-stale { transition: opacity var(--dur) var(--ease-out) calc(300ms * var(--motion-scale)); }
+

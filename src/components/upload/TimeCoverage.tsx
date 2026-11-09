@@ -29,12 +29,14 @@ export default function TimeCoverage({ T, files }: { T: Tokens; files: CsvFileIn
       {coverage.lanes.map((lane, i) => (
         <div
           key={lane.index}
+          className="up-lane"
           data-testid="coverage-lane"
           style={{ display: 'grid', gridTemplateColumns: '150px minmax(0, 1fr)', gap: 10, alignItems: 'center', marginTop: 6, fontFamily: mono, fontSize: 11, color: T.textMuted }}
         >
           <span title={lane.name} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{lane.name}</span>
           <div style={{ position: 'relative', height: 10, borderRadius: 4, background: T.surfaceHi }}>
             <i
+              className="up-bar"
               data-testid="coverage-bar"
               title={lane.start && lane.end ? `${lane.start} → ${lane.end}` : undefined}
               style={{

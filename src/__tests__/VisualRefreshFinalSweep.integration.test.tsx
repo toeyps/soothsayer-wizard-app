@@ -234,6 +234,7 @@ describe('chart palette across surfaces (ECharts/WebGL literals — canvas canno
 // Classes that are pure hooks or Tailwind utilities, never defined in App.css.
 const NOT_EXPECTED_IN_APP_CSS = new Set([
     'fg-panel-widget',
+    'fg-srow-body', // motion hook (presence.ts collapses it on exit)
     'h-full', 'flex', 'flex-col', 'flex-shrink-0', 'flex-1', 'min-h-0', 'overflow-y-auto',
 ]);
 function undefinedClasses(roots: Element[]): string[] {

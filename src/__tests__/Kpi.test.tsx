@@ -6,6 +6,17 @@ import { readFileSync } from 'node:fs';
 
 afterEach(cleanup);
 
+describe('Kpi — value fade on change', () => {
+    it('remounts the value element when the value changes (so it fades in), and keeps it otherwise', () => {
+        const { rerender } = render(<Kpi label="Mean" value="61.2" testId="t" />);
+        const first = screen.getByTestId('t').querySelector('.wb3-kpi-v');
+        rerender(<Kpi label="Mean" value="61.2" sub="x" testId="t" />);
+        expect(screen.getByTestId('t').querySelector('.wb3-kpi-v')).toBe(first);
+        rerender(<Kpi label="Mean" value="62.0" sub="x" testId="t" />);
+        expect(screen.getByTestId('t').querySelector('.wb3-kpi-v')).not.toBe(first);
+    });
+});
+
 // The KPI tiles of the Build Model Workbench ("Workbench detail pages v2", SPEC §5–§7).
 describe('Kpi — one tile', () => {
     it('prints the label, the value, the unit after the value and the caption under it, in that order', () => {

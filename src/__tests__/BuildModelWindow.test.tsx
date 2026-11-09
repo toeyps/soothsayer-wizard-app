@@ -1734,7 +1734,25 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(mockClose).toHaveBeenCalledTimes(1);
         });
 
-        it('does not intercept the close at all once nothing is pending', async () => {
+        it('with motion on, a close with nothing pending is held for the fade-out, then the window closes itself', async () => {
+            render(<BuildModelWindow />);
+            await deliverData();
+            const realGCS = window.getComputedStyle;
+            const spy = vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element) =>
+                new Proxy(realGCS(el), { get: (t, k) => k === 'transitionDuration' ? '0.12s' : Reflect.get(t, k) }));
+            try {
+                const preventDefault = vi.fn();
+                await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+                expect(preventDefault).toHaveBeenCalledTimes(1);
+                expect(document.documentElement.classList.contains('m-leaving')).toBe(true);
+                expect(mockClose).toHaveBeenCalledTimes(1);
+            } finally {
+                spy.mockRestore();
+                document.documentElement.classList.remove('m-leaving');
+            }
+        });
+
+        it('does not intercept the close at all once nothing is pending (no motion: nothing to fade)', async () => {
             render(<BuildModelWindow />);
             await deliverData();
             expect(mockCloseRequestedHandler).not.toBeNull();

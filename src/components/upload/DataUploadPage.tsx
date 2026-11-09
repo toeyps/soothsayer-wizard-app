@@ -590,7 +590,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   // Step 0 ("Get started") is its own full-bleed screen, no rail or action bar. The later steps share the setup rail + footer.
   if (step === 0) {
     return (
-      <div style={pageStyle}>
+      <div key="step-0" className="page-step" style={pageStyle}>
         <HomeStep
           T={T}
           workspaces={workspaces}
@@ -640,7 +640,7 @@ export default function DataUploadPage({ onDataReady, newProjectSignal = 0 }: Da
   };
 
   return (
-    <div style={pageStyle}>
+    <div key={`step-${step}`} className="page-step" style={pageStyle}>
       <div style={{ display: "grid", gridTemplateColumns: "268px minmax(0, 1fr)", background: T.bg, flex: 1, minHeight: 0 }}>
         {/* Step content is first in DOM order, the rail after it (placed left by the grid), so Tab reaches the step's controls first. */}
         <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0, gridColumn: 2, gridRow: 1 }}>

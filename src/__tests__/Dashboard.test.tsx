@@ -4659,3 +4659,57 @@ describe('Dashboard landing tab and "Assign sensors" mode (customer batch 2026-1
         expect(state.failureGroupState.groups).toEqual([NONE, { no: 1, name: 'Bearing' }, { no: 4, name: 'Seal' }, { no: 5, name: 'Empty Group' }]);
     });
 });
+
+describe('motion hooks (tab indicator, content swap, delayed chart dim)', () => {
+    const tabs = (c: HTMLElement) => [...c.querySelectorAll<HTMLButtonElement>('.dash-tabs .dash-tab')];
+
+    it('panel tabs carry dash-tab / dash-tab--on and no inline underline (the sliding indicator draws it)', () => {
+        const { container } = renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        const all = tabs(container);
+        expect(all.length).toBe(6);
+        const on = all.filter(b => b.classList.contains('dash-tab--on')).map(b => b.textContent);
+        expect(on).toEqual(['Selected Sensor (1)', 'Sensor (3) · 1 selected']);
+        for (const b of all) expect(b.style.borderBottomColor).toBe('transparent');
+    });
+
+    it('the Sensor tab shows "· N selected" only when sensors are selected (the box above the list is gone)', () => {
+        const { container } = renderDashboard({ initialState: makeInitialState({ selectedSensors: [], visibleSensors: [] }) });
+        expect(container.querySelector('.dash-tab-note')).toBeNull();
+        fireEvent.click(screen.getByText('select-tag1-tag2'));
+        expect(container.querySelector('.dash-tab-note')?.textContent).toBe(' · 2 selected');
+    });
+
+    it('switching a panel tab remounts its content (m-swap crossfades the new block)', () => {
+        const { container } = renderDashboard({ initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) });
+        const before = container.querySelector('.data-widget .widget-content')!;
+        expect(before.classList.contains('m-swap')).toBe(true);
+        fireEvent.click(tabs(container).find(b => b.textContent === 'Filter')!);
+        const after = container.querySelector('.data-widget .widget-content')!;
+        expect(after).not.toBe(before);
+        expect(after.classList.contains('m-swap')).toBe(true);
+    });
+
+    it('the empty Selected Sensor state carries m-empty', () => {
+        renderDashboard({ initialState: makeInitialState({ selectedSensors: [], visibleSensors: [] }) });
+        expect(screen.getByText(/No sensors plotted yet/).classList.contains('m-empty')).toBe(true);
+    });
+
+    it('the chart dims to 0.6 only after a query has run for 300 ms', () => {
+        vi.useFakeTimers();
+        const props = { metadata: makeMetadata(), sensorMetadata, onBack: vi.fn(), initialState: makeInitialState({ selectedSensors: ['TAG1'], visibleSensors: ['TAG1'] }) };
+        const { container, rerender } = render(<Dashboard {...props} />);
+        const wrap = () => container.querySelector<HTMLElement>('.chart-wrapper')!;
+        expect(wrap().classList.contains('m-swap')).toBe(true);
+        expect(wrap().style.opacity).toBe('1');
+        mockUseChartData.mockReturnValue({ view: null, loading: true, error: null });
+        rerender(<Dashboard {...props} />);
+        expect(wrap().style.opacity).toBe('1');
+        act(() => { vi.advanceTimersByTime(299); });
+        expect(wrap().style.opacity).toBe('1');
+        act(() => { vi.advanceTimersByTime(2); });
+        expect(wrap().style.opacity).toBe('0.6');
+        mockUseChartData.mockReturnValue({ view: null, loading: false, error: null });
+        rerender(<Dashboard {...props} />);
+        expect(wrap().style.opacity).toBe('1');
+    });
+});

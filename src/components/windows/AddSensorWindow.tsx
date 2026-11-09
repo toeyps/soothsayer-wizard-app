@@ -35,6 +35,7 @@ import type { Invoker } from "../../utils/specialSensorRecompute";
 import { SensorMetaProvider } from '../sensor/SensorLabel';
 import { buildSensorLookup, sensorPlainLabel } from '../sensor/sensorInfo';
 import { PaneResizeHandle, readSavedPaneWidth } from '../PaneResizeHandle';
+import { fadeOutWindow, undoFadeOutWindow } from '../../motion/windowFade';
 import {
     blockOperationConfig, editorStateFormula, editorStateToRecipe, type FormulaEditorState,
 } from "../../utils/quickBuild";
@@ -1009,7 +1010,8 @@ export default function AddSensorWindow() {
         const d = slotRef.current;
         if (d) await scheduleCommit(d);
         await queue.idle();
-        await getCurrentWindow().close();
+        await fadeOutWindow();
+        try { await getCurrentWindow().close(); } catch { undoFadeOutWindow(); }
     };
 
     // Create builds what the Formula editor holds; an empty editor builds nothing.
@@ -1433,7 +1435,9 @@ export default function AddSensorWindow() {
                 className="special-sensor-body"
                 aria-busy={adding || undefined}
                 style={{
-                    display: activeTab === 'create' ? 'grid' : 'none',
+                    display: 'grid',
+                    // Hidden, not unmounted (the editor keeps its state); the stylesheet fades it.
+                    ...(activeTab === 'create' ? null : { position: 'absolute', inset: 0, opacity: 0, visibility: 'hidden', pointerEvents: 'none' }),
                     // Never moved: the stylesheet's width (320 px, 230 px under 860 px).
                     ...(paneWidth ? { gridTemplateColumns: `${paneWidth}px minmax(0, 1fr)` } : null),
                     ...(adding ? { pointerEvents: 'none', opacity: 0.7 } : null),

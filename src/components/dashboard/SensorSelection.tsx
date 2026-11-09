@@ -160,11 +160,26 @@ export default function SensorSelection({
         [sensors, sensorMetadata]
     );
 
+    // The group just opened: its rows get the reveal (windowed rows mount on every scroll, so never all rows).
+    // Played on mount (Web Animations), so no class is added or stripped later: nothing re-renders, nothing blinks.
+    const reveal = useRef<{ comp: string | null; until: number; i: number }>({ comp: null, until: 0, i: 0 });
+    const revealSeen = useRef(new WeakSet<HTMLElement>());
+    const revealRow = (el: HTMLElement, comp: string) => {
+        if (revealSeen.current.has(el)) return; // ref callbacks re-run on every render: a row reveals once, when it mounts
+        revealSeen.current.add(el);
+        const r = reveal.current;
+        if (r.comp !== comp || performance.now() > r.until) return;
+        const scale = parseFloat(getComputedStyle(el).getPropertyValue('--motion-scale'));
+        if (!(scale > 0)) return; // reduced motion, or no motion stylesheet
+        const i = Math.min(r.i++, 5);
+        el.animate([{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }],
+            { duration: 180 * scale, delay: i * 30 * scale, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'backwards' });
+    };
     const toggleComponentExpanded = (comp: string) => {
         setExpandedComponents(prev => {
             const next = new Set(prev);
             if (next.has(comp)) next.delete(comp);
-            else next.add(comp);
+            else { next.add(comp); reveal.current = { comp, until: performance.now() + 400, i: 0 }; }
             return next;
         });
     };
@@ -298,7 +313,7 @@ export default function SensorSelection({
         return (
             <div
                 key={sensor}
-                ref={(el) => { if (el) rowEls.current.set(sensor, el); else rowEls.current.delete(sensor); }}
+                ref={(el) => { if (el) { revealRow(el, meta?.component || UNCATEGORIZED); rowEls.current.set(sensor, el); } else rowEls.current.delete(sensor); }}
                 className={`sensor-list-row${sheetOpen ? ' sensor-list-row--fg-target' : ''}`}
                 data-fg-target={sheetOpen ? 'true' : undefined}
                 onClick={() => handleSensorToggle(sensor)}
@@ -648,17 +663,6 @@ export default function SensorSelection({
                     </div>
                 )}
 
-                {selectedSensors.length > 0 && (
-                    <div style={{
-                        padding: '6px 10px',
-                        background: 'var(--accent-muted)',
-                        border: '1px solid var(--accent-color)',
-                        borderRadius: '6px',
-                        fontSize: '0.8rem',
-                    }}>
-                        <span>{selectedSensors.length} sensor{selectedSensors.length !== 1 ? 's' : ''} selected</span>
-                    </div>
-                )}
             </div>
 
             <div className="sensor-list-widget flex-1 min-h-0 overflow-y-auto" ref={listRef} onScroll={readView}>

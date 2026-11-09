@@ -63,6 +63,7 @@ import { useTrainQueue } from "../../hooks/useTrainQueue";
 import type { TrainCandidate, TrainFixTarget, TrainOutcome } from "../../types/trainQueue";
 import { classifyTrainPlan, countTrainPlans, formatTrainSeconds, isStaleTrainError, missingSettingsText, noRowsTrainError, preflightReason, REQUIRED_FIELDS_BLOCK_REASON, ROUGH_TRAIN_SECONDS, roughTrainSeconds, trainButtonsBlockedReason, TRAIN_NEEDS_RUNNING_CONDITION, TRAIN_STALE_MESSAGE } from "../../utils/trainQueue";
 import { fgLabel } from '../../utils/fgLabel';
+import { exitMs, fadeOutWindow, undoFadeOutWindow } from '../../motion/windowFade';
 
 /** Delay before the "up to ~15 s" hint shows for a Relation-model preview that scores periods. */
 const SLOW_SCORING_HINT_DELAY_MS = 1200;
@@ -1937,8 +1938,10 @@ export default function BuildModelWindow() {
         await stopEngineIfBusy();
         leavingRef.current = true;
         try {
+            await fadeOutWindow();
             await getCurrentWindow().close();
         } catch {
+            undoFadeOutWindow();
             leavingRef.current = false;
             tellCloseKept();
         }
@@ -2046,6 +2049,8 @@ export default function BuildModelWindow() {
             const pending = pendingSaveRef.current;
             // A running Mark complete counts as pending too, and so does a running Export results.
             if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) {
+                // Nothing pending: held only for the fade-out (none under reduced motion), then leaveWindow closes it.
+                if (exitMs() > 0) { event.preventDefault(); await leaveWindow(); return; }
                 await stopEngineIfBusy();
                 return;
             }
@@ -4160,6 +4165,7 @@ export default function BuildModelWindow() {
                         )}
                         {page === 'health' && renderRunSetPointsBanner(activeModel)}
                         {/* No data in the loaded file: Health score shows the same one board as Model fit (the score uses that data too). */}
+                        <div key={`${activeModel.id}:${page}`} className="bmw-pagebody m-swap">
                         {page === 'model' ? renderModelFitBody(activeModel) : activeNoData ? noDataBoard(activeModel, activeNoData) : (
                             <HealthScorePage
                                 key={activeModel.id}
@@ -4177,6 +4183,7 @@ export default function BuildModelWindow() {
                                 testsChanged={testsChangedState(activeModel, gateFg)}
                             />
                         )}
+                        </div>
                     </WorkbenchScroll>
                     {parts.notice}
                 </div>
@@ -4531,7 +4538,7 @@ export default function BuildModelWindow() {
                             </div>
                         </aside>
                     )}
-                    <section className="bmw-detail">{renderDetailPane()}</section>
+                    <section key={selectedSensorKey ?? 'none'} className="bmw-detail m-swap">{renderDetailPane()}</section>
                 </div>
                 {/* Export results: the window's bottom bar, under the list AND the detail pane. */}
                 <ExportBar

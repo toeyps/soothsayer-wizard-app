@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Portal from '../Portal';
 
 /** How long an "… — Undo" toast stays up, in seconds (the Dashboard's model
@@ -28,13 +28,16 @@ function UndoToast({ toast, onUndo, onExpire, durationMs }: {
     // Latest callback without restarting the timer when the parent re-renders.
     const expireRef = useRef(onExpire);
     expireRef.current = onExpire;
+    // Fades out for --dur-exit before it expires (an Undo click removes it at once).
+    const [leaving, setLeaving] = useState(false);
     useEffect(() => {
         const timer = setTimeout(() => expireRef.current(toast.id), durationMs);
-        return () => clearTimeout(timer);
+        const fade = setTimeout(() => setLeaving(true), Math.max(0, durationMs - 160));
+        return () => { clearTimeout(timer); clearTimeout(fade); };
     }, [toast.id, durationMs]);
 
     return (
-        <div className="fg-undo-toast" data-testid="fg-undo-toast">
+        <div className="fg-undo-toast" data-testid="fg-undo-toast" data-leaving={leaving || undefined}>
             <i className="fg-undo-toast-dot" aria-hidden="true" />
             <span className="fg-undo-toast-msg">{toast.message}</span>
             <button type="button" className="fg-undo-toast-btn" onClick={() => onUndo(toast.id)}>Undo</button>

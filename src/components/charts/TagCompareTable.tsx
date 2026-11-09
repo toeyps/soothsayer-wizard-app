@@ -43,7 +43,7 @@ export default function TagCompareTable({ items, rows, onRemove, emptyFocusRef, 
         <SensorSetProvider names={setNames} drop>
         <section className={`tag-table${panel ? ' tag-table--panel' : ''}`} data-testid="tag-table" aria-label="Values at the tagged points">
             <div
-                className="tag-table-grid"
+                className="tag-table-grid m-stagger"
                 // Capped columns plus a last 1fr one so the head band and row lines span the tab; many tags shrink to 124 px, then scroll.
                 style={{ gridTemplateColumns: `minmax(220px, 400px) repeat(${items.length}, minmax(124px, 152px)) minmax(0, 1fr)` }}
             >

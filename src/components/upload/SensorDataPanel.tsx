@@ -52,6 +52,7 @@ function TimestampFormatNote({ T }: { T: Tokens }) {
   const code = { fontFamily: mono, fontSize: 11, color: T.text, padding: '1px 6px', borderRadius: 5, background: T.bg, border: `1px solid ${T.border}` };
   return (
     <div
+      className="up-reveal"
       data-testid="timestamp-format-note"
       role="note"
       style={{ display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 11, fontSize: 12.5, border: `1px solid ${T.border}`, background: T.accentMuted }}
@@ -79,6 +80,7 @@ function Kpi({
   return (
     <div
       data-testid="summary-card"
+      className="up-tile"
       style={{
         gridColumn: wide ? 'span 2' : undefined, minWidth: 0,
         border: `1px solid ${T.border}`, borderRadius: 11, padding: '10px 12px', background: T.bg,
@@ -87,7 +89,7 @@ function Kpi({
       <div style={{ fontFamily: mono, fontSize: 10, fontWeight: 500, letterSpacing: '0.08em', textTransform: 'uppercase', color: T.textFaint }}>
         {label}
       </div>
-      <div style={{
+      <div key={value} className="up-val" style={{
         marginTop: 3, fontFamily: mono, fontWeight: 600, letterSpacing: '-0.02em', color: T.text,
         fontSize: small ? 13 : 18, lineHeight: small ? 1.5 : 1.3,
       }}>
@@ -191,7 +193,7 @@ export default function SensorDataPanel({
         )}
 
         {hasFiles && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div className="m-stagger" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {files.map((path, i) => {
               const name = baseName(path);
               const info = findFileInfo(report, path, i);
@@ -269,7 +271,7 @@ export default function SensorDataPanel({
         )}
 
         {error && (
-          <div style={{
+          <div className="up-banner" style={{
             padding: '8px 10px', borderRadius: 7, display: 'flex', alignItems: 'center', gap: 8,
             background: 'oklch(0.68 0.2 25 / 0.1)', border: '1px solid oklch(0.68 0.2 25 / 0.3)',
             fontSize: 11.5, color: T.danger,
@@ -305,6 +307,7 @@ export default function SensorDataPanel({
           <>
             <div
               data-testid="summary-grid"
+              className="m-stagger"
               style={{ display: 'grid', gap: 8, gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))' }}
             >
               {summary.rows !== null && (
@@ -334,6 +337,7 @@ export default function SensorDataPanel({
         {/* Non-fatal reading issues (duplicate columns, merged timestamps, year corrected); parsing succeeded. */}
         {warnings.length > 0 && (
           <div
+            className="up-banner"
             data-testid="fixed-while-reading"
             style={{
               display: 'flex', gap: 10, padding: '10px 12px', borderRadius: 11, fontSize: 12.5,
@@ -392,6 +396,7 @@ function TimeZoneLine({ T, value, onChange }: { T: Tokens; value: number; onChan
   const isPc = value === pcOffsetMin();
   return (
     <div
+      className="up-reveal"
       data-testid="tz-line"
       title={TZ_TOOLTIP}
       style={{ display: 'flex', alignItems: 'center', gap: 8, whiteSpace: 'nowrap', minWidth: 0, fontSize: 11.5, color: T.textMuted }}
@@ -399,7 +404,7 @@ function TimeZoneLine({ T, value, onChange }: { T: Tokens; value: number; onChan
       <Clock size={12} style={{ flexShrink: 0, color: T.textFaint }} />
       <span>Timestamps read as local time ·</span>
       {editing && onChange ? (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <span className="m-swap" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span style={{ width: 190 }}>
             <TimeZoneSelect
               selectRef={selectRef}

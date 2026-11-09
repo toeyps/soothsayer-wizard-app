@@ -177,19 +177,50 @@ describe('SensorSelection', () => {
             });
         });
 
-        it('shows a singular/plural selected-count badge', () => {
-            const { rerender } = render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
-            expect(screen.getByText('1 sensor selected')).toBeTruthy();
-            rerender(<SensorSelection {...makeProps({ selectedSensors: ['TAG1', 'TAG2'] })} />);
-            expect(screen.getByText('2 sensors selected')).toBeTruthy();
+        it('shows no selected-count box above the list (the count sits in the Dashboard tab title)', () => {
+            render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1', 'TAG2'] })} />);
+            expect(screen.queryByText(/sensors? selected/)).toBeNull();
         });
 
-        it('the selected-count badge uses the design-token CSS variables, not hardcoded colors', () => {
-            render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
-            const badge = screen.getByText('1 sensor selected').closest('div') as HTMLElement;
-            expect(badge.style.background).toBe('var(--accent-muted)');
-            expect(badge.style.border).toContain('var(--accent-color)');
-            expect(badge.style.background).not.toMatch(/#[0-9a-f]{3,6}/i);
+        describe('opening a group reveals its rows once', () => {
+            const animate = vi.fn();
+            let scale = '1';
+            const realGCS = window.getComputedStyle;
+            beforeEach(() => {
+                animate.mockClear();
+                scale = '1';
+                (HTMLElement.prototype as unknown as { animate: unknown }).animate = animate;
+                // jsdom does not inherit custom properties: stub the resolved --motion-scale.
+                vi.spyOn(window, 'getComputedStyle').mockImplementation((el: Element) => {
+                    const cs = realGCS(el);
+                    return new Proxy(cs, { get: (t, k) => k === 'getPropertyValue' ? (n: string) => n === '--motion-scale' ? scale : t.getPropertyValue(n) : Reflect.get(t, k) });
+                });
+            });
+            afterEach(() => {
+                delete (HTMLElement.prototype as unknown as { animate?: unknown }).animate;
+                vi.mocked(window.getComputedStyle).mockRestore();
+            });
+
+            it('animates each row of the opened group, staggered, with backwards fill', () => {
+                render(<SensorSelection {...makeProps()} />);
+                expandPump();
+                expect(animate).toHaveBeenCalledTimes(2); // TAG1, TAG2
+                const delays = animate.mock.calls.map(c => (c[1] as KeyframeAnimationOptions).delay);
+                expect(delays.slice(0, 2)).toEqual([0, 30]);
+                expect(animate.mock.calls.every(c => (c[1] as KeyframeAnimationOptions).fill === 'backwards')).toBe(true);
+            });
+
+            it('nothing animates until a group is opened', () => {
+                render(<SensorSelection {...makeProps({ selectedSensors: ['TAG1'] })} />);
+                expect(animate).not.toHaveBeenCalled();
+            });
+
+            it('does nothing when --motion-scale is 0 (reduced motion)', () => {
+                scale = '0';
+                render(<SensorSelection {...makeProps()} />);
+                fireEvent.click(screen.getByText('Uncategorized'));
+                expect(animate).not.toHaveBeenCalled();
+            });
         });
     });
 

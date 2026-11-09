@@ -98,6 +98,8 @@ const SLOT_LAYOUT: DashboardSlotMap = {
 const LEFT_SLOTS: DashboardSlot[] = ['left-top', 'left-bottom'];
 const RIGHT_SLOTS: DashboardSlot[] = ['right-top'];
 
+// Sub-window background = --bg-primary, so a new window never shows a white frame.
+const WINDOW_BG = '#0a0a0b';
 // Rust min/max-decimates to this many x-positions (~2 per pixel), keeping IPC and heap bounded.
 const LINE_MAX_POINTS = 4000;
 /** Pair Plot draws the sample once per cell (up to 10 WebGL canvases), so its cap is far smaller than Scatter's. */
@@ -1337,6 +1339,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 center: true,
                 maximized: true,
                 decorations: isMac,
+                backgroundColor: WINDOW_BG, // no white frame before the page paints
             });
             webview.once('tauri://error', (e) => console.error('Failed to open build model window:', e));
         } catch (err) {
@@ -1829,6 +1832,14 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     useEffect(() => {
         if (scatterSample.error) reportError('scatter-sample', scatterSample.error);
     }, [scatterSample.error]);
+    // The loading dim waits 300 ms: a fast query never dims, so a chart that just appeared does not dip and come back.
+    const chartBusy = loading || (scatterActive && scatterSample.loading);
+    const [chartDim, setChartDim] = useState(false);
+    useEffect(() => {
+        if (!chartBusy) { setChartDim(false); return; }
+        const t = setTimeout(() => setChartDim(true), 300);
+        return () => clearTimeout(t);
+    }, [chartBusy]);
 
     // Same single-op transform as the line path; multi-op is left untransformed (the chart shows its guard).
     const scatterFeed = useMemo<CsvRecord[]>(() => {
@@ -1982,7 +1993,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     </button>
                 </div>
             </div>
-            <div className="chart-wrapper" style={{ opacity: (loading || (scatterActive && scatterSample.loading)) ? 0.6 : 1, transition: 'opacity 0.2s' }}>
+            <div key={chartType} className="chart-wrapper m-swap" style={{ opacity: chartDim ? 0.6 : 1, transition: 'opacity 0.2s' }}>
                 {chartType === 'line' ? (
                     // Bounded columnar feed from Rust — the chart never sees
                     // (or allocates) more than LINE_MAX_POINTS positions.
@@ -2165,14 +2176,15 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const renderDataContent = () => (
         <div className="widget-section data-widget">
             <div className="section-header collapsible-header">
-                <div className="section-header-left" style={{ gap: '4px' }}>
+                <div className="section-header-left dash-tabs" style={{ gap: '4px' }}>
                     {(['selected', 'filter', 'highlights', 'tags'] as const).map(tab => (
                         <button
                             key={tab}
+                            className={`dash-tab${activeDataTab === tab ? ' dash-tab--on' : ''}`}
                             onClick={() => setActiveDataTab(tab)}
                             style={{
                                 background: 'none', border: 'none',
-                                borderBottom: activeDataTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
+                                borderBottom: '2px solid transparent',
                                 color: activeDataTab === tab ? '#3b82f6' : 'var(--text-secondary)',
                                 fontSize: '0.85rem', fontWeight: 600,
                                 padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
@@ -2208,7 +2220,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     </button>
                 </div>
             </div>
-            <div className="widget-content">
+            <div key={activeDataTab} className="widget-content m-swap">
                 {activeDataTab === 'filter' ? (
                     <div className="filter-content">
                         <FilterPanel
@@ -2257,7 +2269,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                 ) : (
                     <div className="custom-scrollbar" style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
                         {selectedSensors.length === 0 && (
-                            <div style={{ padding: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
+                            <div className="m-empty" style={{ padding: '1rem', fontSize: '0.8rem', color: 'var(--text-secondary)', opacity: 0.6 }}>
                                 No sensors plotted yet — pick some from the Sensor panel.
                             </div>
                         )}
@@ -2402,10 +2414,11 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
     const renderSensorsContent = () => (
         <div className="widget-section" ref={sensorsSectionRef}>
             <div className="section-header collapsible-header">
-                <div className="section-header-left" style={{ gap: '4px' }}>
+                <div className="section-header-left dash-tabs" style={{ gap: '4px' }}>
                     {(['sensor', 'failure-groups'] as const).map(tab => (
                         <button
                             key={tab}
+                            className={`dash-tab${activeSensorTab === tab ? ' dash-tab--on' : ''}`}
                             ref={tab === 'failure-groups' ? fgTabButtonRef : undefined}
                             onClick={() => {
                                 setActiveSensorTab(tab);
@@ -2414,13 +2427,13 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                             }}
                             style={{
                                 background: 'none', border: 'none',
-                                borderBottom: activeSensorTab === tab ? '2px solid #3b82f6' : '2px solid transparent',
+                                borderBottom: '2px solid transparent',
                                 color: activeSensorTab === tab ? '#3b82f6' : 'var(--text-secondary)',
                                 fontSize: '0.85rem', fontWeight: 600,
                                 padding: '4px 6px', marginBottom: '-1px', cursor: 'pointer',
                             }}
                         >
-                            {tab === 'sensor' ? `Sensor (${allSensorTags.length})` : 'Failure Groups'}
+                            {tab === 'sensor' ? <>Sensor ({allSensorTags.length}){selectedSensors.length > 0 && <span className="dash-tab-note"> · {selectedSensors.length} selected</span>}</> : 'Failure Groups'}
                         </button>
                     ))}
                 </div>
@@ -2432,7 +2445,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                     <EyeOff size={14} />
                 </button>
             </div>
-            <div className="widget-content">
+            <div key={activeSensorTab} className="widget-content m-swap">
                 {activeSensorTab === 'sensor' ? (
                     <SensorSelection
                         sensors={allSensorTags}
@@ -2502,6 +2515,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
                                 minHeight: 400,
                                 center: true,
                                 alwaysOnTop: false,
+                                backgroundColor: WINDOW_BG,
                                 decorations: false
                             });
                             await webview.once('tauri://created', function () { });

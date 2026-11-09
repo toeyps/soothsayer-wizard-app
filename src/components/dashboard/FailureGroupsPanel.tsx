@@ -203,7 +203,7 @@ export default function FailureGroupsPanel({
                     })}
                 </div>
                 {open && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', margin: '4px 0 2px 15px', paddingLeft: '8px', borderLeft: '1px solid var(--border)' }}>
+                    <div className="fg-srow-body" style={{ display: 'flex', flexDirection: 'column', gap: '3px', margin: '4px 0 2px 15px', paddingLeft: '8px', borderLeft: '1px solid var(--border)' }}>
                         {sg.models.map(m => renderModelRow(m))}
                     </div>
                 )}

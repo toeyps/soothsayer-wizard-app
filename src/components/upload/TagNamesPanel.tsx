@@ -117,7 +117,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
             </p>
 
             {mapping.mappingFilePath ? (
-              <div style={{
+              <div className="up-tag-head m-swap" style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '8px 8px 8px 10px',
                 background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10,
               }}>
@@ -149,6 +149,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
               <>
                 <button
                   type="button"
+                  className="up-pick m-swap"
                   onClick={mapping.selectMappingFile}
                   disabled={mapping.isLoading}
                   style={{
@@ -173,7 +174,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
             )}
 
             {mapping.mappingData && !mapping.keyColumn && (
-              <div style={{ padding: 10, background: T.surfaceHi, border: `1px solid ${T.border}`, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div className="up-reveal m-stagger" style={{ padding: 10, background: T.surfaceHi, border: `1px solid ${T.border}`, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <Eyebrow T={T} style={{ fontSize: 10 }}>Pick tag column</Eyebrow>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                   {mapping.mappingData.headers.map((h) => (
@@ -194,7 +195,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
             )}
 
             {mapping.error && (
-              <div style={{
+              <div className="up-banner" style={{
                 padding: '8px 10px', borderRadius: 7, fontSize: 11.5, color: T.danger,
                 background: 'oklch(0.68 0.2 25 / 0.1)', border: '1px solid oklch(0.68 0.2 25 / 0.3)',
               }}>
@@ -219,6 +220,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
 
                 <div
                   data-testid="match-summary"
+                  className="up-reveal"
                   style={{ display: 'flex', alignItems: 'center', gap: 14, padding: 12, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 12 }}
                 >
                   {fraction !== null && (
@@ -249,7 +251,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
                 {components.length > 0 && (
                   <div>
                     <Eyebrow T={T} style={{ marginBottom: 6 }}>Components</Eyebrow>
-                    <div data-testid="component-chips" style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                    <div data-testid="component-chips" className="m-stagger" style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
                       {components.map((c) => (
                         <span key={c.name} style={{
                           fontSize: 11, color: T.textMuted, padding: '1px 8px',
@@ -265,7 +267,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
 
                 <div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 4, borderBottom: `1px solid ${T.border}` }}>
-                    <div role="tablist" style={{ display: 'flex', gap: 4 }}>
+                    <div role="tablist" className="tn-tabs" style={{ display: 'flex', gap: 4 }}>
                       {([
                         { id: 'matched' as const, label: 'Matched', n: matchedCount },
                         ...(noNameTags.length > 0 ? [{ id: 'noname' as const, label: 'No name', n: noNameTags.length }] : []),
@@ -305,7 +307,7 @@ export default function TagNamesPanel({ T, locked, mapping }: TagNamesPanelProps
 
                   <div style={{ maxHeight: 250, overflow: 'auto' }}>
                     <table data-testid="tag-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                      <tbody>
+                      <tbody key={activeTab} className="m-stagger m-swap">
                         {activeTab === 'matched'
                           ? filteredMatched.slice(0, MAX_ROWS).map((r) => (
                             <tr key={r.tag}>

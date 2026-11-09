@@ -15,7 +15,8 @@ const relPath = (from: string, to: string): string => relative(from, to);
 /** vitest runs with the repo root as cwd (the same assumption BuildModelWindow.test.tsx makes). */
 const ROOT = '.';
 const SRC = joinPath(ROOT, 'src');
-const RAW_CSS = readText(joinPath(SRC, 'App.css'));
+// motion.css (imported from main.tsx) carries the motion tokens, keyframes and m-* classes.
+const RAW_CSS = readText(joinPath(SRC, 'App.css')) + '\n' + readText(joinPath(SRC, 'motion.css'));
 const CSS = RAW_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
 
 /** Prefixes whose classes are hand-written in App.css (not tailwind utilities). */
@@ -26,6 +27,7 @@ const STYLED_PREFIXES = [
     'special-sensor', 'highlights', 'timebar', 'line-chart',
     'tpe', 'vt',                       // Train/Test validation (TestPeriodsEditor, ValidationCards)
     'sl', 'pk', 'cp', 'tt',            // shared SensorLabel / SensorPicker / ColourPicker / tooltip rows
+    'm', 'dash-tab',                   // motion.css classes (m-swap, m-empty, ...) and the Dashboard panel tabs
 ];
 
 /** Class tokens rendered with no rule on purpose (structural hooks / default look of a modifier family). Say why when adding. */
@@ -34,6 +36,9 @@ const ALLOW_UNSTYLED = new Set<string>([
     'scatter-regl-axes',               // inline-styled SVG overlay (ScatterChart)
     'scatter-regl-canvas-wrap',        // inline-styled wrapper (ScatterChart)
     'wb2-card--normal',                // default ChartCard size = the base `.wb2-card` look
+    'fg-srow-body',                    // motion hook: presence.ts collapses it on exit
+    'bmw-pagebody',                    // motion hook: presence.ts crossfades it (SWAP)
+    'm-panel',                         // panelMotion.ts animation id, not a class
 ]);
 
 /** Dynamic suffix families: prefix -> every value the code can produce. */
