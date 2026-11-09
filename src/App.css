@@ -3432,7 +3432,14 @@ body {
     border-top: 1px solid var(--border);
     flex-wrap: wrap;
 }
+/* Start and end each sit in their own box, like the Highlights form. */
 .timebar-range {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--text-faint);
+}
+.timebar-date {
     display: inline-flex;
     align-items: center;
     background: var(--card-bg);
@@ -3440,8 +3447,8 @@ body {
     border-radius: 9px;
     height: 30px;
     padding: 0 4px 0 6px;
-    color: var(--text-faint);
 }
+.timebar-date:focus-within { border-color: var(--accent-color); }
 .timebar-range input {
     background: none;
     border: 0;

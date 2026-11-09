@@ -2027,41 +2027,45 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
             <div className="timebar">
                 {/* Each side has its own calendar button. An unfinished date changes nothing (clearing would show the full range over the typing); blank clears it. */}
                 <div className="timebar-range">
-                    <DateTime24Input
-                        ariaLabel="Start date"
-                        calClassName="timebar-cal"
-                        calLabel="Pick start date"
-                        value={displayTimestampStart}
-                        min={dataStartInput}
-                        max={dataEndInput}
-                        onChange={(value) => {
-                            if (!value) return;
-                            handleFiltersChange({ ...filters, timestampStart: value });
-                            setRelativeRangeApplied(false);
-                        }}
-                        onClear={() => {
-                            handleFiltersChange({ ...filters, timestampStart: '' });
-                            setRelativeRangeApplied(false);
-                        }}
-                    />
+                    <div className="timebar-date">
+                        <DateTime24Input
+                            ariaLabel="Start date"
+                            calClassName="timebar-cal"
+                            calLabel="Pick start date"
+                            value={displayTimestampStart}
+                            min={dataStartInput}
+                            max={dataEndInput}
+                            onChange={(value) => {
+                                if (!value) return;
+                                handleFiltersChange({ ...filters, timestampStart: value });
+                                setRelativeRangeApplied(false);
+                            }}
+                            onClear={() => {
+                                handleFiltersChange({ ...filters, timestampStart: '' });
+                                setRelativeRangeApplied(false);
+                            }}
+                        />
+                    </div>
                     <span className="timebar-range-sep">→</span>
-                    <DateTime24Input
-                        ariaLabel="End date"
-                        calClassName="timebar-cal"
-                        calLabel="Pick end date"
-                        value={displayTimestampEnd}
-                        min={dataStartInput}
-                        max={dataEndInput}
-                        onChange={(value) => {
-                            if (!value) return;
-                            handleFiltersChange({ ...filters, timestampEnd: value });
-                            setRelativeRangeApplied(false);
-                        }}
-                        onClear={() => {
-                            handleFiltersChange({ ...filters, timestampEnd: '' });
-                            setRelativeRangeApplied(false);
-                        }}
-                    />
+                    <div className="timebar-date">
+                        <DateTime24Input
+                            ariaLabel="End date"
+                            calClassName="timebar-cal"
+                            calLabel="Pick end date"
+                            value={displayTimestampEnd}
+                            min={dataStartInput}
+                            max={dataEndInput}
+                            onChange={(value) => {
+                                if (!value) return;
+                                handleFiltersChange({ ...filters, timestampEnd: value });
+                                setRelativeRangeApplied(false);
+                            }}
+                            onClear={() => {
+                                handleFiltersChange({ ...filters, timestampEnd: '' });
+                                setRelativeRangeApplied(false);
+                            }}
+                        />
+                    </div>
                 </div>
 
                 <span className="timebar-hint">Last</span>

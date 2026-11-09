@@ -4141,12 +4141,15 @@ describe('Dashboard', () => {
             expect(lastCall.filter.timestamp_start).toBeNull();
         });
 
-        it('layout inside the `.timebar-range` pill: start input, its calendar, the arrow, end input, its calendar', () => {
+        it('layout of `.timebar-range`: a start box (input + calendar), the arrow, an end box (input + calendar)', () => {
             render1();
             const wrapper = startInput().closest('.timebar-range')!;
-            const shape = Array.from(wrapper.children).map(c =>
-                c.tagName === 'INPUT' ? 'input' : c.classList.contains('timebar-cal') ? 'cal' : c.classList.contains('timebar-range-sep') ? 'sep' : c.tagName.toLowerCase());
-            expect(shape).toEqual(['input', 'cal', 'sep', 'input', 'cal']);
+            const kind = (c: Element) =>
+                c.tagName === 'INPUT' ? 'input' : c.classList.contains('timebar-cal') ? 'cal' : c.classList.contains('timebar-range-sep') ? 'sep' : c.classList.contains('timebar-date') ? 'box' : c.tagName.toLowerCase();
+            expect(Array.from(wrapper.children).map(kind)).toEqual(['box', 'sep', 'box']);
+            const boxes = wrapper.querySelectorAll(':scope > .timebar-date');
+            boxes.forEach(b => expect(Array.from(b.children).map(kind)).toEqual(['input', 'cal']));
+            expect(boxes[0].contains(startInput())).toBe(true);
         });
     });
 
