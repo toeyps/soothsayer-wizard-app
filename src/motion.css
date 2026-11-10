@@ -76,6 +76,10 @@ button .pm-spin {
     border-radius: 1px;
     background: var(--ind-c, var(--accent-color));
 }
+/* an underline sits on the bottom edge: slide sideways only, never down by the tab's top offset */
+.f4-tabs[data-ind]::after, .wb3-pages[data-ind]::after, .dash-tabs[data-ind]::after, .tn-tabs[data-ind]::after {
+    transform: translateX(var(--ind-x, 0px));
+}
 .wb3-pages[data-ind]::after { bottom: 0; }
 .f4-tabs[data-ind] .f4-tab--on { border-bottom-color: transparent; }
 .wb3-pages[data-ind] .wb3-page--on { border-bottom-color: transparent; }

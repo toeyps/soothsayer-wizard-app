@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, afterAll, beforeAll } from 'vitest';
 import { installSlidingIndicators } from '../../motion/slideIndicator';
+// @ts-expect-error - @types/node is not installed; vitest runs in Node so this resolves at runtime
+import { readFileSync } from 'node:fs';
+
+const motionCss: string = readFileSync('src/motion.css', 'utf8'); // vitest cwd = repo root
 
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 const rect = (left: number, top: number, width: number, height: number) => ({ left, top, width, height, right: left + width, bottom: top + height, x: left, y: top, toJSON: () => ({}) }) as DOMRect;
@@ -32,5 +36,12 @@ describe('slideIndicator', () => {
         document.body.innerHTML = '<div class="dash-tabs"><button class="dash-tab">A</button></div>';
         await flush();
         expect(document.querySelector<HTMLElement>('.dash-tabs')!.style.getPropertyValue('--ind-o')).toBe('0');
+    });
+});
+
+describe('underline tabs (motion.css)', () => {
+    it('slide sideways only, so a tab with top padding does not push the line onto the row below', () => {
+        const rule = motionCss.match(/\.wb3-pages\[data-ind\]::after[^{]*\{\s*transform:\s*([^;]+);/);
+        expect(rule?.[1].trim()).toBe('translateX(var(--ind-x, 0px))');
     });
 });
