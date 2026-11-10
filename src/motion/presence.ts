@@ -35,7 +35,9 @@ const skip = (el: Element) => !!el.closest(SKIP);
 const settle = (a: Animation) => {
     try { if (Number.isFinite(a.effect?.getComputedTiming().endTime as number)) a.finish(); } catch { /* motion must never raise an app error */ }
 };
-const animating = (el: Element) => el.getAnimations().some(a => a.playState === 'running' || a.pending);
+// No Web Animations (old engine, tests): no animations, never an error.
+const anims = (t: Element | Document, opts?: GetAnimationsOptions): Animation[] => (typeof t.getAnimations === 'function' ? (t as Element).getAnimations(opts) : []);
+const animating = (el: Element) => anims(el).some(a => a.playState === 'running' || a.pending);
 
 // Takes a copy out of the flow, pinned where it is now: what replaces it lays out at its final size at once.
 function pin(g: HTMLElement) {
@@ -86,7 +88,7 @@ function flash(el: Element) {
     if (!(el instanceof HTMLElement) || !el.isConnected || skip(el)) return;
     if (el.querySelectorAll('*').length > 40) return; // a change deep in a big container: the leaf flashes, never the page
     // A flash already running keeps running; one React stripped (it rewrites className) is put back.
-    if (el.classList.contains('m-flash') && el.getAnimations().some(a => a.playState === 'running')) return;
+    if (el.classList.contains('m-flash') && anims(el).some(a => a.playState === 'running')) return;
     // While the user types, a count or label flashes at most every 250 ms, so fast typing never shimmers.
     if (el.tagName === 'MARK') return; // search-hit highlights are re-created per keystroke
     const now = Date.now();
@@ -145,7 +147,8 @@ export function installPresence(doc: Document = document) {
     const isAction = (n: Element, parent: Node) => n.matches('.widget-footer') || (parent instanceof Element && parent.matches('.section-header-actions, .widget-header-actions'));
     let quietUntil = 0;
     doc.addEventListener('click', e => { if ((e.target as Element | null)?.closest?.(TAB)) quietUntil = performance.now() + 150; }, true);
-    const mo = new MutationObserver(records => {
+    const mo = new MutationObserver(records => { try { onRecords(records); } catch { /* motion must never raise an app error */ } });
+    const onRecords = (records: MutationRecord[]) => {
         const added = new Set<Element>();
         const still = performance.now() < quietUntil;
         const left = new Map<Node, [HTMLElement, string][]>(); // ghosts per parent in this batch
@@ -167,7 +170,7 @@ export function installPresence(doc: Document = document) {
                 const quiet = refit(r.target);
                 r.addedNodes.forEach(n => {
                     if (quiet || swapped.has(n) || !n.isConnected) return;
-                    if (n instanceof HTMLElement) { if (!still || n.matches(SWAP) || isAction(n, r.target)) added.add(n); else n.getAnimations({ subtree: true }).forEach(settle); }
+                    if (n instanceof HTMLElement) { if (!still || n.matches(SWAP) || isAction(n, r.target)) added.add(n); else anims(n, { subtree: true }).forEach(settle); }
                     else if (!still && n.nodeType === 3 && r.target instanceof HTMLElement && n.textContent?.trim()) flash(r.target);
                 });
                 for (const n of r.removedNodes) {
@@ -189,15 +192,15 @@ export function installPresence(doc: Document = document) {
         for (const gs of left.values()) if (gs.some(([, k]) => k === 'swap')) for (const [g, k] of gs) if (k === 'fade') pin(g);
         for (const el of added) { if (el.isConnected && !(el.parentElement && added.has(el.parentElement))) enter(el); }
         // Swapped-in content reveals as one block: its own parts never reveal a second time inside it.
-        for (const el of added) if (el.isConnected && el.matches(SWAP)) el.getAnimations({ subtree: true }).forEach(a => { if ((a.effect as KeyframeEffect | null)?.target !== el) settle(a); });
+        for (const el of added) if (el.isConnected && el.matches(SWAP)) anims(el, { subtree: true }).forEach(a => { if ((a.effect as KeyframeEffect | null)?.target !== el) settle(a); });
         // After a tab click, colour eases on what merely followed it end at once (before the frame paints).
-        if (still) requestAnimationFrame(() => doc.getAnimations().forEach(a => {
+        if (still) requestAnimationFrame(() => anims(doc).forEach(a => {
             const t = (a.effect as KeyframeEffect | null)?.target as Element | null | undefined;
-            if (a instanceof CSSTransition && t && !t.closest(TABLIST) && !t.closest('.m-ghost')) settle(a);
+            if (typeof CSSTransition !== 'undefined' && a instanceof CSSTransition && t && !t.closest(TABLIST) && !t.closest('.m-ghost')) settle(a);
         }));
         // What each name says now, for the next batch.
         for (const r of records) { const t = r.target instanceof Element ? r.target : r.target.parentElement; const root = t?.isConnected ? t.closest(NAME) : null; if (root) remember(root); if (r.type === 'childList') r.addedNodes.forEach(n => { if (n instanceof Element && n.isConnected) remember(n); }); }
-    });
+    };
     mo.observe(doc.documentElement, { subtree: true, childList: true, characterData: true, characterDataOldValue: true });
     return () => mo.disconnect();
 }

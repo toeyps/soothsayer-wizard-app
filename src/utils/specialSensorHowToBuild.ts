@@ -60,6 +60,29 @@ function directSources(recipe: SpecialSensorRecipe): string[] {
     return recipe.kind === 'formula' ? formulaRefNames(recipe.formula) : [...(recipe.sourceSensors ?? [])];
 }
 
+/** The sensors special sensor `tag` reads directly (may be other special sensors), in formula / listed order; [] without a recipe. */
+export function directSourceTags(recipes: readonly SpecialSensorRecipe[] | null | undefined, tag: string): string[] {
+    const r = recipeOf(recipes, tag);
+    return r ? directSources(r) : [];
+}
+
+/** Every sensor behind special sensor `tag`, special inputs of a chain included, unique; cycles end. */
+export function chainSourceTags(recipes: readonly SpecialSensorRecipe[] | null | undefined, tag: string): string[] {
+    const out: string[] = [];
+    const seen = new Set<string>([normalizeSensorTag(tag)]);
+    const walk = (t: string) => {
+        for (const s of directSourceTags(recipes, t)) {
+            const key = normalizeSensorTag(s);
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(s);
+            walk(s);
+        }
+    };
+    walk(tag);
+    return out;
+}
+
 /** RAW sensors behind a special sensor: nested ones expanded, unique, first-use order; [] without a recipe; cycles end. */
 export function rawSourceTags(recipes: readonly SpecialSensorRecipe[] | null | undefined, tag: string): string[] {
     const out: string[] = [];

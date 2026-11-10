@@ -1,4 +1,4 @@
-//! QA: Export results end to end (`workspace_export.rs`, WIZARD_OUTPUT_SPEC.md v1.0); every spec §7 item is checked by reading the folder back.
+//! QA: Export results end to end (`workspace_export.rs`, WIZARD_OUTPUT_SPEC.md v1.1); every spec §7 item is checked by reading the folder back.
 //! Included from `lib.rs` via `#[path]` to reach crate-private types.
 
 use crate::workspace_export::{plan_in, write_export, WorkspaceExportRequest};
@@ -248,7 +248,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let errors: Vec<_> = plan.issues.iter().filter(|i| i.severity == "error").collect();
     assert!(errors.is_empty(), "the ready TS request must plan without errors: {errors:?}");
     assert!(plan.ok);
-    assert_eq!(plan.files, 9);
+    assert_eq!(plan.files, 10, "machine_info + 4 × 2 model files + derived/POWER.csv");
 
     let out = tempfile::tempdir().unwrap();
     let progress = std::sync::Mutex::new(Vec::new());
@@ -258,12 +258,15 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     .unwrap();
     let root = Path::new(&res.folder).to_path_buf();
     assert_eq!(listing(out.path()), BTreeSet::from(["Yadana_MP_Train_2026-10-20_1000".to_string()]), "no staging folder left behind");
-    assert_eq!(listing(&root), BTreeSet::from(["machine_info.json".to_string(), "models".to_string()]));
-    assert_eq!((res.files, res.models), (9, 4));
+    assert_eq!(listing(&root), BTreeSet::from(["derived".to_string(), "machine_info.json".to_string(), "models".to_string()]));
+    assert_eq!((res.files, res.models), (10, 4));
     assert_eq!(res.rows, plan.total_rows);
 
     // Model keys: Workbench order, R/I = target, C = y_sensor (spec §2.1), counter per tag+kind.
-    let keys: Vec<String> = progress.lock().unwrap().iter().map(|(_, _, k)| k.clone()).collect();
+    let events = progress.lock().unwrap().clone();
+    assert_eq!(events[0], (1, 5, "derived/POWER.csv".to_string()), "the derived file is one progress step");
+    assert!(events.iter().enumerate().all(|(i, (w, t, _))| *w == i + 1 && *t == 5));
+    let keys: Vec<String> = events.iter().skip(1).map(|(_, _, k)| k.clone()).collect();
     assert_eq!(keys, ["T1-I1", "T1-R1", "Y-C1", "POWER-I1"]);
 
     let (mi_text, mi) = read_json(&root.join("machine_info.json"));
@@ -273,7 +276,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     );
     assert_eq!(keys_of(&mi_text, "machine"), ["tag", "name", "notes"]);
     assert_eq!(keys_of(&mi_text, "running_status"), ["sensor", "stop_if_lower_than"]);
-    assert_eq!(mi["schema_version"], "1.0");
+    assert_eq!(mi["schema_version"], "1.1");
     let exported_at = mi["exported_at"].as_str().unwrap();
     assert_eq!(exported_at, res.exported_at);
     let b = exported_at.as_bytes();
@@ -287,11 +290,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let sensors = mi["sensors"].as_array().unwrap();
     let raw_tags: Vec<String> = sensors.iter().map(|s| s["tag"].as_str().unwrap().to_string()).collect();
     assert_eq!(raw_tags.iter().collect::<HashSet<_>>().len(), raw_tags.len(), "raw tags unique");
-    assert_eq!(
-        raw_tags.iter().cloned().collect::<BTreeSet<_>>(),
-        ["C", "I", "P1", "SPEED", "T1", "V", "X", "Y"].iter().map(|s| s.to_string()).collect(),
-        "raw tags used by models + the running-status sensor + the raw sources of the special sensor"
-    );
+    assert_eq!(raw_tags, ["SPEED", "T1", "P1", "V", "I", "X", "Y", "C"], "every raw column of the data, data column order (§7.8)");
     for s in sensors {
         assert_eq!(s.as_object().unwrap().len(), 5);
         assert!(!s["name"].as_str().unwrap().is_empty());
@@ -316,7 +315,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let mut model_json: BTreeMap<String, (String, serde_json::Value)> = BTreeMap::new();
     for k in &keys {
         let (text, v) = read_json(&models_dir.join(format!("{k}.json")));
-        assert_eq!(v["schema_version"], "1.0");
+        assert_eq!(v["schema_version"], "1.1");
         assert_eq!(v["model_key"], k.as_str());
         assert_eq!(v["training_data"]["file"], format!("{k}.csv"));
         assert_eq!(keys_of(&text, "training_data"), ["file", "note"]);
@@ -439,8 +438,28 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     // The loader already merges repeated timestamps (later row wins), so the export's counter sees none.
     assert_eq!(plan.duplicate_instants_dropped, 0);
 
-    for name in listing(&models_dir).iter().chain(listing(&root).iter()) {
-        assert!(name == "models" || name.ends_with(".json") || name.ends_with(".csv"), "unexpected file {name}");
+    // ── §5.1 / §7.9 derived/POWER.csv: direct inputs, then the tag; every timed row, sorted, unique ──
+    let derived_dir = root.join("derived");
+    assert_eq!(listing(&derived_dir), BTreeSet::from(["POWER.csv".to_string()]));
+    let all_rows = spec_rows(&d, |_| true);
+    let power_csv = std::fs::read_to_string(derived_dir.join("POWER.csv")).unwrap().replace("\r\n", "\n");
+    assert_eq!(power_csv, expected_csv(&d, "TimeStamp,V,I,POWER", &all_rows, &[&d.v, &d.i, &d.power]));
+    // §7.10: POWER in a model CSV equals POWER in the derived file at the same timestamp.
+    let power_at: BTreeMap<&str, &str> = power_csv
+        .lines()
+        .skip(1)
+        .map(|l| (l.split(',').next().unwrap(), l.rsplit(',').next().unwrap()))
+        .collect();
+    for (k, col) in [("T1-R1", 2), ("POWER-I1", 1)] {
+        let got = std::fs::read_to_string(models_dir.join(format!("{k}.csv"))).unwrap();
+        for l in got.lines().skip(1) {
+            let f: Vec<&str> = l.split(',').collect();
+            assert_eq!(power_at.get(f[0]), Some(&f[col]), "{k} at {}", f[0]);
+        }
+    }
+
+    for name in listing(&models_dir).iter().chain(listing(&root).iter()).chain(listing(&derived_dir).iter()) {
+        assert!(name == "models" || name == "derived" || name.ends_with(".json") || name.ends_with(".csv"), "unexpected file {name}");
         assert!(!forbidden(name), "file name {name}");
     }
     let mut every_key = Vec::new();

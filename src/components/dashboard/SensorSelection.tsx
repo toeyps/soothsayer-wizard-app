@@ -172,7 +172,7 @@ export default function SensorSelection({
         const scale = parseFloat(getComputedStyle(el).getPropertyValue('--motion-scale'));
         if (!(scale > 0)) return; // reduced motion, or no motion stylesheet
         const i = Math.min(r.i++, 5);
-        el.animate([{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }],
+        el.animate?.([{ opacity: 0, transform: 'translateY(-3px)' }, { opacity: 1, transform: 'none' }],
             { duration: 180 * scale, delay: i * 30 * scale, easing: 'cubic-bezier(0.2, 0, 0, 1)', fill: 'backwards' });
     };
     const toggleComponentExpanded = (comp: string) => {

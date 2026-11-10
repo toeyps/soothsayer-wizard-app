@@ -25,9 +25,15 @@
       "component": "Generator"
     },
     {
-      "tag": "POWER",
-      "name": "Power",
-      "unit": "W",
+      "tag": "V",
+      "name": "Volt",
+      "unit": "V",
+      "component": "Electrical"
+    },
+    {
+      "tag": "I",
+      "name": "Amp",
+      "unit": "A",
       "component": "Electrical"
     },
     {
@@ -55,15 +61,9 @@
       "component": "Engine"
     },
     {
-      "tag": "V",
-      "name": "Volt",
-      "unit": "V",
-      "component": "Electrical"
-    },
-    {
-      "tag": "I",
-      "name": "Amp",
-      "unit": "A",
+      "tag": "POWER",
+      "name": "Power",
+      "unit": "W",
       "component": "Electrical"
     }
   ],

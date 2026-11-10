@@ -10864,8 +10864,11 @@ describe('Export results (bottom bar + dialog, DESIGN_SYSTEM §4.2)', () => {
 
         await fire('workspace-export-progress', { export_id: 'someone-else', workspace_id: 'ws1', written: 3, total: 9, model_key: 'X-I1' });
         expect(barText()).toContain('Writing model 1 of 1');
-        await fire('workspace-export-progress', { export_id: args.export_id, workspace_id: 'ws1', written: 1, total: 2, model_key: 'TAG1-I1' });
-        expect(barText()).toContain('Writing model 2 of 2');
+        // total 2 with 1 model = 1 derived/ file first (spec v1.1), then the model
+        await fire('workspace-export-progress', { export_id: args.export_id, workspace_id: 'ws1', written: 0, total: 2, model_key: 'derived/DT.csv' });
+        expect(barText()).toContain('Writing special sensor data 1 of 1');
+        await fire('workspace-export-progress', { export_id: args.export_id, workspace_id: 'ws1', written: 1, total: 2, model_key: 'derived/DT.csv' });
+        expect(barText()).toContain('Writing model 1 of 1');
 
         await act(async () => { finishExport!(); });
         await flush();

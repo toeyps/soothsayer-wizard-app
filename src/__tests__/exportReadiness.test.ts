@@ -214,8 +214,8 @@ describe('exportReadiness: items', () => {
         const w = readyWorkspace(fg => [trained(mk({ id: 'p', kind: 'relationship', name: 'Power', targetSensor: 'POWER', predictorSensors: ['P2'], category: 'performance', relStiffness: 100000 }), fg)]);
         const r = exportReadiness({ workspace: w, metadata: META, headers: HEADERS });
         const s = itemOf(r.items, 'sensors');
-        // used: T1, P1, P2, POWER, SPEED -> raw T1 P1 P2 SPEED V I ; special POWER
-        expect(s).toMatchObject({ ok: true, rawCount: 6, specialCount: 1, noComponentCount: 3, blocking: false });
+        // spec v1.1: every sensor of the data counts (10 raw + POWER); the no-component notice stays on used ones
+        expect(s).toMatchObject({ ok: true, rawCount: 10, specialCount: 1, noComponentCount: 3, blocking: false });
         expect(s.info).toBe(true);
         expect(r.noComponent).toEqual([
             { tag: 'P2', special: false, modelIds: ['p'], runningStatus: false },
@@ -227,6 +227,14 @@ describe('exportReadiness: items', () => {
         expect(d).toMatchObject({ ok: true, info: true, blocking: false, sensors: [{ tag: 'POWER', howToBuild: 'Calculated as V × I', sourceTags: ['V', 'I'] }] });
     });
 
+    it('a used chain marks its special inputs used too: they get the no-component notice (as Rust writes them)', () => {
+        const recipes: SpecialSensorRecipe[] = [...RECIPES, { kind: 'formula', tag: 'KW', formula: '$POWER / 1000' }];
+        const w = readyWorkspace(fg => [trained(mk({ id: 'k', name: 'Kw', targetSensor: 'KW', category: 'performance' }), fg)]);
+        const r = exportReadiness({ workspace: w, metadata: META, headers: [...HEADERS, 'KW'], recipes });
+        expect(r.noComponent.map(n => n.tag)).toEqual(['KW', 'SPEED', 'POWER']); // used tags first, then the chain
+        expect(r.noComponent.find(n => n.tag === 'POWER')!.modelIds).toEqual(['k']);
+    });
+
     it('a special sensor component from the workspace special-sensor metadata', () => {
         const w = readyWorkspace(fg => [trained(mk({ id: 'p', name: 'Power', targetSensor: 'POWER', category: 'performance' }), fg)]);
         w.extraSensorMetadata = [{ tag: 'POWER', description: 'Power', unit: 'kW', component: 'Electrical' }];
@@ -234,8 +242,10 @@ describe('exportReadiness: items', () => {
         expect(r.noComponent.map(n => n.tag)).toEqual(['SPEED']);
     });
 
-    it('no derived item when no special sensor is used', () => {
-        expect(exportReadiness({ workspace: readyWorkspace(), metadata: META, headers: HEADERS }).items.map(i => i.id))
+    it('the derived item lists every special sensor in the data, used or not; none when the data has none', () => {
+        const r = exportReadiness({ workspace: readyWorkspace(), metadata: META, headers: HEADERS });
+        expect(itemOf(r.items, 'derived').sensors.map(x => x.tag)).toEqual(['POWER']); // no model uses POWER here
+        expect(exportReadiness({ workspace: readyWorkspace(), metadata: META, headers: HEADERS.filter(h => h !== 'POWER') }).items.map(i => i.id))
             .toEqual(['machine', 'tz', 'running', 'sensors', 'fg']);
     });
 
@@ -295,13 +305,26 @@ describe('buildWorkspaceExportRequest', () => {
         expect(buildWorkspaceExportRequest({ workspace: readyWorkspace(), metadata: META, headers: HEADERS }).data_utc_offset_min).toBe(420);
     });
 
-    it('sensor_meta: every used tag + running sensor + raw sources of special sensors; derived_sensors with how to build', () => {
+    it('sensor_meta: every sensor of the data, used ones first; derived_sensors with how to build and direct inputs', () => {
         const w = readyWorkspace(fg => [trained(mk({ id: 'p', name: 'Power', targetSensor: 'POWER', category: 'performance' }), fg)]);
         const req = buildWorkspaceExportRequest({ workspace: w, metadata: META, headers: HEADERS });
-        expect(req.sensor_meta.map(s => s.tag)).toEqual(['T1', 'P1', 'POWER', 'SPEED', 'V', 'I']);
+        expect(req.sensor_meta.map(s => s.tag)).toEqual(['T1', 'P1', 'V', 'I', 'SPEED', 'T2', 'P2', 'X', 'Y', 'C', 'POWER']);
         expect(req.sensor_meta[0]).toEqual({ tag: 'T1', name: 'Bearing temp', unit: 'C', component: 'Engine' });
         expect(req.sensor_meta.find(s => s.tag === 'POWER')).toEqual({ tag: 'POWER', name: '', unit: '', component: '' });
         expect(req.derived_sensors).toEqual([{ tag: 'POWER', how_to_build: 'Calculated as V × I', source_tags: ['V', 'I'] }]);
+    });
+
+    it('a recipe in a chain that is not a data column is not listed (Rust skips it too)', () => {
+        const recipes: SpecialSensorRecipe[] = [...RECIPES, { kind: 'formula', tag: 'KW', formula: '$POWER / 1000' }];
+        const req = buildWorkspaceExportRequest({ workspace: readyWorkspace(), metadata: META, headers: HEADERS, recipes });
+        expect(req.derived_sensors.map(d => d.tag)).toEqual(['POWER']);
+    });
+
+    it('unused and chained special sensors are exported too; a chain lists its direct inputs', () => {
+        const recipes: SpecialSensorRecipe[] = [...RECIPES, { kind: 'formula', tag: 'KW', formula: '$POWER / 1000' }];
+        const req = buildWorkspaceExportRequest({ workspace: readyWorkspace(), metadata: META, headers: [...HEADERS, 'KW'], recipes });
+        expect(req.derived_sensors.map(d => [d.tag, d.source_tags])).toEqual([['POWER', ['V', 'I']], ['KW', ['POWER']]]);
+        expect(req.sensor_meta.map(s => s.tag)).toEqual(expect.arrayContaining(['T2', 'X', 'POWER', 'KW']));
     });
 
     it('a legacy project without machine details sends Plant = its name', () => {

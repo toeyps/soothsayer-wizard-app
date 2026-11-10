@@ -1,8 +1,8 @@
 # Wizard — แผนทดสอบด้วยมือ (Manual Test Plan)
 
-> 954 ข้อ · อัปเดต 2026-11-09 — เพิ่มการเคลื่อนไหวทั้งโปรแกรม (VIS-23 – VIS-29) · 2026-11-04 — ตามงานแก้จากการรีวิวทั้งโปรเจกต์ (ปิดหน้าต่างเมื่อมีค่าค้าง, บันทึกไม่สำเร็จ, การรวมไฟล์ CSV, รายการโปรเจกต์) · 2026-11-02 — เพิ่มหมวด LN (ชื่อ sensor ยาว) · 2026-10-26 — เพิ่ม workflow WFK (ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ) · 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
+> 955 ข้อ · อัปเดต 2026-11-10 — Export ตาม WIZARD_OUTPUT_SPEC v1.1 (BMW-423, BMW-424) · 2026-11-09 — เพิ่มการเคลื่อนไหวทั้งโปรแกรม (VIS-23 – VIS-29) · 2026-11-04 — ตามงานแก้จากการรีวิวทั้งโปรเจกต์ (ปิดหน้าต่างเมื่อมีค่าค้าง, บันทึกไม่สำเร็จ, การรวมไฟล์ CSV, รายการโปรเจกต์) · 2026-11-02 — เพิ่มหมวด LN (ชื่อ sensor ยาว) · 2026-10-26 — เพิ่ม workflow WFK (ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ) · 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
 >
-> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (801 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (153 จุดตรวจ, หมวด WFA–WFK) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
+> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (802 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (153 จุดตรวจ, หมวด WFA–WFK) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
 
 ## วิธีใช้แผนนี้
 
@@ -73,7 +73,7 @@
 - [MNG — แท็บ Manage — ดูรายการและลบ special sensor](#mng) (36 ข้อ)
 - [EDT — แก้ไข special sensor ที่สร้างไว้แล้ว (ปุ่มดินสอในแท็บ Manage)](#edt) (61 ข้อ)
 - [FG — แท็บ Failure Groups ใน Dashboard](#fg) (21 ข้อ)
-- [BMW — หน้าต่าง Build Model — Workbench (หน้า Model fit และหน้า Health score)](#bmw) (217 ข้อ)
+- [BMW — หน้าต่าง Build Model — Workbench (หน้า Model fit และหน้า Health score)](#bmw) (218 ข้อ)
 - [MULTI — เปิดมากกว่า 1 โปรเจกต์ (ข้อมูลต้องไม่ปนกัน)](#multi) (20 ข้อ)
 - [PER — ปิดเปิดโปรแกรม & การบันทึก](#per) (20 ข้อ)
 - [ERR — ข้อผิดพลาด & กรณีขอบ](#err) (10 ข้อ)
@@ -3881,12 +3881,20 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เปิดโฟลเดอร์ปลายทางใน File Explorer
   - **คาดหวัง:** หน้าต่างไม่ปิดทันที ขึ้น "Finishing the export first…" แล้วปิดเองเมื่อเสร็จ · โฟลเดอร์ปลายทางมีไฟล์ครบ (ไม่ใช่ครึ่ง ๆ) · ถ้า Export นานเกินเวลาที่กำหนด จะถูกยกเลิกแล้วหน้าต่างปิด — กรณีนั้นไม่มีอะไรค้างในโฟลเดอร์
 
-- [ ] **BMW-400 — เนื้อหาไฟล์ที่ Export ตรงตาม WIZARD_OUTPUT_SPEC v1.0 (เปิดไฟล์ JSON / CSV ดูเอง)** 🆕
+- [ ] **BMW-423 — เนื้อหาไฟล์ที่ Export ตรงตาม WIZARD_OUTPUT_SPEC v1.1 (เปิดไฟล์ JSON / CSV ดูเอง)** 🆕
   - Export โปรเจกต์ที่มีโมเดลครบ 3 ชนิด + Special sensor + 2 Failure group แล้วเปิดโฟลเดอร์ผลลัพธ์
   - เปิด `machine_info.json` และ `models\<key>.json` ของแต่ละชนิดด้วย Notepad (คลิกขวา → Open with → Notepad)
   - เปิด `models\<key>.csv` ด้วย Excel หรือ Notepad
   - เทียบกับหน้าจอ: Plant / Machine / tag / notes, running status, set point ของแต่ละโมเดล และจำนวนแถว (หน้าต่าง Export บอก training rows)
-  - **คาดหวัง:** ในโฟลเดอร์มีแค่ `machine_info.json` และโฟลเดอร์ `models\` ที่มีไฟล์ `.json` + `.csv` คู่ละโมเดล ชื่อ `<tag>-R1` / `<tag>-I1` / `<Y sensor>-C1` (Clustering ใช้ชื่อ Y sensor) · ใน machine_info: `schema_version` เป็น "1.0", `exported_at` เป็นเวลาของเครื่องและท้ายเวลามีเขตเวลา เช่น +07:00 (หมายถึงเวลาไทย), มี plant, machine (tag/name/notes), running_status (sensor + stop_if_lower_than), components เรียงตามตัวอักษร, sensors (ชื่อ = description, หน่วย, component), derived_sensors มี how_to_build ที่อ้าง tag ตามข้อมูลดิบ, failure_groups มีเฉพาะกลุ่มที่มีโมเดล พร้อมชื่อไฟล์โมเดล · ในไฟล์ JSON ของโมเดล: category เป็นตัวพิมพ์ใหญ่, Relation model มี inputs ตามลำดับที่เลือก + `fit_profile` เป็นชื่อ (very_loose / loose / standard / strict) ไม่ใช่ตัวเลข, health เป็น set point ที่ตั้งไว้ · CSV: คอลัมน์แรก `TimeStamp` รูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลาเป็นเขตเวลาของโปรเจกต์), ตามด้วย inputs…, output / sensor / x, y, criteria · แถว = แถวที่ใช้ Train (ช่วงเครื่องหยุดไม่มี) เรียงตามเวลา ไม่มีเวลาซ้ำ · ไม่มีไฟล์ .pkl ไม่มี mean/sd/RMSE/R², คะแนน, predicted/residual และไม่มีคำว่า LinearGAM ที่ไหนเลย
+  - **คาดหวัง:** ในโฟลเดอร์มีแค่ `machine_info.json`, โฟลเดอร์ `derived\` (ไฟล์ละ 1 special sensor) และโฟลเดอร์ `models\` ที่มีไฟล์ `.json` + `.csv` คู่ละโมเดล ชื่อ `<tag>-R1` / `<tag>-I1` / `<Y sensor>-C1` (Clustering ใช้ชื่อ Y sensor) · ใน machine_info: `schema_version` เป็น "1.1" (ในไฟล์ JSON ของโมเดลด้วย), `exported_at` เป็นเวลาของเครื่องและท้ายเวลามีเขตเวลา เช่น +07:00 (หมายถึงเวลาไทย), มี plant, machine (tag/name/notes), running_status (sensor + stop_if_lower_than), components เรียงตามตัวอักษร, sensors มี sensor ดิบทุกตัวในข้อมูล (ชื่อ = description, หน่วย, component), derived_sensors มี special sensor ทุกตัวพร้อม how_to_build ที่อ้าง tag ของ sensor ที่ใช้สร้าง, failure_groups มีเฉพาะกลุ่มที่มีโมเดล พร้อมชื่อไฟล์โมเดล · ในไฟล์ JSON ของโมเดล: category เป็นตัวพิมพ์ใหญ่, Relation model มี inputs ตามลำดับที่เลือก + `fit_profile` เป็นชื่อ (very_loose / loose / standard / strict) ไม่ใช่ตัวเลข, health เป็น set point ที่ตั้งไว้ · CSV: คอลัมน์แรก `TimeStamp` รูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลาเป็นเขตเวลาของโปรเจกต์), ตามด้วย inputs…, output / sensor / x, y, criteria · แถว = แถวที่ใช้ Train (ช่วงเครื่องหยุดไม่มี) เรียงตามเวลา ไม่มีเวลาซ้ำ · ไม่มีไฟล์ .pkl ไม่มี mean/sd/RMSE/R², คะแนน, predicted/residual และไม่มีคำว่า LinearGAM ที่ไหนเลย
+
+- [ ] **BMW-424 — Export ใส่ sensor ทุกตัวในข้อมูล และมีโฟลเดอร์ derived\ ของ special sensor (WIZARD_OUTPUT_SPEC v1.1)** 🆕
+  - เตรียมโปรเจกต์ที่มี sensor ดิบอย่างน้อย 1 ตัวที่ไม่มีโมเดลไหนใช้
+  - สร้าง special sensor 2 ตัวที่ไม่มีโมเดลไหนใช้: ตัวแรก `DT` = สูตรจาก sensor ดิบ 2 ตัว ตัวที่สอง `DT2` = สูตรที่ใช้ `DT`
+  - Export results แล้วเปิดโฟลเดอร์ผลลัพธ์
+  - เปิด `machine_info.json` ด้วย Notepad → Ctrl+F หา `sensors` และ `derived_sensors`
+  - เปิด `derived\DT.csv` และ `derived\DT2.csv` ด้วย Excel หรือ Notepad
+  - **คาดหวัง:** หน้าต่าง Export เขียนว่า "… raw + … special · every sensor in the data, used or not" และจำนวนตรงกับ sensor ทั้งหมดในโปรเจกต์ · `sensors` มี sensor ดิบครบทุกตัวในข้อมูล รวมตัวที่ไม่มีโมเดลใช้ (ตัวที่ไม่มี component มีช่อง component ว่าง "") · `derived_sensors` มีทั้ง `DT` และ `DT2` พร้อม how_to_build · มีโฟลเดอร์ `derived\` ที่มีไฟล์ 1 ไฟล์ต่อ special sensor 1 ตัว · คอลัมน์ของ `DT.csv` = `TimeStamp`, sensor ดิบ 2 ตัวที่ใช้สร้าง, แล้วปิดท้ายด้วย `DT` · `DT2.csv` = `TimeStamp`, `DT`, `DT2` · แถวเรียงตามเวลา ไม่มีเวลาซ้ำ ไม่มีช่องว่าง (แถวที่ค่าใดค่าหนึ่งหายไปไม่อยู่ในไฟล์) และมีทุกช่วงเวลาของข้อมูล ไม่ใช่แค่ช่วงที่ใช้ Train · ถ้ามีโมเดลที่ใช้ special sensor ค่าในไฟล์ CSV ของโมเดลตรงกับค่าใน `derived\` ที่เวลาเดียวกัน · โปรเจกต์ที่ไม่มี special sensor เลย ไม่มีโฟลเดอร์ `derived\`
 
 - [ ] **BMW-401 — Clustering: ค่า criteria ที่ตรงเส้นแบ่งพอดีอยู่ช่วงล่าง (`from < value <= to`) และ Export ช่วงได้** 🆕
   - ใช้โมเดล Clustering 2 cluster ที่ criteria มีค่าตรงเส้นแบ่งพอดี (พิมพ์เส้นแบ่งเป็นค่าที่มีอยู่ในข้อมูล เช่น 50)
@@ -6130,7 +6138,7 @@ _คุณเล่นเป็นวิศวกรดูแลปั๊ม P-1
   - เมื่อทุกโมเดล Complete แถบด้านล่างเป็นสีเขียว → กด "Export results"
   - อ่านรายการตรวจ (Machine / Time zone / Running status / Special sensors) → กด "Choose folder…" เลือก `C:\WFexport` → กด "Export"
   - กด "Open folder" → เปิด `machine_info.json` และ `models\BRG_DE_TEMP-I1.json` / `.csv` ใน Notepad (คลิกขวา → Open with → Notepad)
-  - **คาดหวัง:** มีโฟลเดอร์ใหม่ชื่อ `Rayong_P-101_Pump_<วันที่>_<เวลา>` ข้างในมี `machine_info.json` + โฟลเดอร์ `models\` ที่มีไฟล์คู่ (.json + .csv) ของแต่ละโมเดล (`BRG_DE_TEMP-I1`, `BRG_DE_TEMP-R1`, ส่วน Clustering ตั้งชื่อตาม **Y sensor**) · machine_info มี plant Rayong, machine tag P-101, running status ตามที่ตั้ง และรายชื่อ sensors ที่มี CW_DT อยู่ในส่วน derived_sensors พร้อม how_to_build ที่มาจากสูตร · `BRG_DE_TEMP-I1.json` มีค่า health limits low 20 / high 80 · CSV มีคอลัมน์ `TimeStamp,BRG_DE_TEMP` เวลาอยู่ในรูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลามี +07:00 หมายถึงเวลาไทย) ไม่มีช่วงเครื่องหยุด และจำนวนแถวตรงกับ "training rows" ในหน้าต่าง Export · ไม่มีไฟล์ .pkl และไม่มีตัวเลขสถิติในไฟล์
+  - **คาดหวัง:** มีโฟลเดอร์ใหม่ชื่อ `Rayong_P-101_Pump_<วันที่>_<เวลา>` ข้างในมี `machine_info.json` + โฟลเดอร์ `derived\` (ถ้ามี special sensor) + โฟลเดอร์ `models\` ที่มีไฟล์คู่ (.json + .csv) ของแต่ละโมเดล (`BRG_DE_TEMP-I1`, `BRG_DE_TEMP-R1`, ส่วน Clustering ตั้งชื่อตาม **Y sensor**) · machine_info มี plant Rayong, machine tag P-101, running status ตามที่ตั้ง และรายชื่อ sensors ที่มี CW_DT อยู่ในส่วน derived_sensors พร้อม how_to_build ที่มาจากสูตร · `BRG_DE_TEMP-I1.json` มีค่า health limits low 20 / high 80 · CSV มีคอลัมน์ `TimeStamp,BRG_DE_TEMP` เวลาอยู่ในรูปแบบ `2025-01-15T00:00:00+07:00` (ท้ายเวลามี +07:00 หมายถึงเวลาไทย) ไม่มีช่วงเครื่องหยุด และจำนวนแถวตรงกับ "training rows" ในหน้าต่าง Export · ไม่มีไฟล์ .pkl และไม่มีตัวเลขสถิติในไฟล์
 
 - [ ] **WFA-19 — ปิดหน้าต่างและกลับหน้าแรก: ทุกอย่างตรงกัน**
   - ปิดหน้าต่าง Build Model (ปุ่ม X ที่หัวหน้าต่าง)
@@ -6752,8 +6760,8 @@ _คุณเล่นเป็นหัวหน้าทีมที่ทำ�
 
 - [ ] **WFH-17 — Export results เพื่อส่งให้ระบบ / ทีมอื่น** 🆕
   - Build Model → แถบด้านล่าง → กด "Export results" → เลือกโฟลเดอร์ที่จะส่ง → กด Export → กด Open folder
-  - zip โฟลเดอร์ที่ได้ แล้วเปิดดูไฟล์ใน Notepad ตามวิธีใน BMW-400
-  - **คาดหวัง:** ได้โฟลเดอร์เดียวที่มีทุกอย่างที่ปลายทางต้องใช้ (machine_info.json + models\) · ชื่อโฟลเดอร์บอกโปรเจกต์และเวลา · set point ในไฟล์ตรงกับหน้า Health score · ไม่มีชื่ออัลกอริทึม ไม่มีไฟล์ .pkl · ไม่ต้องไปหาไฟล์ใน %APPDATA% อีกแล้ว
+  - zip โฟลเดอร์ที่ได้ แล้วเปิดดูไฟล์ใน Notepad ตามวิธีใน BMW-423
+  - **คาดหวัง:** ได้โฟลเดอร์เดียวที่มีทุกอย่างที่ปลายทางต้องใช้ (machine_info.json + derived\ ถ้ามี special sensor + models\) · ชื่อโฟลเดอร์บอกโปรเจกต์และเวลา · set point ในไฟล์ตรงกับหน้า Health score · ไม่มีชื่ออัลกอริทึม ไม่มีไฟล์ .pkl · ไม่ต้องไปหาไฟล์ใน %APPDATA% อีกแล้ว
 
 - [ ] **WFH-18 — แก้หลังส่งไปแล้ว: โมเดลกลับเป็น Incomplete และ export ใหม่ได้โฟลเดอร์ใหม่** 🆕
   - หลังส่งโฟลเดอร์ export ไปแล้ว แก้ set point ของโมเดล Complete หนึ่งช่อง → ดูแท็บและแถบ Export

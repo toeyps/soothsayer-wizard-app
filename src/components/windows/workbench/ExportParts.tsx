@@ -25,6 +25,13 @@ export const fmtExportDate = (d: Date): string =>
     `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 /** "≈ 412 KB" / "≈ 1.4 MB". */
+/** The step being written: the special-sensor data files come first (`all - models` of them), then the models. */
+export function exportStepLabel(written: number, all: number, models: number): string {
+    const derived = Math.max(0, all - models);
+    if (written < derived) return `Writing special sensor data ${written + 1} of ${derived}`;
+    return `Writing model ${Math.min(written - derived + 1, models)} of ${models}`;
+}
+
 export function fmtBytes(n: number): string {
     if (n < 1000) return `${n} B`;
     if (n < 1_000_000) return `${Math.max(1, Math.round(n / 1000))} KB`;
@@ -71,7 +78,7 @@ export function ExportBar({ counts, phase, progress, exported, filled, blockedWh
         state = (
             <>
                 <Loader2 size={12} className="pm-spin" aria-hidden="true" />
-                <span className="exb-t"><b>Writing model {Math.min(written + 1, all)} of {all}</b></span>
+                <span className="exb-t"><b>{exportStepLabel(written, all, total)}</b></span>
                 <span className="exb-bar" aria-hidden="true"><span style={{ width: `${all ? (written / all) * 100 : 0}%` }} /></span>
                 <button type="button" className="tq-link" onClick={onShowRun}>Show</button>
             </>
@@ -374,14 +381,16 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
     let foot: ReactNode;
 
     if (phase === 'running') {
-        const total = progress?.total || plan?.models.length || rows.length;
-        const written = progress?.written ?? 0;
+        const derivedCount = plan?.derived_files?.length ?? 0;
+        const total = progress?.total || (plan ? plan.models.length + derivedCount : rows.length);
         const order = plan?.models ?? [];
+        // Rust writes the derived/ files first; `written` counts them too.
+        const written = Math.max(0, (progress?.written ?? 0) - (total - order.length));
         const cur = order[written];
         const curRow = cur ? rowById.get(cur.id) : undefined;
         head = (
             <div>
-                {showProgress ? `Writing model ${Math.min(written + 1, total)} of ${total}` : 'Exporting…'}
+                {showProgress ? exportStepLabel(progress?.written ?? 0, total, order.length) : 'Exporting…'}
                 <small>Into a new folder. Cancel removes it — nothing is left half-written.</small>
             </div>
         );
@@ -623,7 +632,8 @@ export function ExportModal({ readiness, groups, projectName, machineTag, exp, p
                                 <span className="tq-big"><b>{plan.models.length}</b> models</span>
                                 <span>· <b>{plan.files}</b> files</span>
                                 <span>· <b>{fmtCount(plan.total_rows)}</b> training rows</span>
-                                <span>· ≈ {fmtBytes(plan.total_bytes)}</span>
+                                {(plan.derived_files?.length ?? 0) > 0 && <span data-testid="export-written-derived">· <b>{plan.derived_files.length}</b> special sensor data {plan.derived_files.length === 1 ? 'file' : 'files'}</span>}
+                                <span>· ≈ {fmtBytes(plan.total_bytes)}{(plan.derived_files?.length ?? 0) > 0 ? ' + special sensor data' : ''}</span>
                                 <span>· timestamps written as {offsetText}</span>
                             </div>
                             <div className="ex-kinds">
@@ -882,7 +892,7 @@ function ItemLine({ it, noComponent, unitOf, onOpenProjectDetails, onOpenRunning
                     id="sensors"
                     ok={it.ok}
                     info={it.info}
-                    text={<><b>Sensors</b> · {it.rawCount} raw{it.specialCount ? ` + ${it.specialCount} special` : ''} used by the models{it.noComponentCount ? ` · ${it.noComponentCount} without a component` : ''}</>}
+                    text={<><b>Sensors</b> · {it.rawCount} raw{it.specialCount ? ` + ${it.specialCount} special` : ''} · every sensor in the data, used or not{it.noComponentCount ? ` · ${it.noComponentCount} without a component` : ''}</>}
                     sub={it.noComponentCount
                         ? <>Written under the component “Uncategorized”: {noComponent.map((n, j) => <span key={n.tag}>{j > 0 ? ', ' : ''}<SensorInline tag={n.tag} /></span>)}. Components come from the tag-name file.</>
                         : 'Name, unit and component from the tag-name file; the running-status sensor is included.'}

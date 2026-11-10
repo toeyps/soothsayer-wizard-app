@@ -129,6 +129,18 @@ export interface ExportPlanModel {
     peek: string[][];
 }
 
+export interface ExportPlanDerivedFile {
+    tag: string;
+    /** Name inside `derived/`, e.g. "POWER.csv". */
+    file: string;
+    /** Inputs, then the tag (after `TimeStamp`). */
+    csv_columns: string[];
+    /** Exact row count. */
+    rows: number;
+    /** Header + first rows. */
+    peek: string[][];
+}
+
 /** Dry run of an export — nothing written. */
 export interface WorkspaceExportPlan {
     ok: boolean;
@@ -136,9 +148,13 @@ export interface WorkspaceExportPlan {
     /** Exactly what `machine_info.json` will hold; `exported_at` is null here. */
     machine_info: Record<string, unknown>;
     models: ExportPlanModel[];
+    /** One `derived/<file>` per special sensor in the data (spec v1.1). */
+    derived_files: ExportPlanDerivedFile[];
+    /** Model CSV rows only. */
     total_rows: number;
+    /** machine_info.json + model files; derived files are known only once written (see the result's `bytes`). */
     total_bytes: number;
-    /** 2 × models + 1. */
+    /** 2 × models + derived files + 1. */
     files: number;
     rows_without_timestamp: number;
     duplicate_instants_dropped: number;

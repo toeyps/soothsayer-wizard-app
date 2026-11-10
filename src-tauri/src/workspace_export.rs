@@ -1,4 +1,4 @@
-//! Export results: writes `machine_info.json` + `models/<key>.json/.csv` per `docs/specs/WIZARD_OUTPUT_SPEC.md`.
+//! Export results: writes `machine_info.json` + `derived/<tag>.csv` + `models/<key>.json/.csv` per `docs/specs/WIZARD_OUTPUT_SPEC.md`.
 //! `build_plan` is the pure dry run the writer shares. No fitted numbers or method names leave the app (stiffness = profile name).
 
 use crate::csv_processor::{micros_to_naive, ColumnarData, TS_MISSING};
@@ -15,9 +15,10 @@ use std::sync::{Arc, Mutex};
 /// Global event emitted after each model is written.
 pub const PROGRESS_EVENT: &str = "workspace-export-progress";
 
-const SCHEMA_VERSION: &str = "1.0";
+const SCHEMA_VERSION: &str = "1.1";
 const MACHINE_INFO_FILE: &str = "machine_info.json";
 const MODELS_DIR: &str = "models";
+const DERIVED_DIR: &str = "derived";
 const UNCATEGORIZED: &str = "Uncategorized";
 /// How many data rows the CSV writer writes between two cancel checks.
 const CANCEL_CHECK_ROWS: usize = 65_536;
@@ -56,7 +57,7 @@ pub struct SensorMetaArg {
     pub name: String,
     #[serde(default)]
     pub unit: String,
-    /// Blank = "Uncategorized" (the rule lives here, not in the frontend).
+    /// Blank = "Uncategorized" for a used sensor, "" for an unused one.
     #[serde(default)]
     pub component: String,
 }
@@ -66,7 +67,7 @@ pub struct DerivedSensorArg {
     pub tag: String,
     #[serde(default)]
     pub how_to_build: String,
-    /// RAW tags after expanding nested special sensors.
+    /// Direct inputs in formula order; an input may itself be derived.
     #[serde(default)]
     pub source_tags: Vec<String>,
 }
@@ -353,13 +354,30 @@ pub struct PlannedModel {
     pub peek: Vec<Vec<String>>,
 }
 
+/// One `derived/<file>` (spec 5.1).
+#[derive(Debug, Clone, Serialize)]
+pub struct PlannedDerivedFile {
+    pub tag: String,
+    /// File name inside `derived/`.
+    pub file: String,
+    /// Inputs, then the derived tag.
+    pub csv_columns: Vec<String>,
+    /// Exact row count; the rows themselves are built only while the file is written.
+    pub rows: usize,
+    /// Header + the first 6 CSV rows, exactly as written.
+    pub peek: Vec<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkspaceExportPlan {
     pub ok: bool,
     pub issues: Vec<ExportIssue>,
     pub machine_info: MachineInfo,
     pub models: Vec<PlannedModel>,
+    pub derived_files: Vec<PlannedDerivedFile>,
+    /// Model CSV rows only.
     pub total_rows: usize,
+    /// machine_info + model files; derived files are not counted (their size is known only once written).
     pub total_bytes: u64,
     pub files: usize,
     pub rows_without_timestamp: usize,
@@ -402,6 +420,8 @@ struct ModelWork {
 pub struct BuiltPlan {
     pub plan: WorkspaceExportPlan,
     work: Vec<ModelWork>,
+    /// Column indices per derived file, index-aligned with `plan.derived_files`.
+    derived_cols: Vec<Vec<usize>>,
 }
 
 
@@ -459,6 +479,51 @@ fn order_by_time(data: &ColumnarData, rows: Vec<u32>) -> (Vec<u32>, usize, usize
     (out, missing, dups)
 }
 
+/// A derived file's exact row count and its first `PEEK_ROWS` rows (same rule as [`order_by_time`]) without a full row list.
+/// One pass when the times are in order (what the loader produces); otherwise falls back to sorting.
+fn derived_count_and_head(data: &ColumnarData, cols: &[usize]) -> (usize, Vec<u32>) {
+    let complete = |r: usize| data.ts_parsed[r] != TS_MISSING && cols.iter().all(|&c| data.columns[c][r].is_finite());
+    let mut count = 0usize;
+    let mut head: Vec<u32> = Vec::with_capacity(PEEK_ROWS);
+    let mut prev: Option<i64> = None;
+    for r in (0..data.n_rows()).filter(|&r| complete(r)) {
+        let t = data.ts_parsed[r];
+        match prev {
+            Some(p) if t < p => {
+                let (rows, _, _) = order_by_time(data, derived_rows_unsorted(data, cols));
+                return (rows.len(), rows.into_iter().take(PEEK_ROWS).collect());
+            }
+            // Repeated instant: the later row replaces the earlier one.
+            Some(p) if t == p => {
+                if head.len() == count {
+                    if let Some(last) = head.last_mut() {
+                        *last = r as u32;
+                    }
+                }
+            }
+            _ => {
+                count += 1;
+                if head.len() < PEEK_ROWS {
+                    head.push(r as u32);
+                }
+            }
+        }
+        prev = Some(t);
+    }
+    (count, head)
+}
+
+fn derived_rows_unsorted(data: &ColumnarData, cols: &[usize]) -> Vec<u32> {
+    (0..data.n_rows() as u32)
+        .into_par_iter()
+        .filter(|&r| cols.iter().all(|&c| data.columns[c][r as usize].is_finite()))
+        .collect()
+}
+
+/// A derived file's rows, in written order.
+fn derived_rows(data: &ColumnarData, cols: &[usize]) -> Vec<u32> {
+    order_by_time(data, derived_rows_unsorted(data, cols)).0
+}
 
 /// `[^A-Za-z0-9._-]` -> `_` (spec 2.1); a Windows reserved device name before the first dot gets a leading `_`.
 pub(crate) fn sanitize_key_tag(tag: &str) -> String {
@@ -1156,104 +1221,161 @@ pub fn build_plan(
         }
     };
 
+    // ---- sensors (C1) and derived sensors (C2): every column of the session, data column order ----
     let is_derived = |tag: &str| derived.contains(&crate::name_key(tag));
-    let mut used: Vec<String> = Vec::new();
-    for p in &planned {
-        let mut push = |t: &str| {
-            if !used.iter().any(|u| u == t) {
-                used.push(t.to_string());
+    let recipe_of = |tag: &str| {
+        req.derived_sensors
+            .iter()
+            .find(|d| d.tag == tag)
+            .or_else(|| req.derived_sensors.iter().find(|d| crate::name_key(&d.tag) == crate::name_key(tag)))
+    };
+    // Direct inputs, de-duplicated, in listed order.
+    let inputs_of = |d: &DerivedSensorArg| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for s in d.source_tags.iter().filter(|s| !s.trim().is_empty()) {
+            if !out.contains(s) {
+                out.push(s.clone());
             }
-        };
-        for c in &p.csv_columns {
-            push(c);
         }
+        out
+    };
+    // Used = model + running-status tags and every input they are built from.
+    let mut used: HashSet<String> = HashSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    for p in &planned {
+        stack.extend(p.csv_columns.iter().cloned());
         if let ModelJson::Clustering(cj) = &p.json {
-            if let Some(c) = &cj.criteria_sensor {
-                push(c);
-            }
+            stack.extend(cj.criteria_sensor.iter().cloned());
         }
     }
     if let Some(rs) = &running_status {
-        if !used.iter().any(|u| u == &rs.sensor) {
-            used.push(rs.sensor.clone());
-        }
+        stack.push(rs.sensor.clone());
     }
-    let mut raw_tags: Vec<String> = Vec::new();
-    let mut derived_out: Vec<DerivedSensorOut> = Vec::new();
+    while let Some(t) = stack.pop() {
+        if used.contains(&t) {
+            continue;
+        }
+        if is_derived(&t) {
+            if let Some(d) = recipe_of(&t) {
+                stack.extend(inputs_of(d));
+            }
+        }
+        used.insert(t);
+    }
+
     let mut uncategorized: Vec<String> = Vec::new();
     let mut components: BTreeSet<String> = BTreeSet::new();
-    let mut note_uncategorized = |tag: &str, component: &str, issues: &mut Vec<ExportIssue>| {
-        if component == UNCATEGORIZED && !uncategorized.iter().any(|t| t == tag) {
-            uncategorized.push(tag.to_string());
-            issues.push(
-                ExportIssue::warning("component_uncategorized", format!("{tag} has no component"))
-                    .tag(tag),
-            );
-        }
-    };
-    let mut derived_seen: Vec<String> = Vec::new();
-    for tag in &used {
-        if !is_derived(tag) {
-            if !raw_tags.contains(tag) {
-                raw_tags.push(tag.clone());
+    // Blank component: "Uncategorized" + warning for a used tag, "" for an unused one.
+    let mut listed_component = |tag: &str, issues: &mut Vec<ExportIssue>, components: &mut BTreeSet<String>| -> String {
+        let given = meta.get(tag).map(|m| m.component.trim()).unwrap_or("");
+        let c = if !given.is_empty() {
+            given.to_string()
+        } else if used.contains(tag) {
+            if !uncategorized.iter().any(|t| t == tag) {
+                uncategorized.push(tag.to_string());
+                issues.push(
+                    ExportIssue::warning("component_uncategorized", format!("{tag} has no component")).tag(tag),
+                );
             }
+            UNCATEGORIZED.to_string()
+        } else {
+            String::new()
+        };
+        if !c.is_empty() {
+            components.insert(c.clone());
+        }
+        c
+    };
+    let name_of = |tag: &str| -> String {
+        meta.get(tag).map(|m| m.name.trim()).filter(|n| !n.is_empty()).unwrap_or(tag).to_string()
+    };
+    let unit_of = |tag: &str| meta.get(tag).map(|m| m.unit.clone()).unwrap_or_default();
+
+    let mut sensors_out: Vec<SensorOut> = Vec::new();
+    let mut derived_out: Vec<DerivedSensorOut> = Vec::new();
+    let mut derived_files: Vec<PlannedDerivedFile> = Vec::new();
+    let mut derived_cols: Vec<Vec<usize>> = Vec::new();
+    let mut file_names: HashMap<String, Vec<String>> = HashMap::new();
+    let mut seen_cols: HashSet<&str> = HashSet::new();
+    for tag in data.headers.iter().skip(1) {
+        if !seen_cols.insert(tag.as_str()) {
             continue;
         }
-        if derived_seen.contains(tag) {
+        let component = listed_component(tag, &mut issues, &mut components);
+        if !is_derived(tag) {
+            sensors_out.push(SensorOut {
+                tag: tag.clone(),
+                name: name_of(tag),
+                description: String::new(),
+                unit: unit_of(tag),
+                component,
+            });
             continue;
         }
-        derived_seen.push(tag.clone());
-        let recipe = req
-            .derived_sensors
-            .iter()
-            .find(|d| &d.tag == tag)
-            .or_else(|| req.derived_sensors.iter().find(|d| crate::name_key(&d.tag) == crate::name_key(tag)));
+        let recipe = recipe_of(tag);
         let how = recipe.map(|d| d.how_to_build.trim().to_string()).unwrap_or_default();
         if how.is_empty() {
             issues.push(
-                ExportIssue::error("derived_recipe_missing", format!("Special sensor {tag} has no recipe"))
-                    .tag(tag),
+                ExportIssue::error("derived_recipe_missing", format!("Special sensor {tag} has no recipe")).tag(tag),
             );
         }
+        let stem = sanitize_key_tag(tag);
+        file_names.entry(stem.to_ascii_lowercase()).or_default().push(tag.clone());
         if let Some(d) = recipe {
-            for src in &d.source_tags {
-                if is_derived(src) || raw_tags.contains(src) {
-                    continue;
-                }
+            let inputs = inputs_of(d);
+            let mut all_known = true;
+            for src in &inputs {
                 if !has_col(src) {
+                    all_known = false;
                     issues.push(
                         ExportIssue::error("unknown_sensor", format!("Sensor {src} is not in the loaded data"))
                             .tag(src),
                     );
                 }
-                raw_tags.push(src.clone());
+            }
+            if all_known {
+                // Spec 5.1: inputs then the tag; every complete row, sorted, last row of a repeated instant kept.
+                let mut columns = inputs;
+                columns.push(tag.clone());
+                let col_idx: Vec<usize> = columns.iter().map(|t| col_of(t).unwrap_or(0)).collect();
+                let (count, head) = derived_count_and_head(data, &col_idx);
+                let head_work = ModelWork { col_idx, rows: head };
+                let mut peek_rows: Vec<Vec<String>> = Vec::new();
+                write_csv(std::io::sink(), data, &columns, &head_work, req.data_utc_offset_min, Some(&mut peek_rows))
+                    .map_err(|e| format!("CSV peek: {e:?}"))?;
+                let mut peek: Vec<Vec<String>> =
+                    vec![std::iter::once("TimeStamp".to_string()).chain(columns.iter().cloned()).collect()];
+                peek.extend(peek_rows);
+                derived_files.push(PlannedDerivedFile {
+                    tag: tag.clone(),
+                    file: format!("{stem}.csv"),
+                    csv_columns: columns,
+                    rows: count,
+                    peek,
+                });
+                derived_cols.push(head_work.col_idx);
             }
         }
-        let component = component_of(tag);
-        note_uncategorized(tag, &component, &mut issues);
-        components.insert(component.clone());
-        let name = meta
-            .get(tag.as_str())
-            .map(|m| m.name.trim())
-            .filter(|n| !n.is_empty())
-            .unwrap_or(tag)
-            .to_string();
-        let unit = meta.get(tag.as_str()).map(|m| m.unit.clone()).unwrap_or_default();
-        derived_out.push(DerivedSensorOut { tag: tag.clone(), name, unit, component, how_to_build: how });
+        derived_out.push(DerivedSensorOut {
+            tag: tag.clone(),
+            name: name_of(tag),
+            unit: unit_of(tag),
+            component,
+            how_to_build: how,
+        });
     }
-    let mut sensors_out: Vec<SensorOut> = Vec::new();
-    for tag in &raw_tags {
-        let component = component_of(tag);
-        note_uncategorized(tag, &component, &mut issues);
-        components.insert(component.clone());
-        let name = meta
-            .get(tag.as_str())
-            .map(|m| m.name.trim())
-            .filter(|n| !n.is_empty())
-            .unwrap_or(tag)
-            .to_string();
-        let unit = meta.get(tag.as_str()).map(|m| m.unit.clone()).unwrap_or_default();
-        sensors_out.push(SensorOut { tag: tag.clone(), name, description: String::new(), unit, component });
+    // Two derived tags with one file name (case-insensitive, as on Windows).
+    for d in &derived_out {
+        let tags = &file_names[&sanitize_key_tag(&d.tag).to_ascii_lowercase()];
+        if tags.len() > 1 {
+            issues.push(
+                ExportIssue::error(
+                    "derived_file_name_collision",
+                    format!("Special sensors {} would share one file name", tags.join(", ")),
+                )
+                .tag(&d.tag),
+            );
+        }
     }
     for p in &planned {
         let c = match &p.json {
@@ -1340,7 +1462,7 @@ pub fn build_plan(
 
     let total_rows = planned.iter().map(|p| p.rows).sum();
     let total_bytes = planned.iter().map(|p| p.bytes).sum::<u64>() + mi_bytes;
-    let files = planned.len() * 2 + 1;
+    let files = planned.len() * 2 + derived_files.len() + 1;
     let ok = !issues.iter().any(ExportIssue::is_error);
     Ok(BuiltPlan {
         plan: WorkspaceExportPlan {
@@ -1348,6 +1470,7 @@ pub fn build_plan(
             issues,
             machine_info,
             models: planned,
+            derived_files,
             total_rows,
             total_bytes,
             files,
@@ -1356,6 +1479,7 @@ pub fn build_plan(
             uncategorized_tags: uncategorized,
         },
         work,
+        derived_cols,
     })
 }
 
@@ -1454,13 +1578,22 @@ fn write_failed(what: &str, e: &dyn std::fmt::Display) -> String {
 
 const CANCELLED: &str = "CANCELLED: the export was cancelled";
 
-/// Test hooks (fail at a model) — `Default` in the app.
+fn csv_err(name: &str, e: CsvFail) -> String {
+    match e {
+        CsvFail::Cancelled => CANCELLED.to_string(),
+        CsvFail::Stale => STALE_SESSION_ERROR.to_string(),
+        CsvFail::Io(msg) => write_failed(name, &msg),
+    }
+}
+
+/// Test hooks (fail at a model or derived file) — `Default` in the app.
 #[derive(Debug, Default, Clone, Copy)]
 struct Hooks {
     fail_before_model: Option<usize>,
+    fail_before_derived: Option<usize>,
 }
 
-/// Writes the export; `progress(written, total, key)` is called after each model.
+/// Writes the export; `progress(written, total, key)` is called after each file pair: `derived/<file>` first, then each model key.
 /// Errors: BAD_REQUEST / NO_DATA / STALE_SESSION / NOT_READY: <n> problem(s) / CANCELLED / WRITE_FAILED; nothing is left in `dest_dir` on any error.
 pub fn write_export(
     state: &AppState,
@@ -1500,10 +1633,50 @@ fn write_export_with(
     let mut bytes = mi_text.len() as u64;
     std::fs::write(staging.path.join(MACHINE_INFO_FILE), &mi_text)
         .map_err(|e| write_failed(MACHINE_INFO_FILE, &e))?;
+    let n_derived = built.plan.derived_files.len();
+    let total = n_derived + built.plan.models.len();
+    if n_derived > 0 {
+        let derived_dir = staging.path.join(DERIVED_DIR);
+        std::fs::create_dir(&derived_dir).map_err(|e| write_failed(DERIVED_DIR, &e))?;
+        for (i, (df, cols)) in built.plan.derived_files.iter().zip(&built.derived_cols).enumerate() {
+            if cancelled() {
+                return Err(CANCELLED.into());
+            }
+            let rel = format!("{DERIVED_DIR}/{}", df.file);
+            if hooks.fail_before_derived == Some(i) {
+                return Err(write_failed(&rel, &"simulated failure"));
+            }
+            // This file's rows only, dropped once it is written.
+            let rows = {
+                let lock = state.0.read().map_err(|e| e.to_string())?;
+                let session = lock.as_ref().filter(|s| s.stamp() == stamp).ok_or(STALE_SESSION_ERROR)?;
+                derived_rows(&session.data, cols)
+            };
+            if rows.len() != df.rows {
+                return Err(write_failed(&rel, &"row count changed since the plan"));
+            }
+            let work = ModelWork { col_idx: cols.clone(), rows };
+            let file = std::fs::File::create(derived_dir.join(&df.file)).map_err(|e| write_failed(&rel, &e))?;
+            let (n, file) = write_csv_unlocked(
+                file,
+                state,
+                stamp,
+                &df.csv_columns,
+                &work,
+                req.data_utc_offset_min,
+                cancel,
+                CANCEL_CHECK_ROWS,
+            )
+            .map_err(|e| csv_err(&rel, e))?;
+            drop(work);
+            file.sync_all().map_err(|e| write_failed(&rel, &e))?;
+            bytes += n;
+            progress(i + 1, total, &rel);
+        }
+    }
     let models_dir = staging.path.join(MODELS_DIR);
     std::fs::create_dir(&models_dir).map_err(|e| write_failed(MODELS_DIR, &e))?;
 
-    let total = built.plan.models.len();
     for (i, (pm, mw)) in built.plan.models.iter().zip(&built.work).enumerate() {
         if cancelled() {
             return Err(CANCELLED.into());
@@ -1536,15 +1709,11 @@ fn write_export_with(
             cancel,
             CANCEL_CHECK_ROWS,
         )
-        .map_err(|e| match e {
-            CsvFail::Cancelled => CANCELLED.to_string(),
-            CsvFail::Stale => STALE_SESSION_ERROR.to_string(),
-            CsvFail::Io(msg) => write_failed(&format!("models/{csv_name}"), &msg),
-        })?;
+        .map_err(|e| csv_err(&format!("models/{csv_name}"), e))?;
         file.sync_all()
             .map_err(|e| write_failed(&format!("models/{csv_name}"), &e))?;
         bytes += json_text.len() as u64 + n;
-        progress(i + 1, total, &pm.key);
+        progress(n_derived + i + 1, total, &pm.key);
     }
     if cancelled() {
         return Err(CANCELLED.into());
@@ -1576,7 +1745,7 @@ fn write_export_with(
     Ok(WorkspaceExportResult {
         folder: final_path.to_string_lossy().into_owned(),
         files: built.plan.files,
-        models: total,
+        models: built.plan.models.len(),
         rows: built.plan.total_rows,
         bytes,
         exported_at,
@@ -1609,6 +1778,7 @@ fn self_check(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
     if found != expected {
         return Err("models folder does not hold exactly one .json and one .csv per model".into());
     }
+    check_derived_dir(root, plan)?;
     let keys: HashSet<&str> = plan.models.iter().map(|m| m.key.as_str()).collect();
     let listed: HashSet<String> = plan
         .machine_info
@@ -1642,7 +1812,7 @@ fn self_check(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
     for s in plan.machine_info.sensors.iter().map(|s| &s.component).chain(
         plan.machine_info.derived_sensors.iter().map(|s| &s.component),
     ) {
-        if !components.contains(s.as_str()) {
+        if !s.is_empty() && !components.contains(s.as_str()) {
             return Err(format!("component {s} is not in components"));
         }
     }
@@ -1654,6 +1824,51 @@ fn self_check(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
     Ok(())
 }
 
+
+/// Spec 7.9: `derived/` holds one file per derived sensor (absent when none); inputs are listed, the last column is the tag.
+fn check_derived_dir(root: &Path, plan: &WorkspaceExportPlan) -> Result<(), String> {
+    let dir = root.join(DERIVED_DIR);
+    if plan.machine_info.derived_sensors.is_empty() {
+        return if dir.exists() { Err("derived folder without derived sensors".into()) } else { Ok(()) };
+    }
+    let expected: BTreeSet<String> = plan.derived_files.iter().map(|d| d.file.clone()).collect();
+    let found: BTreeSet<String> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    if found != expected || expected.len() != plan.machine_info.derived_sensors.len() {
+        return Err("derived folder does not hold exactly one file per derived sensor".into());
+    }
+    let listed: HashSet<&str> = plan
+        .machine_info
+        .sensors
+        .iter()
+        .map(|s| s.tag.as_str())
+        .chain(plan.machine_info.derived_sensors.iter().map(|s| s.tag.as_str()))
+        .collect();
+    for d in &plan.derived_files {
+        use std::io::BufRead;
+        let mut header = String::new();
+        std::io::BufReader::new(std::fs::File::open(dir.join(&d.file)).map_err(|e| e.to_string())?)
+            .read_line(&mut header)
+            .map_err(|e| e.to_string())?;
+        let cols: Vec<String> = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .from_reader(header.as_bytes())
+            .records()
+            .next()
+            .and_then(Result::ok)
+            .map(|r| r.iter().map(str::to_string).collect())
+            .unwrap_or_default();
+        if cols.len() < 2 || cols[0] != "TimeStamp" || cols.last() != Some(&d.tag) {
+            return Err(format!("{}: the last column is not the derived tag", d.file));
+        }
+        if let Some(t) = cols[1..].iter().find(|t| !listed.contains(t.as_str())) {
+            return Err(format!("{}: input {t} is not listed", d.file));
+        }
+    }
+    Ok(())
+}
 
 /// The running export (`export_id` + its cancel flag).
 #[derive(Default)]
@@ -2047,7 +2262,7 @@ mod tests {
             ["schema_version", "model_key", "kind", "display_name", "category", "component", "output", "inputs", "fit_profile", "health", "training_data"]
         );
         let j = json_of(m);
-        assert_eq!(j["schema_version"], "1.0");
+        assert_eq!(j["schema_version"], "1.1");
         assert_eq!(j["model_key"], "Y-R1");
         assert_eq!(j["kind"], "relationship");
         assert_eq!(j["display_name"], "Model r1");
@@ -2386,14 +2601,14 @@ mod tests {
 
 
     #[test]
-    fn derived_sensors_are_classified_and_their_raw_sources_listed() {
+    fn every_session_column_is_listed_as_raw_or_derived_in_data_order() {
         let p = plan(&request(vec![ind("i1", "D")]));
         let mi = &p.machine_info;
         assert_eq!(mi.derived_sensors.len(), 1);
         let d = &mi.derived_sensors[0];
         assert_eq!((d.tag.as_str(), d.how_to_build.as_str(), d.name.as_str()), ("D", "A minus B", "D description"));
         let tags: Vec<&str> = mi.sensors.iter().map(|s| s.tag.as_str()).collect();
-        assert_eq!(tags, ["A", "B"], "running sensor A + raw source B, D not repeated as raw");
+        assert_eq!(tags, ["A", "B", "C", "Y", "Odd tag/1"], "every raw column, data order; D only as derived");
         assert!(mi.sensors.iter().all(|s| s.description.is_empty()));
         let text = serde_json::to_string_pretty(mi).unwrap();
         let order: Vec<&str> = ["\"schema_version\"", "\"exported_at\"", "\"plant\"", "\"machine\"", "\"running_status\"", "\"components\"", "\"sensors\"", "\"derived_sensors\"", "\"failure_groups\""]
@@ -2402,6 +2617,307 @@ mod tests {
         let pos: Vec<usize> = order.iter().map(|k| text.find(k).unwrap()).collect();
         assert!(pos.windows(2).all(|w| w[0] < w[1]), "machine_info key order");
         assert_eq!(serde_json::to_value(mi).unwrap()["exported_at"], serde_json::Value::Null);
+    }
+
+    // ---- v1.1: every sensor, every derived sensor, derived/ files ----
+
+    /// `data()` plus E = D * 2 (chained: built from the derived D) and an unused raw U with no meta.
+    fn chained() -> (ColumnarData, HashSet<String>, WorkspaceExportRequest) {
+        let base = data();
+        let n = base.n_rows();
+        let mut headers = base.headers.clone();
+        let mut columns = base.columns.clone();
+        headers.push("E".into());
+        columns.push(columns[5].iter().map(|v| v * 2.0).collect());
+        headers.push("U".into());
+        columns.push(vec![7.0; n]);
+        let d = ColumnarData::from_parts(headers, base.timestamps.clone(), columns);
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.derived_sensors.push(DerivedSensorArg {
+            tag: "E".into(),
+            how_to_build: "D times 2".into(),
+            source_tags: vec!["D".into()],
+        });
+        req.sensor_meta.push(meta("E", "Gas Generator"));
+        (d, HashSet::from(["d".to_string(), "e".to_string()]), req)
+    }
+
+    #[test]
+    fn unused_raw_and_derived_sensors_are_listed() {
+        let (d, der, req) = chained();
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        let raw: Vec<&str> = p.machine_info.sensors.iter().map(|s| s.tag.as_str()).collect();
+        assert_eq!(raw, ["A", "B", "C", "Y", "Odd tag/1", "U"]);
+        let derived: Vec<(&str, &str)> =
+            p.machine_info.derived_sensors.iter().map(|s| (s.tag.as_str(), s.how_to_build.as_str())).collect();
+        assert_eq!(derived, [("D", "A minus B"), ("E", "D times 2")], "neither is used by the model");
+        assert!(p.ok, "{:?}", p.issues);
+    }
+
+    #[test]
+    fn unused_sensor_without_a_component_gets_an_empty_one_and_no_warning() {
+        let (d, der, req) = chained();
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        let u = p.machine_info.sensors.iter().find(|s| s.tag == "U").unwrap();
+        assert_eq!((u.name.as_str(), u.component.as_str(), u.unit.as_str()), ("U", "", ""));
+        assert!(p.uncategorized_tags.is_empty());
+        assert!(!codes(&p).contains(&"component_uncategorized"));
+        assert_eq!(p.machine_info.components, ["Gas Generator"], "no Uncategorized for an unused sensor");
+        // The same sensor used by a model keeps the Uncategorized rule.
+        let mut req = req;
+        req.models.push(ind("i2", "U"));
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        assert_eq!(p.uncategorized_tags, ["U"]);
+        assert!(p.machine_info.components.contains(&UNCATEGORIZED.to_string()));
+    }
+
+    #[test]
+    fn a_chained_derived_input_is_valid_and_marks_its_own_inputs_used() {
+        let (d, der, mut req) = chained();
+        req.sensor_meta.retain(|m| !["A", "B", "D"].contains(&m.tag.as_str()));
+        req.models = vec![ind("i1", "E")];
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        assert!(!codes(&p).contains(&"unknown_sensor"), "{:?}", p.issues);
+        let e = p.derived_files.iter().find(|f| f.tag == "E").unwrap();
+        assert_eq!(e.csv_columns, ["D", "E"], "direct input only");
+        // E is used, so D, A and B (its chain) count as used: blank components are Uncategorized.
+        let mut unc = p.uncategorized_tags.clone();
+        unc.sort();
+        assert_eq!(unc, ["A", "B", "D"]);
+        // An input that is not in the data is still an error.
+        req.derived_sensors[1].source_tags = vec!["D".into(), "Ghost".into()];
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        assert!(p.issues.iter().any(|i| i.code == "unknown_sensor" && i.tag.as_deref() == Some("Ghost")));
+        assert!(p.derived_files.iter().all(|f| f.tag != "E"), "no file for a recipe with an unknown input");
+        assert!(!p.ok);
+    }
+
+    #[test]
+    fn a_recipe_for_a_column_not_in_the_session_is_skipped() {
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.derived_sensors.push(DerivedSensorArg { tag: "Gone".into(), how_to_build: "x".into(), source_tags: vec!["Nope".into()] });
+        let p = plan(&req);
+        assert!(p.ok, "{:?}", p.issues);
+        assert!(p.machine_info.derived_sensors.iter().all(|d| d.tag != "Gone"));
+    }
+
+    #[test]
+    fn an_unused_derived_column_without_a_recipe_is_an_error() {
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.derived_sensors.clear();
+        let p = plan(&req);
+        assert!(p.issues.iter().any(|i| i.code == "derived_recipe_missing" && i.tag.as_deref() == Some("D")));
+    }
+
+    #[test]
+    fn derived_csv_has_inputs_then_the_tag_and_only_complete_sorted_unique_rows() {
+        let mut ts = minute_ts(8);
+        ts.swap(0, 5); // out of time order
+        ts[6] = ts[2].clone(); // repeated instant: row 6 (later) wins
+        let mut d = data_with(ts);
+        d.columns[1][3] = f64::NAN; // A missing
+        d.columns[5][4] = f64::NAN; // D missing
+        d.columns[4][1] = f64::NAN; // Y missing: not a D column, row stays
+        let built = build_plan(&d, &derived(), &request(vec![ind("i1", "Y")])).unwrap();
+        let f = &built.plan.derived_files[0];
+        assert_eq!((f.tag.as_str(), f.file.as_str()), ("D", "D.csv"));
+        assert_eq!(f.csv_columns, ["A", "B", "D"]);
+        assert_eq!(f.peek[0], ["TimeStamp", "A", "B", "D"]);
+        // Rows by time: 22:00 = row 5, 22:05 = 1, 22:10 = 6 (dup of 2), 22:25 = 0, 22:35 = 7; 3 and 4 incomplete.
+        let a: Vec<&str> = f.peek[1..].iter().map(|r| r[1].as_str()).collect();
+        assert_eq!(a, ["5", "1", "6", "0", "7"]);
+        assert_eq!(f.peek[3], ["2024-01-09T22:10:00+07:00", "6", "12", "-6"]);
+        assert_eq!(f.rows, 5);
+        let stamps: Vec<&str> = f.peek[1..].iter().map(|r| r[0].as_str()).collect();
+        assert!(stamps.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(built.plan.duplicate_instants_dropped, 1, "only the model's own count");
+    }
+
+    #[test]
+    fn derived_values_equal_the_model_csv_at_the_same_timestamps() {
+        let mut d = data();
+        d.columns[5][2] = 0.1 + 0.2; // a value whose text has many digits
+        let mut m = ind("i1", "D");
+        m.filter = Some(running_filter());
+        let built = build_plan(&d, &derived(), &request(vec![m])).unwrap();
+        let text = |cols: &[String], w: &ModelWork| {
+            String::from_utf8(write_csv(Vec::new(), &d, cols, w, 420, None).unwrap().1).unwrap()
+        };
+        let model = text(&built.plan.models[0].csv_columns, &built.work[0]);
+        let cols = &built.derived_cols[0];
+        let file = text(
+            &built.plan.derived_files[0].csv_columns,
+            &ModelWork { col_idx: cols.clone(), rows: derived_rows(&d, cols) },
+        );
+        assert_eq!(file.lines().next(), Some("TimeStamp,A,B,D"));
+        let by_ts: HashMap<&str, &str> = file
+            .lines()
+            .skip(1)
+            .map(|l| {
+                let f: Vec<&str> = l.split(',').collect();
+                (f[0], f[3])
+            })
+            .collect();
+        assert!(model.lines().count() > 2);
+        for l in model.lines().skip(1) {
+            let f: Vec<&str> = l.split(',').collect();
+            assert_eq!(by_ts.get(f[0]), Some(&f[1]), "at {}", f[0]);
+        }
+        assert!(model.contains(",0.30000000000000004
+") && file.contains(",0.30000000000000004
+"));
+    }
+
+    #[test]
+    fn derived_count_and_head_match_the_full_row_list_sorted_or_not() {
+        let mut sorted_ts = minute_ts(10);
+        sorted_ts[4] = sorted_ts[3].clone(); // repeated instant in time order
+        sorted_ts[5] = sorted_ts[3].clone();
+        sorted_ts[7] = None; // no timestamp
+        let mut unsorted_ts = minute_ts(10);
+        unsorted_ts.swap(1, 8);
+        unsorted_ts[9] = unsorted_ts[2].clone();
+        for ts in [sorted_ts, unsorted_ts, minute_ts(3)] {
+            let mut d = data_with(ts);
+            if d.n_rows() > 6 {
+                d.columns[1][6] = f64::NAN;
+            }
+            let cols = [1, 2, 5];
+            let full = derived_rows(&d, &cols);
+            let (count, head) = derived_count_and_head(&d, &cols);
+            assert_eq!(count, full.len());
+            assert_eq!(head, full.iter().copied().take(PEEK_ROWS).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn the_plan_holds_no_derived_row_lists() {
+        let built = build_plan(&data(), &derived(), &request(vec![ind("i1", "Y")])).unwrap();
+        // Only column indices are kept per derived file; rows are a count and a 6-row peek.
+        assert_eq!(built.derived_cols, vec![vec![1, 2, 5]]);
+        let f = &built.plan.derived_files[0];
+        assert_eq!(f.rows, 20);
+        assert_eq!(f.peek.len(), 1 + PEEK_ROWS);
+        let v = serde_json::to_value(f).unwrap();
+        let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+        keys.sort();
+        assert_eq!(keys, ["csv_columns", "file", "peek", "rows", "tag"]);
+    }
+
+    #[test]
+    fn a_cancel_while_writing_derived_files_leaves_nothing_behind() {
+        let st = state(data(), 1);
+        let dir = tmp();
+        let cancel = AtomicBool::new(false);
+        let seen = Mutex::new(Vec::new());
+        let err = write_export(&st, &ok_request(), dir.path().to_str().unwrap(), "Out", &cancel, |_, _, k| {
+            seen.lock().unwrap().push(k.to_string());
+            if k.starts_with("derived/") {
+                cancel.store(true, Ordering::SeqCst);
+            }
+        })
+        .unwrap_err();
+        assert!(err.starts_with("CANCELLED:"), "{err}");
+        assert_eq!(*seen.lock().unwrap(), ["derived/D.csv"], "no model was written");
+        assert!(listing(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn derived_tags_are_sanitized_into_file_names_by_the_writer() {
+        let base = data();
+        let mut headers = base.headers.clone();
+        let mut columns = base.columns.clone();
+        headers.push("CON".into());
+        columns.push(columns[1].iter().map(|v| v + 1.0).collect());
+        let d = ColumnarData::from_parts(headers, base.timestamps.clone(), columns);
+        let der: HashSet<String> = ["D", "CON", "Odd tag/1"].iter().map(|t| crate::name_key(t)).collect();
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.sensor_meta.push(meta("CON", "Gas Generator"));
+        req.derived_sensors.push(DerivedSensorArg { tag: "CON".into(), how_to_build: "A plus 1".into(), source_tags: vec!["A".into()] });
+        req.derived_sensors.push(DerivedSensorArg { tag: "Odd tag/1".into(), how_to_build: "1.5".into(), source_tags: vec!["B".into()] });
+        let st = AppState(RwLock::new(Some(SessionData { data: d, derived: der, generation: 1, rel_cache: Default::default() })));
+        let dir = tmp();
+        let keys = Mutex::new(Vec::new());
+        let res = write_export(&st, &req, dir.path().to_str().unwrap(), "Out", &AtomicBool::new(false), |w, t, k| {
+            keys.lock().unwrap().push((w, t, k.to_string()))
+        })
+        .unwrap();
+        let derived_dir = Path::new(&res.folder).join("derived");
+        assert_eq!(
+            listing(&derived_dir),
+            ["D.csv", "Odd_tag_1.csv", "_CON.csv"].iter().map(|s| s.to_string()).collect()
+        );
+        let odd = std::fs::read_to_string(derived_dir.join("Odd_tag_1.csv")).unwrap();
+        assert_eq!(odd.lines().next(), Some("TimeStamp,B,Odd tag/1"), "the header keeps the real tag");
+        let con = std::fs::read_to_string(derived_dir.join("_CON.csv")).unwrap();
+        assert_eq!(con.lines().nth(1), Some("2024-01-09T22:00:00+07:00,0,1"));
+        assert_eq!(
+            *keys.lock().unwrap(),
+            vec![
+                (1, 4, "derived/D.csv".to_string()),
+                (2, 4, "derived/Odd_tag_1.csv".to_string()),
+                (3, 4, "derived/_CON.csv".to_string()),
+                (4, 4, "Y-I1".to_string()),
+            ]
+        );
+        assert_eq!(res.files, 1 + 3 + 2);
+    }
+
+    #[test]
+    fn two_derived_tags_with_one_file_name_block_the_export() {
+        let base = data();
+        let mut headers = base.headers.clone();
+        let mut columns = base.columns.clone();
+        for t in ["d x", "D_X"] {
+            headers.push(t.into());
+            columns.push(columns[1].clone());
+        }
+        let d = ColumnarData::from_parts(headers, base.timestamps.clone(), columns);
+        let der: HashSet<String> = ["D", "d x", "D_X"].iter().map(|t| crate::name_key(t)).collect();
+        let mut req = request(vec![ind("i1", "Y")]);
+        for t in ["d x", "D_X"] {
+            req.derived_sensors.push(DerivedSensorArg { tag: t.into(), how_to_build: "A".into(), source_tags: vec!["A".into()] });
+        }
+        let p = build_plan(&d, &der, &req).unwrap().plan;
+        let hit: Vec<Option<&str>> =
+            p.issues.iter().filter(|i| i.code == "derived_file_name_collision").map(|i| i.tag.as_deref()).collect();
+        assert_eq!(hit, [Some("d x"), Some("D_X")]);
+        assert!(!p.ok);
+        let st = AppState(RwLock::new(Some(SessionData { data: d, derived: der, generation: 1, rel_cache: Default::default() })));
+        let dir = tmp();
+        let err = write_export(&st, &req, dir.path().to_str().unwrap(), "Out", &AtomicBool::new(false), |_, _, _| {}).unwrap_err();
+        assert!(err.starts_with("NOT_READY:"), "{err}");
+        assert!(listing(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn no_derived_sensors_means_no_derived_folder() {
+        let d = data();
+        let mut req = request(vec![ind("i1", "Y")]);
+        req.derived_sensors.clear();
+        let st = AppState(RwLock::new(Some(SessionData { data: d, derived: HashSet::new(), generation: 1, rel_cache: Default::default() })));
+        let dir = tmp();
+        let res = write_export(&st, &req, dir.path().to_str().unwrap(), "Out", &AtomicBool::new(false), |_, _, _| {}).unwrap();
+        assert_eq!(listing(Path::new(&res.folder)), BTreeSet::from(["machine_info.json".into(), "models".into()]));
+        assert_eq!(res.files, 3);
+    }
+
+    #[test]
+    fn a_failed_derived_write_leaves_nothing_behind() {
+        let st = state(data(), 1);
+        let dir = tmp();
+        let err = write_export_with(
+            &st,
+            &ok_request(),
+            dir.path().to_str().unwrap(),
+            "Out",
+            &AtomicBool::new(false),
+            |_, _, _| {},
+            Hooks { fail_before_derived: Some(0), ..Default::default() },
+        )
+        .unwrap_err();
+        assert!(err.starts_with("WRITE_FAILED: derived/D.csv"), "{err}");
+        assert!(listing(dir.path()).is_empty(), "staging removed");
     }
 
     #[test]
@@ -2453,7 +2969,7 @@ mod tests {
         for code in ["machine_missing", "offset_out_of_range", "running_status_missing", "no_models"] {
             assert!(c.contains(&code), "{code}: {c:?}");
         }
-        assert_eq!(p.files, 1);
+        assert_eq!(p.files, 2, "machine_info + derived/D.csv");
         let mut req = request(vec![ind("a", "Y"), ind("a", "A"), ind("b", "Nope")]);
         req.running_status = Some(RunningStatusArg { sensor: "Ghost".into(), stop_if_lower_than: 1.0 });
         req.models[0].display_name = " Same ".into();
@@ -2510,7 +3026,7 @@ mod tests {
         // Skipped models have no key / JSON / rows; the finished ones keep theirs.
         let ids: Vec<&str> = p.models.iter().map(|m| m.id.as_str()).collect();
         assert_eq!(ids, ["r1", "i1"]);
-        assert_eq!(p.files, 2 * 2 + 1);
+        assert_eq!(p.files, 2 * 2 + 1 + 1);
         assert!(p.models.iter().all(|m| m.rows > 0));
     }
 
@@ -2659,14 +3175,33 @@ mod tests {
             calls.lock().unwrap().push((w, t, k.to_string()))
         })
         .unwrap();
-        assert_eq!(*calls.lock().unwrap(), vec![(1, 3, "Y-R1".into()), (2, 3, "D-I1".into()), (3, 3, "Y-C1".into())]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            vec![(1, 4, "derived/D.csv".into()), (2, 4, "Y-R1".into()), (3, 4, "D-I1".into()), (4, 4, "Y-C1".into())],
+            "derived files first, counted in the total"
+        );
         let root = PathBuf::from(&res.folder);
         assert!(root.is_absolute());
         assert_eq!(root.file_name().unwrap(), "Plant_2026-10-20_1000");
         assert_eq!(listing(dir.path()), BTreeSet::from(["keep.txt".to_string(), "Plant_2026-10-20_1000".to_string()]));
         assert_eq!(std::fs::read_to_string(dir.path().join("keep.txt")).unwrap(), "x");
-        assert_eq!((res.files, res.models, res.rows), (7, 3, plan.total_rows));
-        assert_eq!(res.bytes, plan.total_bytes, "plan byte count == written bytes");
+        assert_eq!((res.files, res.models, res.rows), (8, 3, plan.total_rows));
+        assert_eq!(listing(&root), BTreeSet::from(["derived".into(), "machine_info.json".into(), "models".into()]));
+        for d in &plan.derived_files {
+            let csv = std::fs::read_to_string(root.join("derived").join(&d.file)).unwrap();
+            let lines: Vec<&str> = csv.lines().collect();
+            assert_eq!(lines.len(), d.rows + 1);
+            for (i, row) in d.peek.iter().enumerate() {
+                assert_eq!(lines[i], row.join(","), "peek line {i} of {}", d.file);
+            }
+        }
+        let derived_bytes: u64 = plan
+            .derived_files
+            .iter()
+            .map(|d| std::fs::metadata(root.join("derived").join(&d.file)).unwrap().len())
+            .sum();
+        assert!(derived_bytes > 0);
+        assert_eq!(res.bytes, plan.total_bytes + derived_bytes, "plan bytes leave the derived files out; the result is exact");
         for m in &plan.models {
             let csv = std::fs::read_to_string(root.join("models").join(format!("{}.csv", m.key))).unwrap();
             let lines: Vec<&str> = csv.lines().collect();
@@ -2749,7 +3284,7 @@ mod tests {
             "Out",
             &AtomicBool::new(false),
             |_, _, _| {},
-            Hooks { fail_before_model: Some(1) },
+            Hooks { fail_before_model: Some(1), ..Default::default() },
         )
         .unwrap_err();
         assert!(err.starts_with("WRITE_FAILED:"), "{err}");

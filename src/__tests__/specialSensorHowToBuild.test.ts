@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { SpecialSensorRecipe } from '../types';
-import { howToBuild, rawSourceTags, recipeHowToBuild, recipeOf } from '../utils/specialSensorHowToBuild';
+import { chainSourceTags, directSourceTags, howToBuild, rawSourceTags, recipeHowToBuild, recipeOf } from '../utils/specialSensorHowToBuild';
 import { withRoundResult } from '../utils/formulaRounding';
 
 const formula = (tag: string, f: string): SpecialSensorRecipe => ({ kind: 'formula', tag, formula: f });
@@ -34,6 +34,22 @@ describe('recipeHowToBuild', () => {
         expect(howToBuild(recipes, 'NOPE')).toBe('');
         expect(howToBuild(null, 'AVG')).toBe('');
         expect(recipeOf(recipes, 'avg')?.tag).toBe('AVG');
+    });
+});
+
+describe('directSourceTags / chainSourceTags', () => {
+    const chain: SpecialSensorRecipe[] = [
+        { kind: 'formula', tag: 'D', formula: '$A - $B' },
+        { kind: 'formula', tag: 'E', formula: '$D * 2 + $A' },
+        { kind: 'formula', tag: 'LOOP', formula: '$LOOP + $A' },
+    ];
+    it('direct inputs only, in formula order; [] without a recipe', () => {
+        expect(directSourceTags(chain, 'E')).toEqual(['D', 'A']);
+        expect(directSourceTags(chain, 'A')).toEqual([]);
+    });
+    it('the whole chain, special inputs included, unique; a cycle ends', () => {
+        expect(chainSourceTags(chain, 'E')).toEqual(['D', 'A', 'B']);
+        expect(chainSourceTags(chain, 'LOOP')).toEqual(['A']);
     });
 });
 

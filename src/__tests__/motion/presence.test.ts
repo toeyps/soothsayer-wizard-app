@@ -139,4 +139,20 @@ describe('presence', () => {
         await flush();
         expect(document.querySelector('.m-ghost')).toBeNull();
     });
+
+    it('never throws when the engine has no Web Animations (getAnimations missing)', async () => {
+        const proto = Element.prototype as unknown as { getAnimations?: unknown };
+        const saved = proto.getAnimations;
+        delete proto.getAnimations;
+        try {
+            const n = el('<p>no engine</p>');
+            host().appendChild(n);
+            await flush();
+            expect(n.isConnected).toBe(true); // an uncaught error in the observer would fail the run
+            n.remove();
+            await flush();
+        } finally {
+            proto.getAnimations = saved;
+        }
+    });
 });

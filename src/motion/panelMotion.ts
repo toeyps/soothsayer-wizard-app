@@ -30,10 +30,11 @@ export function installPanelMotion(doc: Document = document) {
 
     // A gutter drag always wins: the tween stops and split.js has the sizes at once.
     doc.addEventListener('pointerdown', e => {
-        if ((e.target as Element | null)?.closest?.('.gutter')) doc.getAnimations().forEach(a => { if (a.id === ID) try { a.cancel(); } catch { /* never raise */ } });
+        if ((e.target as Element | null)?.closest?.('.gutter') && typeof doc.getAnimations === 'function') doc.getAnimations().forEach(a => { if (a.id === ID) try { a.cancel(); } catch { /* never raise */ } });
     }, true);
 
-    const mo = new MutationObserver(records => {
+    const mo = new MutationObserver(records => { try { onRecords(records); } catch { /* motion must never raise an app error */ } });
+    const onRecords = (records: MutationRecord[]) => {
         if (!snap || performance.now() - snap.at > 500) return;
         let gone: HTMLElement | null = null;
         for (const r of records) for (const n of r.removedNodes) if (n instanceof HTMLElement && n.classList.contains('dashboard-slot') && !n.classList.contains('m-ghost')) gone = n;
@@ -81,7 +82,7 @@ export function installPanelMotion(doc: Document = document) {
         // 3. The strip slides in from the left edge when it first appears (later tabs reveal on their own).
         const side = doc.querySelector<HTMLElement>('.collapsed-tabs-sidebar');
         if (side && !s.side) side.animate([{ opacity: 0, transform: 'translate(-100%, -50%)' }, { opacity: 1, transform: 'translate(0, -50%)' }], { duration: ms, easing: EASE_OUT });
-    });
+    };
     mo.observe(doc.documentElement, { subtree: true, childList: true });
     return () => mo.disconnect();
 }

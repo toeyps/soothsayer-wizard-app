@@ -13,7 +13,7 @@ import { isModelComplete, isModelStale } from './modelStatus';
 import { machineOf, missingMachineFields, pcOffsetMin } from './projectDetails';
 import { effectiveRunningCondition, getBuildBlockReason, isCompleteCondition, type RunningConditionFg } from './runningCondition';
 import { resolveRunningStatus, runningStatusToWire, type ResolvedRunningStatus } from './runningStatus';
-import { howToBuild, rawSourceTags, recipeOf } from './specialSensorHowToBuild';
+import { chainSourceTags, directSourceTags, howToBuild, recipeOf } from './specialSensorHowToBuild';
 import { trainingScopeFilter } from './trainingScope';
 
 /* Export results: what the export needs, checked before anything is sent to Rust (`exportReadiness`), and the request it builds. Pure: the caller passes the workspace read from disk. Rust re-checks in `plan_workspace_export`. */
@@ -126,15 +126,30 @@ function exportSensors(models: FailureModel[], running: ResolvedRunningStatus | 
     const used: string[] = [];
     for (const m of models) for (const t of modelExportTags(m)) addUnique(used, t);
     if (running) addUnique(used, running.sensor);
-    const special = used.filter(t => recipeOf(recipes, t) !== undefined);
+    // A used special sensor uses its whole input chain (special inputs too), as in Rust.
+    const special: string[] = [];
     const raw: string[] = [];
-    for (const t of used) {
-        if (recipeOf(recipes, t)) for (const s of rawSourceTags(recipes, t)) addUnique(raw, s);
-        else addUnique(raw, t);
-    }
+    const walk = (t: string) => {
+        if (!recipeOf(recipes, t)) { addUnique(raw, t); return; }
+        if (special.some(s => normalizeSensorTag(s) === normalizeSensorTag(t))) return;
+        addUnique(special, t);
+        for (const s of directSourceTags(recipes, t)) walk(s);
+    };
+    for (const t of used) walk(t);
     const all = [...used];
+    for (const t of special) addUnique(all, t);
     for (const t of raw) addUnique(all, t);
     return { used, special, raw, all };
+}
+
+/** Every sensor of the loaded data (spec v1.1: the export lists all of them, used or not). `headers` = the session's sensor columns, special ones included. */
+function sessionSensors(used: ExportSensors, headers: readonly string[] | null, recipes: readonly SpecialSensorRecipe[] | null | undefined): { raw: string[]; special: string[]; all: string[] } {
+    const raw = [...used.raw];
+    const special = [...used.special];
+    for (const t of headers ?? []) addUnique(recipeOf(recipes, t) ? special : raw, t);
+    const all = [...raw];
+    for (const t of special) addUnique(all, t);
+    return { raw, special, all };
 }
 
 const realGroups = (groups: readonly FailureGroup[] | undefined): FailureGroup[] => (groups ?? []).filter(g => g.no !== 0);
@@ -265,12 +280,14 @@ export function exportReadiness(input: ExportReadinessInput): ExportReadiness {
 
     const running = resolveRunningStatus(fg, input.headers);
     const sensors = exportSensors(models, running, recipes);
+    const session = sessionSensors(sensors, input.headers, recipes);
+    // Only sensors the models or the running status read: an unused one without a component is not worth a notice.
     const noComponent: NoComponentSensor[] = sensors.all
         .filter(t => !nonEmpty(meta(t)?.component))
         .map(t => {
             const key = normalizeSensorTag(t);
             const reads = (m: FailureModel) => modelExportTags(m).some(u =>
-                normalizeSensorTag(u) === key || rawSourceTags(recipes, u).some(s => normalizeSensorTag(s) === key));
+                normalizeSensorTag(u) === key || chainSourceTags(recipes, u).some(s => normalizeSensorTag(s) === key));
             return {
                 tag: t,
                 special: recipeOf(recipes, t) !== undefined,
@@ -294,11 +311,11 @@ export function exportReadiness(input: ExportReadinessInput): ExportReadiness {
         item({ id: 'running' as const, ok: running !== null, status: running, allData: !!fg.runningConditionAllData }),
         item({
             id: 'sensors' as const, ok: true, info: noComponent.length > 0,
-            rawCount: sensors.raw.length, specialCount: sensors.special.length, noComponentCount: noComponent.length,
+            rawCount: session.raw.length, specialCount: session.special.length, noComponentCount: noComponent.length,
         }),
-        ...(sensors.special.length ? [item({
+        ...(session.special.length ? [item({
             id: 'derived' as const, ok: true, info: true,
-            sensors: sensors.special.map(t => ({ tag: t, howToBuild: howToBuild(recipes, t), sourceTags: rawSourceTags(recipes, t) })),
+            sensors: session.special.map(t => ({ tag: t, howToBuild: howToBuild(recipes, t), sourceTags: directSourceTags(recipes, t) })),
         })] : []),
         item({ id: 'fg' as const, ok: fgMissing.length === 0, usedCount: usedGroups.length, missing: fgMissing }),
     ];
@@ -365,7 +382,7 @@ export function buildWorkspaceExportRequest(input: BuildExportRequestInput): Wor
     const meta = metaLookup(input.metadata, ws);
     const models = exportRunOrder(fg.models ?? [], input.order);
     const running = resolveRunningStatus(fg, input.headers);
-    const sensors = exportSensors(models, running, recipes);
+    const sensors = sessionSensors(exportSensors(models, running, recipes), input.headers, recipes);
     const machine = ws.machine ?? machineOf(ws);
 
     const sensorMeta: ExportSensorMeta[] = sensors.all.map(t => {
@@ -373,7 +390,7 @@ export function buildWorkspaceExportRequest(input: BuildExportRequestInput): Wor
         return { tag: t, name: m?.description?.trim() ?? '', unit: m?.unit ?? '', component: m?.component?.trim() ?? '' };
     });
     const derived: ExportDerivedSensor[] = sensors.special.map(t => ({
-        tag: t, how_to_build: howToBuild(recipes, t), source_tags: rawSourceTags(recipes, t),
+        tag: t, how_to_build: howToBuild(recipes, t), source_tags: directSourceTags(recipes, t),
     }));
     const req: WorkspaceExportRequest = {
         workspace_id: ws.id,

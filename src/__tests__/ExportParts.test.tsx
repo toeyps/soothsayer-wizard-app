@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
     open: (opts: unknown) => mockOpenDialog(opts),
 }));
 
-import { ExportBar, ExportIssueLine, ExportModal, EXPORT_ISSUE_WORDS, fmtBytes, type ExportModalProps } from '../components/windows/workbench/ExportParts';
+import { ExportBar, ExportIssueLine, exportStepLabel, ExportModal, EXPORT_ISSUE_WORDS, fmtBytes, type ExportModalProps } from '../components/windows/workbench/ExportParts';
 import type { UseWorkspaceExport } from '../hooks/useWorkspaceExport';
 import type { ExportReadiness, ExportReadinessItem, ExportReadinessRow, NoComponentSensor } from '../utils/exportReadiness';
 import type { ExportIssue, WorkspaceExportPlan, WorkspaceExportRequest } from '../types/export';
@@ -57,11 +57,12 @@ function readiness(o: { rows?: ExportReadinessRow[]; items?: ExportReadinessItem
 function plan(o: Partial<WorkspaceExportPlan> = {}): WorkspaceExportPlan {
     return {
         ok: true, issues: [],
-        machine_info: { schema_version: '1.0', exported_at: null, plant: 'Plant A' },
+        machine_info: { schema_version: '1.1', exported_at: null, plant: 'Plant A' },
         models: [
             { id: 'm1', key: 'TAG1-I1', json: { model_key: 'TAG1-I1', kind: 'individual' }, csv_columns: ['TimeStamp', 'TAG1'], rows: 1200, bytes: 34_000, peek: [['TimeStamp', 'TAG1'], ['2026-02-09T00:00:00+07:00', '1.5'], ['2026-02-09T00:05:00+07:00', '1.6']] },
             { id: 'm2', key: 'TAG2-R1', json: { model_key: 'TAG2-R1', kind: 'relationship' }, csv_columns: ['TimeStamp', 'TAG1', 'TAG2'], rows: 900, bytes: 30_000, peek: [['TimeStamp', 'TAG1', 'TAG2']] },
         ],
+        derived_files: [],
         total_rows: 2100, total_bytes: 66_000, files: 5,
         rows_without_timestamp: 0, duplicate_instants_dropped: 0, uncategorized_tags: [],
         ...o,
@@ -205,6 +206,8 @@ describe('ExportModal — the checklist', () => {
         expect(line).toContain('Everything the export needs is here · 2 models · 4 items checked · 1 sensor without a component');
         fireEvent.click(screen.getByText('Show'));
         expect(screen.getByTestId('ready-machine')).toBeTruthy();
+        // spec v1.1: the export lists every sensor in the data, not only the used ones
+        expect(screen.getByTestId('ready-sensors').textContent).toContain('2 raw · every sensor in the data, used or not');
     });
 
     it('missing machine: "Fill in →" opens Project details; time zone "Change" too; running status "Open running condition"', () => {
@@ -592,6 +595,32 @@ describe('ExportModal — keyboard', () => {
         unmount();
         expect(document.activeElement).toBe(opener);
         opener.remove();
+    });
+});
+
+describe('export progress with special-sensor data files (derived/, written first)', () => {
+    it('exportStepLabel: the derived files count first, then the models', () => {
+        expect(exportStepLabel(0, 5, 3)).toBe('Writing special sensor data 1 of 2');
+        expect(exportStepLabel(1, 5, 3)).toBe('Writing special sensor data 2 of 2');
+        expect(exportStepLabel(2, 5, 3)).toBe('Writing model 1 of 3');
+        expect(exportStepLabel(4, 5, 3)).toBe('Writing model 3 of 3');
+        expect(exportStepLabel(1, 2, 2)).toBe('Writing model 2 of 2'); // no derived files
+    });
+
+    it('the modal: while derived files are written no model is marked written; "What is written" counts them', () => {
+        const derived = [{ tag: 'DT', file: 'DT.csv', csv_columns: ['A', 'B', 'DT'], rows: 10, peek: [] }];
+        const exp = fakeExp({ phase: 'running', exportPlan: plan({ derived_files: derived, files: 6 }), progress: { written: 1, total: 3, modelKey: 'derived/DT.csv' }, showProgress: true });
+        renderModal({ exp });
+        expect(screen.getByText('Writing model 1 of 2')).toBeTruthy();
+        expect(screen.getByTestId('export-row-m1').textContent).toContain('Writing…');
+        expect(screen.getByTestId('export-row-m2').textContent).toContain('Waiting');
+    });
+
+    it('"What is written" shows the special sensor data files', () => {
+        const derived = [{ tag: 'DT', file: 'DT.csv', csv_columns: ['A', 'B', 'DT'], rows: 10, peek: [] }];
+        renderModal({ exp: fakeExp({ exportPlan: plan({ derived_files: derived, files: 6 }) }) });
+        expect(screen.getByTestId('export-written-derived').textContent).toBe('· 1 special sensor data file');
+        expect(screen.getByTestId('export-written').textContent).toContain('+ special sensor data');
     });
 });
 

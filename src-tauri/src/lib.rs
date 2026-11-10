@@ -6935,7 +6935,7 @@ async fn plan_workspace_export(
     .map_err(|e| format!("export plan task failed: {e}"))?
 }
 
-/// Writes `<dest_dir>/<folder_name>` (or `_2`…`_99`) with `machine_info.json` + `models/<key>.json|.csv`, all or nothing; one export at a time; emits `workspace-export-progress` per model. Errors: `BAD_REQUEST:`/`NO_DATA:`/`STALE_SESSION:`/`NOT_READY: <n> problem(s)`/`CANCELLED:`/`WRITE_FAILED:`; none leave anything behind.
+/// Writes `<dest_dir>/<folder_name>` (or `_2`…`_99`) with `machine_info.json` + `derived/<tag>.csv` + `models/<key>.json|.csv`, all or nothing; one export at a time; emits `workspace-export-progress` per model. Errors: `BAD_REQUEST:`/`NO_DATA:`/`STALE_SESSION:`/`NOT_READY: <n> problem(s)`/`CANCELLED:`/`WRITE_FAILED:`; none leave anything behind.
 #[tauri::command(rename_all = "snake_case")]
 async fn export_workspace_results(
     request: workspace_export::WorkspaceExportRequest,
