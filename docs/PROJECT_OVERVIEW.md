@@ -34,8 +34,8 @@
 
 | เรื่อง | สถานะ |
 |---|---|
-| เวอร์ชันล่าสุดที่ build เป็น installer | **0.15.4** (2026-11-05) ก่อนหน้านั้นคือ 0.15.3 (2026-11-04), 0.15.2 (2026-11-03) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
-| git tag | tag ถึง `v0.15.4` push ขึ้น `personal` แล้ว (2026-11-05) ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
+| เวอร์ชันล่าสุดที่ build เป็น installer | **0.16.0** (2026-11-10) ก่อนหน้านั้นคือ 0.15.4 (2026-11-05), 0.15.3 (2026-11-04) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
+| git tag | tag ถึง `v0.15.4` push ขึ้น `personal` แล้ว (2026-11-05) · `v0.16.0` ติดในเครื่อง 2026-11-10 ยังไม่ push ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
 | push ล่าสุด | 2026-11-05: push `main` และ tag ถึง `v0.15.4` ขึ้น `personal` รวมงานของทุก session หลังจากนั้นมี commit โลโก้ 2A, หน้าแรกแบบใหม่, แถบเวลา 2 กล่อง และ motion ในเครื่องที่ยังไม่ push |
 | งานที่รอผู้ใช้ทดสอบในแอปจริง | โลโก้ใหม่แบบ 2A และหน้าแรกแบบใหม่ (หัวข้อ "Find abnormal behaviour", ข้อความ 3 ข้อ, การ์ดเส้นบาง) · การเคลื่อนไหวทั้งโปรแกรม (motion, VIS-23 – VIS-29) และแถบเวลาแยก 2 กล่อง ยังไม่ build และยังไม่ได้เปิดในแอปจริง: IMP-137, IMP-138 · installer 0.15.4 ผู้ใช้ทดสอบแล้ว ใช้ได้ปกติ (2026-11-05) |
 | เรื่องที่รอผู้ใช้ตัดสินใจ | ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
