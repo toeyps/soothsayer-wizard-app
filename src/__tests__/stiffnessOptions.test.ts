@@ -23,3 +23,13 @@ describe('Relation model stiffness steps', () => {
         expect(stiffnessLabel(STIFFNESS_LEGACY_DEFAULT)).toBe('Very strict');
     });
 });
+
+describe('stiffnessLabel matches the settings field', () => {
+    it('a value that is not a step shows its nearest step, not Standard', () => {
+        expect(stiffnessLabel(1_000_000)).toBe('Very strict');
+        expect(stiffnessLabel(400)).toBe('Slightly strict');
+    });
+    it('a missing value shows the legacy default it trains with', () => {
+        expect(stiffnessLabel(undefined)).toBe('Very strict');
+    });
+});

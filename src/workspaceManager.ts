@@ -2,7 +2,7 @@ import { load } from '@tauri-apps/plugin-store';
 import { readTextFile, writeTextFile, exists, mkdir, readDir, stat, remove as removeFile, rename, BaseDirectory } from '@tauri-apps/plugin-fs';
 import { WorkspaceState, WorkspaceMetadata, FailureModel, FailureSensorRow, FailureGroup, FailureGroupStateSlice, ModelKind, WorkspaceSensorFilter, TimePeriod } from './types';
 import { debugLog } from './utils/debugLog';
-import { migrateHealthSetPoints, migrateSingleRunningCondition } from './utils/workspaceMigrations';
+import { migrateHealthSetPoints, migrateRelStiffness, migrateSingleRunningCondition } from './utils/workspaceMigrations';
 import { emptyHealthSetPoints } from './utils/healthSetPoints';
 import { applyIncompleteRule } from './utils/incompleteRule';
 import { failureGroupMetaFields } from './utils/failureGroupSummary';
@@ -317,7 +317,7 @@ function normalizeModelGroups(models: FailureModel[]): FailureModel[] {
 function migrateFailureGroupState(state: WorkspaceState): WorkspaceState {
     // Every read: give models their kind's empty `healthSetPoints`, then convert to the ONE running condition.
     // On the read path so every window (incl. Dashboard autosave) sees the converted shape; the first write persists it.
-    return migrateSingleRunningCondition(migrateHealthSetPoints(migrateFailureGroupStateStructure(state)));
+    return migrateRelStiffness(migrateSingleRunningCondition(migrateHealthSetPoints(migrateFailureGroupStateStructure(state))));
 }
 
 function migrateFailureGroupStateStructure(state: WorkspaceState): WorkspaceState {

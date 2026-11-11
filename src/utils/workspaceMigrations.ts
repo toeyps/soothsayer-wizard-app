@@ -4,6 +4,7 @@ import { ensureHealthSetPoints } from './healthSetPoints';
 import { normalizeSensorCategories } from './modelGrouping';
 import { isCompleteCondition } from './runningCondition';
 import { normalizeSensorTag } from '../hooks/useSensorMetaMap';
+import { snapStiffness } from '../components/reports/pmReportTypes';
 
 /* Read-path migrations run by workspaceManager (migrateHealthSetPoints, migrateSingleRunningCondition): pure, idempotent, gated on their own marker being undefined (null or any value = handled); the single-condition shape check always runs. Each spreads the slice via withFailureGroupState; nothing to do returns the same state object. */
 
@@ -128,6 +129,21 @@ function demote(m: FailureModel): FailureModel {
     void _v;
     void _t;
     return m.status ? { ...rest, status: false } : rest;
+}
+
+/** (f) A Relation model whose stiffness is not one of the seven steps (old 1 000 000) snaps to the nearest step and goes Incomplete (Export only knows the steps). Set points kept. */
+export function migrateRelStiffness(state: WorkspaceState): WorkspaceState {
+    const fg = state.failureGroupState;
+    if (!fg || !Array.isArray(fg.models)) return state;
+    let changed = false;
+    const models = fg.models.map((m) => {
+        if (m.kind !== 'relationship' || typeof m.relStiffness !== 'number') return m;
+        const snapped = snapStiffness(m.relStiffness);
+        if (snapped === m.relStiffness) return m;
+        changed = true;
+        return { ...demote(m), relStiffness: snapped };
+    });
+    return changed ? withFailureGroupState(state, { models }) : state;
 }
 
 export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceState {

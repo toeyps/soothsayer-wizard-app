@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { migratePeriods, normalizeCategories, migrateHealthSetPoints, migrateSingleRunningCondition, normalizeConditionSpelling } from '../utils/workspaceMigrations';
+import { migratePeriods, normalizeCategories, migrateHealthSetPoints, migrateSingleRunningCondition, normalizeConditionSpelling, migrateRelStiffness } from '../utils/workspaceMigrations';
 import { computeTrainFingerprint } from '../utils/trainFingerprint';
 import { isModelComplete, isModelStale, modelDotState } from '../utils/modelStatus';
 import { applyIncompleteRule } from '../utils/incompleteRule';
@@ -528,5 +528,38 @@ describe('normalizeConditionSpelling', () => {
             expect(b.byId('all').status).toBe(true);
             expect(isModelStale(b.byId('all'), b.fg)).toBe(false);
         });
+    });
+});
+
+describe('migrateRelStiffness', () => {
+    const rel = (over: Partial<FailureModel> & { id: string }) =>
+        mk({ kind: 'relationship', status: true, relStiffness: 1_000_000, ...over } as never);
+
+    it('old Strict (1 000 000) snaps to 100 000 and a Complete model goes Incomplete, set points kept', () => {
+        const m = rel({ id: 'r', healthVerdict: { ok: true } as never });
+        const s0 = ws({ models: [m] });
+        const trained = { ...m, lastTrainedAt: '2026-01-01T00:00:00Z', trainedFingerprint: computeTrainFingerprint(m, s0.failureGroupState!) } as FailureModel;
+        const s = ws({ models: [trained] });
+        const fg = migrateRelStiffness(s).failureGroupState!;
+        const out = fg.models[0];
+        expect(out.relStiffness).toBe(100_000);
+        expect(out.status).toBe(false);
+        expect(out.healthVerdict).toBeUndefined();
+        expect(out.healthSetPoints).toEqual(m.healthSetPoints);
+        expect(isModelStale(out, fg)).toBe(true);
+    });
+
+    it('a step value, a non-relation model or a missing value is left as it is (same object)', () => {
+        const s = ws({ models: [
+            rel({ id: 'a', relStiffness: 10_000 }),
+            mk({ id: 'b', kind: 'individual', relStiffness: 1_000_000 } as never),
+            rel({ id: 'c', relStiffness: undefined as never }),
+        ] });
+        expect(migrateRelStiffness(s)).toBe(s);
+    });
+
+    it('is idempotent', () => {
+        const once = migrateRelStiffness(ws({ models: [rel({ id: 'r' })] }));
+        expect(migrateRelStiffness(once)).toBe(once);
     });
 });

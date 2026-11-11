@@ -14,10 +14,11 @@ export const STIFFNESS_DEFAULT = 100;
 /** What a model saved WITHOUT a stiffness was trained with (the old default); keeps those models from going stale. */
 export const STIFFNESS_LEGACY_DEFAULT = 100_000;
 const STIFFNESS_VALUES = new Set(STIFFNESS_OPTIONS.map(o => o.value));
-/** Lambda value to label; an unknown value falls back to the 'Standard' label. */
-export const stiffnessLabel = (v: number): string =>
-    STIFFNESS_OPTIONS.find(o => o.value === v)?.label
-    ?? STIFFNESS_OPTIONS.find(o => o.value === STIFFNESS_DEFAULT)!.label;
+/** Lambda value to label, same step the settings field shows (unknown → nearest step, missing → legacy default). */
+export const stiffnessLabel = (v: number | undefined): string => {
+    const step = snapStiffness(v ?? STIFFNESS_LEGACY_DEFAULT);
+    return STIFFNESS_OPTIONS.find(o => o.value === step)!.label;
+};
 /** Snap a λ that is not a step to the nearest step on a log scale (old 1 000 000 → 100 000); non-positive/non-finite → default. */
 export const snapStiffness = (v: number): number => {
     if (STIFFNESS_VALUES.has(v)) return v;

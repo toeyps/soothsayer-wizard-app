@@ -492,7 +492,7 @@ describe('loadWorkspaceData', () => {
                     groups: [{ no: 1, name: 'G' }],
                     models: [
                         { id: 'i1', groupNos: [1], kind: 'individual', targetSensor: 'T1', notes: 'keep-i', status: true, lastTrainedAt: '2026-09-30T00:00:00Z', trainedFingerprint: 'fp-i' },
-                        { id: 'r1', groupNos: [1], kind: 'relationship', targetSensor: 'T2', predictorSensors: ['T3'], relStiffness: 7 },
+                        { id: 'r1', groupNos: [1], kind: 'relationship', targetSensor: 'T2', predictorSensors: ['T3'], relStiffness: 10 },
                         { id: 'c1', groupNos: [1], kind: 'clustering', xSensor: 'X', ySensor: 'Y', numClusters: 4 },
                     ],
                     runningConditionCombine: 'or',
@@ -514,10 +514,19 @@ describe('loadWorkspaceData', () => {
                 expect(c.healthSetPoints).toEqual({ kind: 'clustering', outerSd: null });
                 // everything else survives
                 expect(i).toMatchObject({ id: 'i1', notes: 'keep-i', status: true, lastTrainedAt: '2026-09-30T00:00:00Z', trainedFingerprint: 'fp-i' });
-                expect(r).toMatchObject({ predictorSensors: ['T3'], relStiffness: 7 });
+                expect(r).toMatchObject({ predictorSensors: ['T3'], relStiffness: 10 });
                 expect(c).toMatchObject({ xSensor: 'X', ySensor: 'Y', numClusters: 4 });
                 expect(fg.runningConditionCombine).toBe('or');
                 expect(fg.runningConditionTimePeriods).toEqual([{ id: 'p1', start: '2026-01-01T00:00', end: '' }]);
+            });
+
+            it('an old Relation model on the old Strict stiffness (1 000 000) loads on 100 000 and Incomplete', async () => {
+                const ws = oldWorkspace();
+                Object.assign(ws.failureGroupState.models[1], { relStiffness: 1_000_000, status: true });
+                mockReadTextFile.mockResolvedValue(JSON.stringify(ws));
+                const { loadWorkspaceData } = await freshModule();
+                const r = (await loadWorkspaceData('ws1'))!.failureGroupState!.models[1];
+                expect(r).toMatchObject({ relStiffness: 100_000, status: false });
             });
 
             it('keeps set points a model already has, byte-identical (never overwritten, snapshot untouched)', async () => {
