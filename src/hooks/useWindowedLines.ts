@@ -122,7 +122,13 @@ export function useWindowedLines<T>({
         const a = anchor.current;
         if (a && a.list === anchorList && el.scrollTop > 0) {
             const i = lines.findIndex(l => keyOf(l) === a.key);
-            if (i >= 0 && Math.abs(offsets[i] - a.offset) >= 1) el.scrollTop += offsets[i] - a.offset;
+            if (i >= 0 && Math.abs(offsets[i] - a.offset) >= 1) {
+                // Instant even where CSS scrolls smoothly: an animated correction reads back the old scrollTop.
+                const was = el.style.scrollBehavior;
+                el.style.scrollBehavior = 'auto';
+                el.scrollTop += offsets[i] - a.offset;
+                el.style.scrollBehavior = was;
+            }
         }
         const top = lineAt(el.scrollTop);
         anchor.current = lines[top] ? { list: anchorList, key: keyOf(lines[top]), offset: offsets[top] } : null;

@@ -69,6 +69,22 @@ describe('useWindowedLines', () => {
         expect(screen.getByTestId('L500').style.top).toBe(`${ROW * 500 + 70}px`);
     });
 
+    it('the scroll correction is instant even when CSS scrolls the list smoothly', () => {
+        render(<List />);
+        list().style.scrollBehavior = 'smooth';
+        scrollTo(ROW * 500);
+        const seen: string[] = [];
+        const proto = Object.getPrototypeOf(list());
+        const desc = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop')!;
+        Object.defineProperty(list(), 'scrollTop', { configurable: true, get() { return desc.get!.call(this); }, set(v) { seen.push(this.style.scrollBehavior); desc.set!.call(this, v); } });
+        void proto;
+        setLineHeight(screen.getByTestId('L498'), ROW + 70);
+        act(() => observers.fire());
+        expect(seen).toEqual(['auto']);
+        expect(list().scrollTop).toBe(ROW * 500 + 70);
+        expect(list().style.scrollBehavior).toBe('smooth');
+    });
+
     it('a line above the view that shrinks moves the list back by as much', () => {
         render(<List />);
         scrollTo(ROW * 500);

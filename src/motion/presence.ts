@@ -103,6 +103,8 @@ function flash(el: Element) {
 
 function enter(el: Element) {
     if (!(el instanceof HTMLElement) || skip(el)) return;
+    // A direct child of <body> (#wizard-portal-root) is a container: a transform on it would move every fixed popover inside.
+    if (el.parentElement === el.ownerDocument.body) return;
     if (el.tagName === 'MARK') return; // search-hit highlights are re-created per keystroke; they never slide in
     // Leaf labels and counts re-created on every keystroke reveal at most every 250 ms while the user types.
     if (el.children.length === 0 && Date.now() - lastInputAt < 300) {
@@ -176,7 +178,7 @@ export function installPresence(doc: Document = document) {
                 for (const n of r.removedNodes) {
                     if (!(n instanceof HTMLElement) || n.classList.contains('m-ghost') || n.isConnected) continue;
                     if (born.has(n) || quiet || swapped.has(n) || (still && !n.matches(SWAP) && !isAction(n, r.target))) continue;
-                    if (n.matches(SKIP) || (r.target instanceof Element && skip(r.target))) continue;
+                    if (n.matches(SKIP) || r.target === doc.body || (r.target instanceof Element && skip(r.target))) continue;
                     if (!n.textContent?.trim() && !n.querySelector('*')) continue;
                     if (n.matches(WINDOWED) && recycled(r.target)) continue;
                     const kind = n.matches(SWAP) ? 'swap' : n.matches(SLIDE) ? 'slide' : (n.matches(COLLAPSE) || sameClassSibling(n, r.target)) ? 'collapse' : 'fade';

@@ -124,6 +124,21 @@ describe('presence', () => {
         expect(infinite.finish).not.toHaveBeenCalled();
     });
 
+    it('a direct child of <body> (the portal root) never reveals or leaves a copy; what is inside it still reveals', async () => {
+        vi.advanceTimersByTime(1000); // past any tab-click quiet window an earlier test left
+        const root = el('<div id="wizard-portal-root"></div>');
+        document.body.appendChild(root);
+        await flush();
+        expect(root.classList.contains('m-in')).toBe(false);
+        const pop = el('<p>picker</p>');
+        root.appendChild(pop);
+        await flush();
+        expect(pop.classList.contains('m-in')).toBe(true);
+        root.remove();
+        await flush();
+        expect(document.body.querySelector(':scope > .m-ghost')).toBeNull();
+    });
+
     it('never touches chart internals or the ECharts tooltip on <body>', async () => {
         host().innerHTML = '<div class="chart-wrapper"><div id="c"></div></div><div style="z-index: 9999999" id="tip"></div>';
         await flush();
