@@ -139,6 +139,20 @@ describe('presence', () => {
         expect(document.body.querySelector(':scope > .m-ghost')).toBeNull();
     });
 
+    it('a crossfade lends its static parent position: relative only while the old copy is on screen', async () => {
+        vi.advanceTimersByTime(1000);
+        host().innerHTML = '<div id="p" style="position: static"><div class="m-swap">old</div></div>';
+        await flush();
+        const p = document.getElementById('p')!;
+        p.replaceChildren(el('<div class="m-swap">new</div>'));
+        await flush();
+        expect(p.querySelector('.m-ghost')).not.toBeNull();
+        expect(p.style.position).toBe('relative');
+        vi.advanceTimersByTime(500);
+        expect(p.querySelector('.m-ghost')).toBeNull();
+        expect(p.style.position).toBe('static');
+    });
+
     it('never touches chart internals or the ECharts tooltip on <body>', async () => {
         host().innerHTML = '<div class="chart-wrapper"><div id="c"></div></div><div style="z-index: 9999999" id="tip"></div>';
         await flush();

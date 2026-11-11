@@ -1,6 +1,6 @@
 # Wizard Output Specification — v1.2
 
-**Audience:** Wizard developers. **Status:** issued 2026-11-10. **Replaces:** v1.0 (2026-10-20).
+**Audience:** Wizard developers. **Status:** v1.1 issued 2026-11-10; v1.2 amended 2026-11-11 (section 0.1). **Replaces:** v1.0 (2026-10-20).
 
 This document defines **what the Wizard must export**. It does not prescribe how the Wizard's UI or internals work.
 
@@ -18,6 +18,15 @@ Based on the review of the test export `test_export (1)` (bangchak / GEG-4). Tha
 | C6 | Export checklist extended. | 7 | New checks for C1–C3. |
 
 Everything else is unchanged from v1.0.
+
+### 0.1 Changes from v1.1 (v1.2, 2026-11-11)
+
+| # | Change | Sections | What the Wizard must do |
+|---|---|---|---|
+| C7 | `fit_profile` has seven steps instead of four; the same name means a different value than in 1.1. | 4.1, 4.5 | Export one of the seven names in section 4.5. |
+| C8 | `schema_version` is `"1.2"` (C5 above now reads 1.2). | 3.2, 4.1 | — |
+
+Sections marked "NEW in v1.1" / "Changed in v1.1" are unchanged in v1.2.
 
 **Request for the next test export:** please include at least one derived sensor (with its `derived/` file) and at least one sensor that no model uses. It also helps if the test data have plausible units: in the current test export, `11PDT1247.PV` is labelled `BARG` but reads around −6.0, which is not a possible gauge pressure.
 

@@ -39,11 +39,32 @@ const settle = (a: Animation) => {
 const anims = (t: Element | Document, opts?: GetAnimationsOptions): Animation[] => (typeof t.getAnimations === 'function' ? (t as Element).getAnimations(opts) : []);
 const animating = (el: Element) => anims(el).some(a => a.playState === 'running' || a.pending);
 
+// A static parent made relative for its ghosts, until the last of them is gone (then its own inline position comes back).
+const lent = new WeakMap<HTMLElement, { n: number; was: string }>();
+const lentBy = new WeakMap<HTMLElement, HTMLElement>();
+function unpin(g: HTMLElement) {
+    const parent = lentBy.get(g);
+    const e = parent && lent.get(parent);
+    if (!parent || !e) return;
+    lentBy.delete(g);
+    if (--e.n > 0) return;
+    lent.delete(parent);
+    parent.style.position = e.was;
+}
+
 // Takes a copy out of the flow, pinned where it is now: what replaces it lays out at its final size at once.
 function pin(g: HTMLElement) {
     const parent = g.parentElement;
     if (!parent) return;
-    if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
+    if (!lentBy.has(g)) {
+        const e = lent.get(parent);
+        if (e) { e.n++; lentBy.set(g, parent); }
+        else if (getComputedStyle(parent).position === 'static') {
+            lent.set(parent, { n: 1, was: parent.style.position });
+            lentBy.set(g, parent);
+            parent.style.position = 'relative';
+        }
+    }
     const { offsetTop: top, offsetLeft: left, offsetWidth: w, offsetHeight: h } = g;
     Object.assign(g.style, { position: 'absolute', top: `${top}px`, left: `${left}px`, width: `${w}px`, height: `${h}px`, margin: '0', overflow: 'hidden', zIndex: '1' });
 }
@@ -77,7 +98,7 @@ function ghost(doc: Document, el: HTMLElement, parent: Node, next: Node | null, 
     }
     void g.offsetHeight; // commit the start values, then the transition runs
     g.classList.add('m-ghost--out');
-    setTimeout(() => g.remove(), ms + 40);
+    setTimeout(() => { g.remove(); unpin(g); }, ms + 40);
     return g;
 }
 
