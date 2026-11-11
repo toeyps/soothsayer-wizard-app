@@ -22,9 +22,16 @@ export function nextFailureGroupNo(groups: readonly FailureGroup[]): number {
     return Math.max(...groups.map(g => g.no), 0) + 1;
 }
 
-/** Appends a new, empty group named `name` (already trimmed by the caller). */
-export function appendFailureGroup(groups: readonly FailureGroup[], name: string): FailureGroup[] {
-    return [...groups, { no: nextFailureGroupNo(groups), name }];
+/** Appends a new, empty group named `name` (already trimmed by the caller); blank details are left out. */
+export function appendFailureGroup(
+    groups: readonly FailureGroup[],
+    name: string,
+    details: { description?: string; recommendation?: string } = {},
+): FailureGroup[] {
+    const g: FailureGroup = { no: nextFailureGroupNo(groups), name };
+    if (details.description?.trim()) g.description = details.description;
+    if (details.recommendation?.trim()) g.recommendation = details.recommendation;
+    return [...groups, g];
 }
 
 /** Name + Description + Recommendation together — the FG tab's "Edit details". */

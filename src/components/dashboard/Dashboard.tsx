@@ -641,10 +641,10 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         if (assignGroupNo !== null && !fgGroups.some(g => g.no === assignGroupNo)) setAssignGroupNo(null);
     }, [fgGroups, assignGroupNo]);
 
-    const createEmptyGroup = useCallback((name: string) => {
+    const createEmptyGroup = useCallback((name: string, description = '', recommendation = '') => {
         const trimmed = name.trim();
         if (!trimmed || isDuplicateGroupName(trimmed)) return;
-        const add = (groups: FailureGroup[]) => appendFailureGroup(groups, trimmed);
+        const add = (groups: FailureGroup[]) => appendFailureGroup(groups, trimmed, { description, recommendation });
         setFgGroups(add(fgGroups));
         persistFailureGroupStateFrom(disk => ({ groups: add(disk.groups), models: disk.models }));
     }, [fgGroups, isDuplicateGroupName, persistFailureGroupStateFrom]);

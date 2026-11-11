@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import { groupDeleteText } from './groupDeleteText';
-import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus } from 'lucide-react';
+import { Plus, Trash2, Play, ChevronRight, Check, FolderPlus, X } from 'lucide-react';
+import { useModalFocus } from '../windows/useModalFocus';
 import { FailureGroup, FailureModel, FailureGroupStateSlice, ModelKind, SensorMetadata, SpecialSensorRecipe } from '../../types';
 import { SensorInline, SensorLabel, SensorSetProvider, SetPrefixLine } from '../sensor/SensorLabel';
 import { useLineCut } from '../../hooks/useNameFit';
@@ -29,7 +30,7 @@ interface FailureGroupsPanelProps {
     /** Saves Name + Description + Recommendation together (the name isn't editable separately). */
     onUpdateGroupDetails: (groupNo: number, name: string, description: string, recommendation: string) => void;
     onDeleteGroup: (groupNo: number) => void;
-    onCreateEmptyGroup: (name: string) => void;
+    onCreateEmptyGroup: (name: string, description: string, recommendation: string) => void;
     /** Deletes a model outright; creation (Sensor tab) and deletion live on Dashboard, Build Model only edits/trains. */
     onDeleteModel: (modelId: string) => void;
     /** Opens the singleton Build Model window; cards themselves open nothing on click. */
@@ -97,8 +98,6 @@ export default function FailureGroupsPanel({
         return next;
     });
     const [showNewGroup, setShowNewGroup] = useState(false);
-    const [newGroupDraft, setNewGroupDraft] = useState('');
-    const [newGroupError, setNewGroupError] = useState('');
     // Display-only search; does not change which models/groups exist.
     const [fgSearch, setFgSearch] = useState('');
 
@@ -272,19 +271,6 @@ export default function FailureGroupsPanel({
         return () => clearTimeout(timer);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [groupNameDraft, groupDescDraft, groupRecDraft, expandedGroupNo]);
-
-    const commitNewGroup = () => {
-        const trimmed = newGroupDraft.trim();
-        if (!trimmed) return;
-        if (isDuplicateName(realGroups, trimmed)) {
-            setNewGroupError(`A failure group named "${trimmed}" already exists`);
-            return;
-        }
-        onCreateEmptyGroup(trimmed);
-        setNewGroupDraft('');
-        setNewGroupError('');
-        setShowNewGroup(false);
-    };
 
     // "Not in Group" uses the same search visibility rule as a real group; computed here since it isn't in the `realGroups.map()`.
     const notInGroupVisible = visibleSensorGroups(0, 'Not in Group');
@@ -481,31 +467,18 @@ export default function FailureGroupsPanel({
             {/* Panel footer: create-group + "Build Model ->" together, in the
                 same non-scrolling footer. */}
             <div className="fg-footer">
-                {showNewGroup ? (
-                    <div>
-                        <div style={{ display: 'flex', gap: '4px' }}>
-                            <input
-                                autoFocus
-                                placeholder="New group name"
-                                value={newGroupDraft}
-                                onChange={e => { setNewGroupDraft(e.target.value); setNewGroupError(''); }}
-                                onKeyDown={e => {
-                                    if (e.key === 'Enter') commitNewGroup();
-                                    if (e.key === 'Escape') { setShowNewGroup(false); setNewGroupDraft(''); setNewGroupError(''); }
-                                }}
-                                style={{ flex: 1, minWidth: 0, padding: '5px 7px', background: 'var(--input-bg)', border: `1px solid ${newGroupError ? 'var(--danger, #e2555f)' : 'var(--border)'}`, borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.75rem' }}
-                            />
-                            <button className="text-btn" disabled={!newGroupDraft.trim()} onClick={commitNewGroup}>Create</button>
-                        </div>
-                        {newGroupError && <div style={{ fontSize: '0.68rem', color: 'var(--danger, #e2555f)', marginTop: '3px' }}>{newGroupError}</div>}
-                    </div>
-                ) : (
-                    <button
-                        onClick={() => setShowNewGroup(true)}
-                        className="fg-addbtn"
-                    >
-                        <Plus size={13} /> Add failure group
-                    </button>
+                <button
+                    onClick={() => setShowNewGroup(true)}
+                    className="fg-addbtn"
+                >
+                    <Plus size={13} /> Add failure group
+                </button>
+                {showNewGroup && (
+                    <NewFailureGroupModal
+                        groups={realGroups}
+                        onCancel={() => setShowNewGroup(false)}
+                        onCreate={(name, desc, rec) => { onCreateEmptyGroup(name, desc, rec); setShowNewGroup(false); }}
+                    />
                 )}
 
                 {/* Only entry to the Build Model window; with no model to build it stays visible but disabled, reason as tooltip. */}
@@ -520,6 +493,95 @@ export default function FailureGroupsPanel({
             </div>
         </div>
         </SensorMetaContext.Provider>
+    );
+}
+
+const FIELD_LABEL: CSSProperties = { fontSize: '0.62rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: 'var(--text-faint)' };
+const FIELD_INPUT: CSSProperties = { padding: '6px 8px', background: 'var(--input-bg)', border: '1px solid var(--border)', borderRadius: '5px', color: 'var(--text-primary)', fontSize: '0.78rem' };
+
+/** "Add failure group" popup: Name (required, unique) + Description + Recommendation. */
+export function NewFailureGroupModal({ groups, onCreate, onCancel }: {
+    groups: FailureGroup[];
+    onCreate: (name: string, description: string, recommendation: string) => void;
+    onCancel: () => void;
+}) {
+    const ref = useRef<HTMLDivElement>(null);
+    useModalFocus(ref, true);
+    const [name, setName] = useState('');
+    const [desc, setDesc] = useState('');
+    const [rec, setRec] = useState('');
+    const [error, setError] = useState('');
+    const onCancelRef = useRef(onCancel);
+    onCancelRef.current = onCancel;
+
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key !== 'Escape' || e.defaultPrevented) return;
+            e.preventDefault();
+            e.stopPropagation();
+            onCancelRef.current();
+        };
+        window.addEventListener('keydown', onKey, true);
+        return () => window.removeEventListener('keydown', onKey, true);
+    }, []);
+
+    const commit = () => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        if (isDuplicateName(groups, trimmed)) {
+            setError(`A failure group named "${trimmed}" already exists`);
+            return;
+        }
+        onCreate(trimmed, desc, rec);
+    };
+
+    return (
+        <div className="bmw-modal-backdrop" role="presentation" onMouseDown={onCancel}>
+            <div
+                ref={ref}
+                tabIndex={-1}
+                className="bmw-modal tq-modal"
+                style={{ width: 'min(460px, 100%)' }}
+                role="dialog"
+                aria-modal="true"
+                aria-label="New failure group"
+                onMouseDown={e => e.stopPropagation()}
+            >
+                <div className="tq-mh">
+                    <div>
+                        New failure group
+                        <small>Description and recommendation can be changed later with Edit details.</small>
+                    </div>
+                    <button type="button" className="bmw-modal-x" aria-label="Close" onClick={onCancel}><X size={16} /></button>
+                </div>
+                <div className="tq-mb" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span style={FIELD_LABEL}>Name</span>
+                        <input
+                            autoFocus
+                            placeholder="New group name"
+                            value={name}
+                            onChange={e => { setName(e.target.value); setError(''); }}
+                            onKeyDown={e => { if (e.key === 'Enter') commit(); }}
+                            style={{ ...FIELD_INPUT, fontWeight: 600, borderColor: error ? 'var(--danger, #e2555f)' : 'var(--border)' }}
+                        />
+                        {error && <span style={{ fontSize: '0.68rem', color: 'var(--danger, #e2555f)' }}>{error}</span>}
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span style={FIELD_LABEL}>Description</span>
+                        <textarea rows={3} value={desc} placeholder="What failure mode does this group track?" onChange={e => setDesc(e.target.value)} style={{ ...FIELD_INPUT, resize: 'vertical' }} />
+                    </label>
+                    <label style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <span style={FIELD_LABEL}>Recommendation</span>
+                        <textarea rows={3} value={rec} placeholder="Recommended action when this failure is detected" onChange={e => setRec(e.target.value)} style={{ ...FIELD_INPUT, resize: 'vertical' }} />
+                    </label>
+                </div>
+                <div className="tq-mf" style={{ justifyContent: 'flex-end' }}>
+                    <button type="button" className="rcx-btn" onClick={onCancel}>Cancel</button>
+                    <button type="button" className="rcx-btn rcx-btn--pri" disabled={!name.trim()} onClick={commit}>Create</button>
+                </div>
+            </div>
+        </div>
     );
 }
 

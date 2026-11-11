@@ -18,6 +18,12 @@ describe('failureGroupOps', () => {
         expect(appendFailureGroup([NOT_IN_GROUP, { no: 2, name: 'B' }], 'C')).toEqual([NOT_IN_GROUP, { no: 2, name: 'B' }, { no: 3, name: 'C' }]);
     });
 
+    it('a new group carries its description and recommendation; blank ones are left out', () => {
+        expect(appendFailureGroup([NOT_IN_GROUP], 'A', { description: 'd', recommendation: 'r' })[1])
+            .toEqual({ no: 1, name: 'A', description: 'd', recommendation: 'r' });
+        expect(appendFailureGroup([NOT_IN_GROUP], 'A', { description: '  ', recommendation: '' })[1]).toEqual({ no: 1, name: 'A' });
+    });
+
     it('duplicate names: trimmed, case-insensitive, never "Not in Group", the renamed group itself excluded', () => {
         const groups = [NOT_IN_GROUP, { no: 1, name: 'Bearing overheating' }];
         expect(isDuplicateFailureGroupName(groups, '  BEARING overheating ')).toBe(true);

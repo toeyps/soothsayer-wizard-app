@@ -665,27 +665,31 @@ describe('FailureGroupsPanel', () => {
     });
 
     describe('creating a new group', () => {
-        it('Create is disabled until a name is entered, then calls onCreateEmptyGroup', () => {
+        it('opens a popup with Name, Description and Recommendation; Create is disabled until a name is entered', () => {
             const onCreateEmptyGroup = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onCreateEmptyGroup })} />);
             fireEvent.click(screen.getByText('Add failure group'));
-            const createBtn = screen.getByText('Create') as HTMLButtonElement;
+            const dialog = screen.getByRole('dialog', { name: 'New failure group' });
+            const createBtn = within(dialog).getByText('Create') as HTMLButtonElement;
             expect(createBtn.disabled).toBe(true);
 
-            fireEvent.change(screen.getByPlaceholderText('New group name'), { target: { value: 'Motors' } });
+            fireEvent.change(within(dialog).getByPlaceholderText('New group name'), { target: { value: 'Motors' } });
+            fireEvent.change(within(dialog).getByPlaceholderText('What failure mode does this group track?'), { target: { value: 'Bearing wear' } });
+            fireEvent.change(within(dialog).getByPlaceholderText('Recommended action when this failure is detected'), { target: { value: 'Check lube oil' } });
             expect(createBtn.disabled).toBe(false);
             fireEvent.click(createBtn);
-            expect(onCreateEmptyGroup).toHaveBeenCalledWith('Motors');
+            expect(onCreateEmptyGroup).toHaveBeenCalledWith('Motors', 'Bearing wear', 'Check lube oil');
+            expect(screen.queryByRole('dialog', { name: 'New failure group' })).toBeNull();
         });
 
-        it('Enter also commits the new group and closes the form', () => {
+        it('Enter in the name field also commits the new group and closes the popup', () => {
             const onCreateEmptyGroup = vi.fn();
             render(<FailureGroupsPanel {...makeProps({ onCreateEmptyGroup })} />);
             fireEvent.click(screen.getByText('Add failure group'));
             const input = screen.getByPlaceholderText('New group name');
             fireEvent.change(input, { target: { value: 'Pumps' } });
             fireEvent.keyDown(input, { key: 'Enter' });
-            expect(onCreateEmptyGroup).toHaveBeenCalledWith('Pumps');
+            expect(onCreateEmptyGroup).toHaveBeenCalledWith('Pumps', '', '');
             expect(screen.queryByPlaceholderText('New group name')).toBeNull();
         });
 
@@ -695,7 +699,7 @@ describe('FailureGroupsPanel', () => {
             fireEvent.click(screen.getByText('Add failure group'));
             const input = screen.getByPlaceholderText('New group name');
             fireEvent.change(input, { target: { value: 'Discarded' } });
-            fireEvent.keyDown(input, { key: 'Escape' });
+            fireEvent.keyDown(window, { key: 'Escape' });
             expect(onCreateEmptyGroup).not.toHaveBeenCalled();
             expect(screen.queryByPlaceholderText('New group name')).toBeNull();
         });
