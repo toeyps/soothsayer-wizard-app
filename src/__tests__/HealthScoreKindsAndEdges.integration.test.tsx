@@ -201,7 +201,7 @@ describe('Relationship specifics', () => {
         expect(lastPreviewKey()).toBe(keys[0]);
 
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(bmw().getByTestId('stiffness-select')); fireEvent.mouseDown(bmw().getByRole('option', { name: /^Very loose/ }));
         await saveChanges();
         await train();
         keys.push(lastKey());

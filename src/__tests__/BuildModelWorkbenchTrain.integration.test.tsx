@@ -236,7 +236,7 @@ describe('(1) models whose record carries an empty clusterRanges list stay Train
         const fp = diskModel('r1').trainedFingerprint;
 
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(screen.getByTestId('stiffness-select')); fireEvent.mouseDown(screen.getByRole('option', { name: /^Very loose/ }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
         await settle(30);
         expect(diskModel('r1').relStiffness).toBe(0.1);
@@ -442,7 +442,7 @@ describe('(5) status words / notice line / Mark complete agree with the results 
         expect(pill()).toBe('Trained');
 
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(screen.getByTestId('stiffness-select')); fireEvent.mouseDown(screen.getByRole('option', { name: /^Very loose/ }));
         expect(screen.getByTestId('save-changes')).toBeTruthy(); // really a pending draft
         expect(screen.queryByTestId('results-chart')).toBeNull();
         expect(markCompleteBtn().disabled).toBe(true);
@@ -493,7 +493,7 @@ describe('(5) status words / notice line / Mark complete agree with the results 
         expect(pill()).toBe('Trained');
         fireEvent.click(screen.getByTestId('page-tab-model'));
         fireEvent.click(screen.getByText('Model settings', { selector: 'b' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(screen.getByTestId('stiffness-select')); fireEvent.mouseDown(screen.getByRole('option', { name: /^Very loose/ }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); });
         await settle(30);
         // The Health score page was open this session, so its last charts stay up under 'Out of date'.

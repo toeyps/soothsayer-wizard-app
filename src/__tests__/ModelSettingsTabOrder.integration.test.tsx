@@ -89,14 +89,15 @@ describe('Model settings — Tab walks the form in the order it reads, for every
         expect(ro.compareDocumentPosition(train) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     });
 
-    it('Relation model: Model name → Stiffness (its seven options, loosest first) → Training data → Predictor sensors', async () => {
+    it('Relation model: Model name → Stiffness (one select button) → Training data → Predictor sensors', async () => {
         writeDisk(wsState({ models: [IND, REL, CLU] }));
         await mountWindows({ dashboard: false });
         const form = await openForm('tag1', 'Relation model');
         expect(tabWalk(form)).toEqual(['Model name', 'Stiffness', 'Training data', 'Predictor sensors (≥ 1)']);
-        // inside Stiffness the options are visited left to right, as printed
+        // Stiffness is one tab stop (the select); arrows change the step
         const stiff = tabStops(form).filter(el => fieldOf(el) === 'Stiffness').map(el => el.textContent);
-        expect(stiff).toEqual(['Very loose', 'Loose', 'Slightly loose', 'Standard', 'Slightly strict', 'Strict', 'Very strict']);
+        expect(stiff).toHaveLength(1);
+        expect(stiff[0]).toMatch(/\d\/7$/);
         // Training data: Workspace before Custom
         expect(tabStops(form).filter(el => fieldOf(el) === 'Training data').map(el => el.textContent)).toEqual(['Workspace', 'Custom']);
     });

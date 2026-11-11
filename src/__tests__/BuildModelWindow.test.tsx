@@ -640,7 +640,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(predictorPicker.getDesc).toBeUndefined();
             const scope = render(<>{predictorPicker.scope}</>).container.textContent;
             expect(scope).toMatch(/^All sensors except the target · \d+$/);
-            expect(screen.getByRole('button', { name: 'Strict' }).className).toBe('on'); // 10_000 -> "Strict"
+            expect(screen.getByTestId('stiffness-select').textContent).toContain('Strict6/7'); // 10_000 -> "Strict"
 
             cleanup();
             const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 3 });
@@ -4155,7 +4155,7 @@ describe('Incomplete immediately + Relationship fit cache key (health score phas
         render(<BuildModelWindow />);
         await deliverData({ failureGroupState: { groups: [makeGroup()], models: [rel] } });
         openSettings();
-        fireEvent.click(screen.getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(screen.getByTestId('stiffness-select')); fireEvent.mouseDown(screen.getByRole('option', { name: /^Very loose/ }));
         await act(async () => { fireEvent.click(screen.getByText('Save changes')); await Promise.resolve(); await Promise.resolve(); });
         const saved = (await lastWritten()).models[0];
         expect(saved.relStiffness).toBe(0.1);
@@ -4867,7 +4867,7 @@ describe('Workbench two pages — shell + Model fit page (health score 3b-1)', (
             const before = healthCalls().length;
             expect(screen.queryAllByTestId('chart-outdated')).toHaveLength(0);
             openSettings();
-            fireEvent.click(screen.getByRole('button', { name: 'Very loose' }));
+            fireEvent.click(screen.getByTestId('stiffness-select')); fireEvent.mouseDown(screen.getByRole('option', { name: /^Very loose/ }));
             expect(screen.getByTestId('stale-banner')).toBeTruthy();
             expect(screen.getAllByTestId('chart-outdated')).toHaveLength(3); // Fit, Target vs predicted, Residual
             await new Promise(r => setTimeout(r, 400)); // longer than the hook's debounce

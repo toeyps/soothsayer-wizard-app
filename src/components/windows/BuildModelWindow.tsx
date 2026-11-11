@@ -34,7 +34,8 @@ import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
 import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toScoringPeriods, type PeriodDataBounds } from "../../utils/timePeriods";
 import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeParts, testsChangedState } from "../../utils/trainTestValidation";
-import { STIFFNESS_OPTIONS, STIFFNESS_LEGACY_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
+import { STIFFNESS_LEGACY_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
+import { StiffnessField } from "./workbench/StiffnessField";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
@@ -3051,21 +3052,7 @@ export default function BuildModelWindow() {
                 </div>
             )}
             {m.kind === 'relationship' && (
-                <div className="f4-fld">
-                    <span className="f4-lbl">Stiffness</span>
-                    <div className="f4-seg">
-                        {STIFFNESS_OPTIONS.map(opt => (
-                            <button
-                                key={opt.value}
-                                type="button"
-                                className={d.stiffness === opt.value ? 'on' : undefined}
-                                onClick={() => patchDraft(m, { stiffness: opt.value })}
-                            >
-                                {opt.label}
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                <StiffnessField value={d.stiffness} onChange={v => patchDraft(m, { stiffness: v })} />
             )}
             {m.kind === 'clustering' && (
                 <div className="f4-fld">

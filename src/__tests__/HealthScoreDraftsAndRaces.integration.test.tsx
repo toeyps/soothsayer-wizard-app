@@ -432,7 +432,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         // back to Model fit: change stiffness, Save — all while the check runs
         fireEvent.click(bmw().getByTestId('page-tab-model'));
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(bmw().getByTestId('stiffness-select')); fireEvent.mouseDown(bmw().getByRole('option', { name: /^Very loose/ }));
         await saveChanges();
         // Train is refused while Mark complete runs.
         fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));

@@ -6637,3 +6637,25 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .dt24-time i { font-style: normal; color: var(--text-primary); }
 .dt24-time em { font-style: normal; font-size: 10px; }
 .dt24-done { margin-left: auto; padding: 3px 9px; background: var(--accent-color); border: none; border-radius: 4px; font-size: 11px; font-weight: 600; color: #fff; cursor: pointer; }
+
+/* Relation model Stiffness: select with curves (workbench/StiffnessField.tsx). */
+.bmw-sets-body .stf .f4-lbl { justify-content: flex-start; }
+.stf-glyph { display: block; flex: none; }
+.stf .f4-hint { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stf-b { position: relative; align-self: flex-start; }
+.stf-b-btn { display: inline-flex; align-items: center; gap: 9px; height: 30px; min-width: 190px; box-sizing: border-box; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--input-bg); color: var(--text-primary); font: inherit; font-size: 12.5px; cursor: pointer; }
+.stf-b-btn .stf-glyph { color: var(--accent-hi); }
+.stf-b-btn:hover, .stf-b-btn.open { border-color: var(--accent-color); }
+.stf-b-btn:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+.stf-b-t { flex: 1; text-align: left; }
+.stf-b-n { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
+.stf-b-btn svg:last-child { color: var(--text-secondary); }
+.stf-b-pop { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; width: 250px; padding: 6px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--pop); box-shadow: 0 18px 40px rgba(0,0,0,.5); }
+.stf-b-cap { display: flex; justify-content: space-between; padding: 2px 8px 6px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }
+.stf-b-row { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 8px; border-radius: 6px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer; }
+.stf-b-row .stf-glyph { color: var(--text-faint); }
+.stf-b-row.hi { background: var(--hover-bg); color: var(--text-primary); }
+.stf-b-row.sel { color: var(--text-primary); }
+.stf-b-row.sel .stf-glyph, .stf-b-row svg:last-child { color: var(--accent-hi); }
+.stf-b-rt { flex: 1; }
+.stf-b-rt i { font-style: normal; color: var(--text-faint); }

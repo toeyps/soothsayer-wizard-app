@@ -475,7 +475,7 @@ describe('(3) immediate X-axis write and the pending draft do not cross-contamin
         await pickXAxis('TAG3');
 
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Very loose' }));
+        fireEvent.click(bmw().getByTestId('stiffness-select')); fireEvent.mouseDown(bmw().getByRole('option', { name: /^Very loose/ }));
         expect(bmw().getByTestId('stale-banner')).toBeTruthy(); // the charts stay, "Out of date", under the banner
         expect(bmw().getAllByTestId('chart-outdated').length).toBeGreaterThan(0);
         await clickSave();
