@@ -563,6 +563,18 @@ describe('loadWorkspaceData', () => {
                 expect(JSON.parse(disk).failureGroupState.models[0].healthSetPoints).toEqual({ kind: 'individual', lower: null, upper: 9, masterLower: null, masterUpper: 9 });
             });
 
+            it('the first write after opening saves the snapped stiffness and Incomplete to disk', async () => {
+                const ws = oldWorkspace();
+                Object.assign(ws.failureGroupState.models[1], { relStiffness: 1_000_000, status: true });
+                let disk = JSON.stringify(ws);
+                mockStoreGet.mockResolvedValue([]);
+                mockReadTextFile.mockImplementation(async () => disk);
+                mockWriteTextFile.mockImplementation(async (_p: string, content: string) => { disk = content; });
+                const { updateWorkspaceData } = await freshModule();
+                await updateWorkspaceData('ws1', prev => ({ ...prev, name: 'Renamed' }));
+                expect(JSON.parse(disk).failureGroupState.models[1]).toMatchObject({ relStiffness: 100_000, status: false });
+            });
+
             it('legacy `rows` models also get set points', async () => {
                 mockReadTextFile.mockResolvedValue(JSON.stringify({
                     id: 'ws1', name: 'A',

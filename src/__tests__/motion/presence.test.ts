@@ -154,6 +154,24 @@ describe('presence', () => {
         expect(document.body.querySelector(':scope > .m-ghost')).toBeNull();
     });
 
+    it('two crossfades in one parent ending at different times: relative until the LAST copy is gone', async () => {
+        vi.advanceTimersByTime(1000);
+        host().innerHTML = '<div id="p" style="position: static"><div class="m-swap">a</div></div>';
+        await flush();
+        const p = document.getElementById('p')!;
+        const swapTo = async (t: string) => { p.querySelector(':scope > .m-swap:not(.m-ghost)')!.replaceWith(el('<div class="m-swap">' + t + '</div>')); await flush(); };
+        await swapTo('b');
+        vi.advanceTimersByTime(80);
+        await swapTo('c');
+        expect(p.querySelectorAll('.m-ghost')).toHaveLength(2);
+        vi.advanceTimersByTime(90); // the first copy is gone, the second is not
+        expect(p.querySelectorAll('.m-ghost')).toHaveLength(1);
+        expect(p.style.position).toBe('relative');
+        vi.advanceTimersByTime(200);
+        expect(p.querySelectorAll('.m-ghost')).toHaveLength(0);
+        expect(p.style.position).toBe('static');
+    });
+
     it('a crossfade lends its static parent position: relative only while the old copy is on screen', async () => {
         vi.advanceTimersByTime(1000);
         host().innerHTML = '<div id="p" style="position: static"><div class="m-swap">old</div></div>';
