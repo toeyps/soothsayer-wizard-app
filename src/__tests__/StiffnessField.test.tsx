@@ -6,9 +6,9 @@ import { STIFFNESS_OPTIONS } from '../components/reports/pmReportTypes';
 afterEach(cleanup);
 
 describe('StiffnessField (Relation model, select with curves)', () => {
-    it('shows the current step, its n/7 and its one-line hint', () => {
+    it('shows the current step without a step counter, and its one-line hint', () => {
         render(<StiffnessField value={100} onChange={() => {}} />);
-        expect(screen.getByTestId('stiffness-select').textContent).toBe('Standard4/7');
+        expect(screen.getByTestId('stiffness-select').textContent).toBe('Standard');
         expect(screen.getByText(STEP_HINT[3])).toBeTruthy();
     });
 

@@ -6648,7 +6648,6 @@ fieldset.bmw-sets-body { margin: 0; border: 0; min-width: 0; }
 .stf-b-btn:hover, .stf-b-btn.open { border-color: var(--accent-color); }
 .stf-b-btn:focus-visible { outline: 2px solid var(--accent-color); outline-offset: 1px; }
 .stf-b-t { flex: 1; text-align: left; }
-.stf-b-n { font-family: var(--mono); font-size: 10.5px; color: var(--text-faint); }
 .stf-b-btn svg:last-child { color: var(--text-secondary); }
 .stf-b-pop { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; width: 250px; padding: 6px; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--pop); box-shadow: 0 18px 40px rgba(0,0,0,.5); }
 .stf-b-cap { display: flex; justify-content: space-between; padding: 2px 8px 6px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); }

@@ -87,7 +87,6 @@ export function StiffnessField({ value, onChange }: { value: number; onChange: (
                 >
                     <CurveGlyph i={i} w={26} h={14} />
                     <span className="stf-b-t">{STIFFNESS_OPTIONS[i].label}</span>
-                    <span className="stf-b-n">{i + 1}/{N}</span>
                     <ChevronDown size={13} aria-hidden="true" />
                 </button>
                 {open && (
