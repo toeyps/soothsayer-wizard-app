@@ -29,6 +29,7 @@ import { UNDO_SECONDS } from './FailureGroupAssignSheet';
 import { kindModelName } from '../../utils/modelNames';
 import { defaultModelName } from './defaultModelName';
 import FailureGroupsPanel from './FailureGroupsPanel';
+import { STIFFNESS_DEFAULT } from '../reports/pmReportTypes';
 import { NOT_IN_GROUP, appendFailureGroup, applyFailureGroupDetails, isDuplicateFailureGroupName } from './failureGroupOps';
 import { getFgGroupColor } from '../../utils/failureGroupColor';
 import { realFailureGroups } from '../../utils/failureGroupSummary';
@@ -433,7 +434,7 @@ const Dashboard = forwardRef<DashboardRef, DashboardProps>(({ metadata, sensorMe
         rcMode: null,
         scatterXSensor: '',
         relModelName: '',
-        relStiffness: 100_000,
+        relStiffness: STIFFNESS_DEFAULT,
         clusterModelName: '',
         // One cluster by default: 2+ needs a criteria sensor (Rust refuses otherwise).
         numClusters: 1,

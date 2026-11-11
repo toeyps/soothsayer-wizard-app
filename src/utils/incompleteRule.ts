@@ -1,5 +1,5 @@
 import type { FailureGroupStateSlice, FailureModel, WorkspaceState } from '../types';
-import { STIFFNESS_DEFAULT, snapStiffness } from '../components/reports/pmReportTypes';
+import { STIFFNESS_LEGACY_DEFAULT, snapStiffness } from '../components/reports/pmReportTypes';
 import { withFailureGroupState } from './failureGroupState';
 import { effectiveRunningCondition } from './runningCondition';
 import { testPeriodsKey } from './timePeriods';
@@ -16,7 +16,7 @@ function changeFingerprint(model: FailureModel, fg: Partial<FailureGroupStateSli
     // needs them to be arrays.
     let m: FailureModel = Array.isArray(model.predictorSensors) ? model : { ...model, predictorSensors: [] };
     if (model.kind === 'relationship') {
-        const lambda = snapStiffness(typeof model.relStiffness === 'number' ? model.relStiffness : STIFFNESS_DEFAULT);
+        const lambda = snapStiffness(typeof model.relStiffness === 'number' ? model.relStiffness : STIFFNESS_LEGACY_DEFAULT);
         if (lambda !== model.relStiffness) m = { ...m, relStiffness: lambda };
     } else if (model.kind === 'clustering') {
         if (model.numClusters === undefined || model.numClusters === null) m = { ...m, numClusters: 3 };

@@ -189,7 +189,7 @@ describe('model-setting triggers (Save changes)', () => {
         selectKindTab('Relation model');
         await settle(500);
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
+        fireEvent.click(bmw().getByRole('button', { name: 'Very loose' }));
         await saveChanges();
         await expectDemoted('r1', before, { key: 'tag1', kind: 'relationship' });
     });

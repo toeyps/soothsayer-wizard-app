@@ -5,7 +5,7 @@ import type {
     HealthSetPointsWire,
     TestPeriodWire,
 } from '../types/health';
-import { STIFFNESS_DEFAULT } from '../components/reports/pmReportTypes';
+import { STIFFNESS_LEGACY_DEFAULT } from '../components/reports/pmReportTypes';
 import { effectiveRunningCondition, type RunningConditionFg } from './runningCondition';
 import { toTestPeriodsWire } from './timePeriods';
 import { computeTrainFingerprint } from './trainFingerprint';
@@ -42,11 +42,11 @@ export function relationshipCacheKey(model: FailureModel, fg: RunningConditionFg
     return `${model.id}::${computeTrainFingerprint(model, fg)}`;
 }
 
-/** λ sent to `preview_relationship_model`: `relStiffness`, falling back to the Standard preset when missing or non-finite. */
+/** λ sent to `preview_relationship_model`: `relStiffness`, falling back to the old default (100 000) when missing or non-finite. */
 export function relationshipLambda(model: FailureModel): number {
     return typeof model.relStiffness === 'number' && Number.isFinite(model.relStiffness)
         ? model.relStiffness
-        : STIFFNESS_DEFAULT;
+        : STIFFNESS_LEGACY_DEFAULT;
 }
 
 const nonEmpty = (v: string | null | undefined): v is string => typeof v === 'string' && v.trim() !== '';

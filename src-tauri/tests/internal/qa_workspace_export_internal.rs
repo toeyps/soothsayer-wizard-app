@@ -276,7 +276,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     );
     assert_eq!(keys_of(&mi_text, "machine"), ["tag", "name", "notes"]);
     assert_eq!(keys_of(&mi_text, "running_status"), ["sensor", "stop_if_lower_than"]);
-    assert_eq!(mi["schema_version"], "1.1");
+    assert_eq!(mi["schema_version"], "1.2");
     let exported_at = mi["exported_at"].as_str().unwrap();
     assert_eq!(exported_at, res.exported_at);
     let b = exported_at.as_bytes();
@@ -315,7 +315,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     let mut model_json: BTreeMap<String, (String, serde_json::Value)> = BTreeMap::new();
     for k in &keys {
         let (text, v) = read_json(&models_dir.join(format!("{k}.json")));
-        assert_eq!(v["schema_version"], "1.1");
+        assert_eq!(v["schema_version"], "1.2");
         assert_eq!(v["model_key"], k.as_str());
         assert_eq!(v["training_data"]["file"], format!("{k}.csv"));
         assert_eq!(keys_of(&text, "training_data"), ["file", "note"]);
@@ -336,7 +336,7 @@ fn qa_workspace_export_contract_fixture_exports_a_spec_compliant_folder() {
     assert_eq!(r["component"], "Engine");
     assert_eq!(r["output"], "T1");
     assert_eq!(strs(&r["inputs"]), ["P1", "POWER"]);
-    assert_eq!(r["fit_profile"], "standard", "the profile NAME, never the number");
+    assert_eq!(r["fit_profile"], "very_strict", "the profile NAME, never the number");
 
     let (i_text, i) = &model_json["T1-I1"];
     assert_eq!(top_keys(i_text), ["schema_version", "model_key", "kind", "display_name", "category", "component", "sensor", "health", "training_data"]);

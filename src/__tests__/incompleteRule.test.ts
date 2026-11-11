@@ -45,7 +45,7 @@ describe('applyIncompleteRule - a Complete model goes back to Incomplete the mom
         ['Relationship: predictor added', relationship, { predictorSensors: ['P1', 'P2'] }],
         ['Relationship: predictor replaced', relationship, { predictorSensors: ['P2'] }],
         ['Relationship: target sensor', relationship, { targetSensor: 'T2' }],
-        ['Relationship: stiffness', relationship, { relStiffness: 1_000_000 }],
+        ['Relationship: stiffness', relationship, { relStiffness: 0.1 }],
         ['Clustering: Y sensor', clustering, { ySensor: 'Y2' }],
         ['Clustering: X sensor', clustering, { xSensor: 'X2' }],
         ['Clustering: criteria sensor', clustering, { criteriaSensor: 'C2' }],

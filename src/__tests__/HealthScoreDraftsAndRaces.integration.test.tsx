@@ -432,7 +432,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         // back to Model fit: change stiffness, Save — all while the check runs
         fireEvent.click(bmw().getByTestId('page-tab-model'));
         openSettings();
-        fireEvent.click(bmw().getByRole('button', { name: 'Strict' }));
+        fireEvent.click(bmw().getByRole('button', { name: 'Very loose' }));
         await saveChanges();
         // Train is refused while Mark complete runs.
         fireEvent.click(bmw().getByTestId('train-sensor-menu-toggle'));
@@ -443,7 +443,7 @@ describe('Mark complete: races and failures (it only CHECKS the set points — E
         await settle(150);
         const m = diskModel('r1');
         expect(`r1::${m.trainedFingerprint}`).toBe(checkedKey); // not re-trained meanwhile
-        expect(m.relStiffness).toBe(1_000_000); // the Strict edit was saved (the model really changed)
+        expect(m.relStiffness).toBe(0.1); // the Very loose edit was saved (the model really changed)
         expect(m.status).toBe(false);
         expect(bmwEl().textContent).toMatch(/not marked complete/);
     });

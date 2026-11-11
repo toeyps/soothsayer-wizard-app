@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 /// Global event emitted after each model is written.
 pub const PROGRESS_EVENT: &str = "workspace-export-progress";
 
-const SCHEMA_VERSION: &str = "1.1";
+const SCHEMA_VERSION: &str = "1.2";
 const MACHINE_INFO_FILE: &str = "machine_info.json";
 const MODELS_DIR: &str = "models";
 const DERIVED_DIR: &str = "derived";
@@ -548,10 +548,13 @@ fn is_windows_device_name(stem: &str) -> bool {
 }
 
 /// Relation-model stiffness → profile NAME (spec §4.5; the number is never
-/// exported). `None` = not one of the four profiles.
+/// exported). `None` = not one of the seven profiles.
 pub(crate) fn fit_profile(stiffness: Option<f64>) -> Option<&'static str> {
     let s = stiffness?;
-    [(1_000.0, "very_loose"), (10_000.0, "loose"), (100_000.0, "standard"), (1_000_000.0, "strict")]
+    [
+        (0.1, "very_loose"), (1.0, "loose"), (10.0, "slightly_loose"), (100.0, "standard"),
+        (1_000.0, "slightly_strict"), (10_000.0, "strict"), (100_000.0, "very_strict"),
+    ]
         .iter()
         .find(|(v, _)| *v == s)
         .map(|&(_, name)| name)
@@ -1029,7 +1032,7 @@ pub fn build_plan(
             let p = fit_profile(m.rel_stiffness);
             if p.is_none() {
                 issues.push(
-                    ExportIssue::error("fit_profile_unknown", "The fit stiffness is not one of the four profiles")
+                    ExportIssue::error("fit_profile_unknown", "The fit stiffness is not one of the seven profiles")
                         .model(&m.id)
                         .field("rel_stiffness"),
                 );
@@ -2262,7 +2265,7 @@ mod tests {
             ["schema_version", "model_key", "kind", "display_name", "category", "component", "output", "inputs", "fit_profile", "health", "training_data"]
         );
         let j = json_of(m);
-        assert_eq!(j["schema_version"], "1.1");
+        assert_eq!(j["schema_version"], "1.2");
         assert_eq!(j["model_key"], "Y-R1");
         assert_eq!(j["kind"], "relationship");
         assert_eq!(j["display_name"], "Model r1");
@@ -2270,7 +2273,7 @@ mod tests {
         assert_eq!(j["component"], "Gas Generator");
         assert_eq!(j["output"], "Y");
         assert_eq!(j["inputs"], serde_json::json!(["A", "B"]));
-        assert_eq!(j["fit_profile"], "standard");
+        assert_eq!(j["fit_profile"], "very_strict");
         assert_eq!(j["health"], serde_json::json!({"warning": {"low": -4.0, "high": 4.0}, "failure": {"low": -8.0, "high": 8.0}}));
         assert_eq!(j["training_data"], serde_json::json!({"file": "Y-R1.csv", "note": "running only"}));
         assert!(p.ok, "{:?}", p.issues);
@@ -2388,11 +2391,15 @@ mod tests {
     }
 
     #[test]
-    fn fit_profile_maps_the_four_values_and_flags_anything_else() {
-        assert_eq!(fit_profile(Some(1_000.0)), Some("very_loose"));
-        assert_eq!(fit_profile(Some(10_000.0)), Some("loose"));
-        assert_eq!(fit_profile(Some(100_000.0)), Some("standard"));
-        assert_eq!(fit_profile(Some(1_000_000.0)), Some("strict"));
+    fn fit_profile_maps_the_seven_values_and_flags_anything_else() {
+        assert_eq!(fit_profile(Some(0.1)), Some("very_loose"));
+        assert_eq!(fit_profile(Some(1.0)), Some("loose"));
+        assert_eq!(fit_profile(Some(10.0)), Some("slightly_loose"));
+        assert_eq!(fit_profile(Some(100.0)), Some("standard"));
+        assert_eq!(fit_profile(Some(1_000.0)), Some("slightly_strict"));
+        assert_eq!(fit_profile(Some(10_000.0)), Some("strict"));
+        assert_eq!(fit_profile(Some(100_000.0)), Some("very_strict"));
+        assert_eq!(fit_profile(Some(1_000_000.0)), None);
         assert_eq!(fit_profile(Some(5.0)), None);
         assert_eq!(fit_profile(None), None);
         let mut m = rel("r1", "Y", &["A"]);

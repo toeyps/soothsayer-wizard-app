@@ -1,4 +1,4 @@
-# Wizard Output Specification — v1.1
+# Wizard Output Specification — v1.2
 
 **Audience:** Wizard developers. **Status:** issued 2026-11-10. **Replaces:** v1.0 (2026-10-20).
 
@@ -14,7 +14,7 @@ Based on the review of the test export `test_export (1)` (bangchak / GEG-4). Tha
 | C2 | **`derived_sensors[]` lists every derived sensor defined in the session**, not only the ones used by models. | 3.2 | Export every derived sensor the user created. |
 | C3 | **New folder `derived/` with one data file per derived sensor.** | 2, 5.1 | Write `derived/<derived_tag>.csv` containing the derived value and the inputs it is built from. |
 | C4 | **Clarification: regime boundaries.** No format change. | 4.4 | When the Wizard assigns training rows to clustering regimes for its preview, it must use `from < value <= to` (lower bound excluded, upper bound included), the same rule as the export. The current Wizard code uses `from <= value < to`. |
-| C5 | `schema_version` is `"1.1"`. | 3.2, 4.1 | — |
+| C5 | `schema_version` is `"1.2"`. | 3.2, 4.1 | — |
 | C6 | Export checklist extended. | 7 | New checks for C1–C3. |
 
 Everything else is unchanged from v1.0.
@@ -63,7 +63,7 @@ One export = **one machine, one Wizard session**.
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "exported_at": "2026-10-20T10:00:00+07:00",
   "plant": "Yadana",
   "machine": {
@@ -111,7 +111,7 @@ In this example `PI71001` is not used by any model; it is still listed (C1). The
 
 | Field | Type | Required | Meaning / rules |
 |---|---|---|---|
-| `schema_version` | string | ✅ | Always `"1.1"` for this spec. |
+| `schema_version` | string | ✅ | Always `"1.2"` for this spec. |
 | `exported_at` | string | ✅ | ISO 8601 timestamp with UTC offset. |
 | `plant` | string | ✅ | Plant name as the customer calls it. |
 | `machine.tag` | string | ✅ | Machine tag/code (e.g. `U-2010`). |
@@ -146,7 +146,7 @@ In this example `PI71001` is not used by any model; it is still listed (C1). The
 
 | Field | Type | Required | Meaning / rules |
 |---|---|---|---|
-| `schema_version` | string | ✅ | `"1.1"` |
+| `schema_version` | string | ✅ | `"1.2"` |
 | `model_key` | string | ✅ | Equal to the file stem. |
 | `kind` | string | ✅ | `"relationship"`, `"individual"` or `"clustering"`. |
 | `display_name` | string | – | Optional user-given name. Empty string means a name is generated downstream. |
@@ -164,7 +164,7 @@ The output sensor is modeled from one or more input sensors. Health is judged on
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "model_key": "CITempA-R1",
   "kind": "relationship",
   "display_name": "",
@@ -188,7 +188,7 @@ The output sensor is modeled from one or more input sensors. Health is judged on
 |---|---|---|
 | `output` | string | One tag. |
 | `inputs` | array of string | One or more tags, in the order the user selected them. Must not contain `output`. |
-| `fit_profile` | string | One of `"very_loose"`, `"loose"`, `"standard"`, `"strict"` (see section 4.5). Export **the name only, never the underlying numeric value**. |
+| `fit_profile` | string | One of `"very_loose"`, `"loose"`, `"slightly_loose"`, `"standard"`, `"slightly_strict"`, `"strict"`, `"very_strict"` (see section 4.5). Export **the name only, never the underlying numeric value**. |
 | `health.warning.low/high` | number | Deviation of actual from expected (actual − expected), in the output sensor's unit, at which health reaches the warning level (health 80). Requires `low < 0 < high`. |
 | `health.failure.low/high` | number | Same, at which health reaches zero. Requires `failure.low < warning.low` and `failure.high > warning.high`. |
 
@@ -198,7 +198,7 @@ A single sensor is judged against its own normal range.
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "model_key": "CITempA-I1",
   "kind": "individual",
   "display_name": "",
@@ -226,7 +226,7 @@ Two sensors are judged together against their normal operating pattern. The patt
 
 ```json
 {
-  "schema_version": "1.1",
+  "schema_version": "1.2",
   "model_key": "ZI72144A-C1",
   "kind": "clustering",
   "display_name": "",
@@ -263,10 +263,15 @@ The Wizard uses this table to train its preview. The implementation module uses 
 
 | `fit_profile` | UI label | Internal value |
 |---|---|---|
-| `very_loose` | Very loose | 1,000 |
-| `loose` | Loose | 10,000 |
-| `standard` | Standard | 100,000 |
-| `strict` | Strict | 1,000,000 |
+| `very_loose` | Very loose | 0.1 |
+| `loose` | Loose | 1 |
+| `slightly_loose` | Slightly loose | 10 |
+| `standard` | Standard | 100 |
+| `slightly_strict` | Slightly strict | 1,000 |
+| `strict` | Strict | 10,000 |
+| `very_strict` | Very strict | 100,000 |
+
+Changed in `schema_version` 1.2 (2026-11-11): seven steps, one per decade from 0.1 to 100,000. In 1.1 there were four: `very_loose` 1,000 · `loose` 10,000 · `standard` 100,000 · `strict` 1,000,000. The same name means a different value in 1.1 and 1.2, so read the table that matches the file's `schema_version`.
 
 Do not change these values without bumping `schema_version`; otherwise the trained model will no longer match the Wizard preview.
 

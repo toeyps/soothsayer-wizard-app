@@ -34,7 +34,7 @@ import { useDatasetTimeBounds } from "../../hooks/useDatasetTimeBounds";
 import { useHealthPreview } from "../../hooks/useHealthPreview";
 import { validatePeriods, testPeriodsKey, testPeriodsError, testPeriodsWirePlan, toScoringPeriods, type PeriodDataBounds } from "../../utils/timePeriods";
 import { SLOW_TEST_SCORING_TEXT, testsChangedNotice, testsChangedNoticeParts, testsChangedState } from "../../utils/trainTestValidation";
-import { STIFFNESS_OPTIONS, STIFFNESS_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
+import { STIFFNESS_OPTIONS, STIFFNESS_LEGACY_DEFAULT, stiffnessLabel, snapStiffness } from "../reports/pmReportTypes";
 import RunningConditionPanel, { RunningConditionPills } from "./RunningConditionPanel";
 import { RunningConditionCard, type RcStepState } from "./RunningConditionCard";
 import { SensorPickerModal } from "./SensorPickers";
@@ -211,7 +211,7 @@ const draftFromModel = (m: FailureModel): ModelDraft => ({
     y: m.ySensor ?? '',
     criteria: m.criteriaSensor ?? '',
     ranges: m.clusterRanges?.length ? m.clusterRanges : DEFAULT_CLUSTER_RANGES,
-    stiffness: snapStiffness(m.relStiffness ?? STIFFNESS_DEFAULT),
+    stiffness: snapStiffness(m.relStiffness ?? STIFFNESS_LEGACY_DEFAULT),
     numClusters: m.numClusters ?? 3,
     runningConditionMode: m.runningConditionMode ?? 'workspace',
     customFilters: m.customRunningConditionFilters ?? [],
