@@ -34,9 +34,9 @@
 
 | เรื่อง | สถานะ |
 |---|---|
-| เวอร์ชันล่าสุดที่ build เป็น installer | **0.18.0** (2026-11-11) ก่อนหน้านั้นคือ 0.17.0 (2026-11-10), 0.16.0 (2026-11-10) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
-| git tag | tag ถึง `v0.15.4` push ขึ้น `personal` แล้ว (2026-11-05) · `v0.16.0` push แล้ว 2026-11-10 · `v0.17.0` push แล้ว 2026-11-10 · `v0.18.0` push แล้ว 2026-11-11 ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
-| push ล่าสุด | 2026-11-11: push `main` (ถึง release `d0e7e5e` + docs) และ tag `v0.18.0` ขึ้น `personal` |
+| เวอร์ชันล่าสุดที่ build เป็น installer | **0.18.1** (2026-11-11) ก่อนหน้านั้นคือ 0.18.0 (2026-11-11), 0.17.0 (2026-11-10) ดูรายละเอียดที่ [`release/CHANGELOG.md`](release/CHANGELOG.md) และ [`release/Wizard_Release_Versions.txt`](release/Wizard_Release_Versions.txt) |
+| git tag | tag ถึง `v0.15.4` push ขึ้น `personal` แล้ว (2026-11-05) · `v0.16.0` push แล้ว 2026-11-10 · `v0.17.0` push แล้ว 2026-11-10 · `v0.18.0` และ `v0.18.1` push แล้ว 2026-11-11 ส่วน 0.6.0/0.7.0 ไม่เคย build จึงไม่มี tag |
+| push ล่าสุด | 2026-11-11: push `main` (ถึง release 0.18.1 + docs) และ tag `v0.18.1` ขึ้น `personal` |
 | งานที่รอผู้ใช้ทดสอบในแอปจริง | ไม่มี: popup "New failure group" และ Stiffness 7 ระดับ ผู้ใช้ทดสอบใน dev แล้ว ใช้ได้ (2026-11-11) แล้ว build เป็น 0.18.0 (ยังไม่ได้ลองบนตัวติดตั้ง) · Export เป็น `schema_version` 1.2: server ของลูกค้าต้องใช้ตาราง fit_profile ใหม่ · ยังไม่แก้: Build Model หน่วงในโปรเจกต์คอลัมน์เยอะมาก (exportReadiness) |
 | เรื่องที่รอผู้ใช้ตัดสินใจ | ลดสิทธิ์ `dialog:default` เหลือ open + message · การแสดงไฟล์/โฟลเดอร์ output หลัง Mark complete (ผู้ใช้เลื่อนไว้จนกว่า UI จะใช้ได้ครบ) · แยก `BuildModelWindow.tsx` เป็นไฟล์ย่อย (เสนอไว้) |
 | งานค้างที่รู้อยู่ | [`BACKLOG.md`](BACKLOG.md) |
