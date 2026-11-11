@@ -575,6 +575,8 @@ export default function BuildModelWindow() {
     draftsRef.current = drafts;
     /** One-time category notice, stored in failureGroupState.categoryNormalisationNotice so any window's write keeps it. */
     const [categoryNotice, setCategoryNotice] = useState<CategoryChange[] | null>(null);
+    /** Relation models whose old stiffness was snapped on open (failureGroupState.stiffnessSnapNotice). */
+    const [stiffnessNotice, setStiffnessNotice] = useState<string[] | null>(null);
     const [categoryWarn, setCategoryWarn] = useState<{ key: string; text: string } | null>(null);
     /** "Copied N periods and M conditions" note per model id; session-only, shown once per switch to Custom. */
     const [seedNoteFor, setSeedNoteFor] = useState<Record<string, { periods: number; conditions: number; tests: number } | null>>({});
@@ -661,6 +663,7 @@ export default function BuildModelWindow() {
         setRunningConditionAllData(fg?.runningConditionAllData ?? false);
         setRcConversion(fg?.runningConditionConversion ?? null);
         setCategoryNotice(fg?.categoryNormalisationNotice ?? null);
+        setStiffnessNotice(fg?.stiffnessSnapNotice ?? null);
     }, []);
 
     /** Adopts what this window's write put on disk, recipes included, so freshness is judged against them. Older in-flight recipe reads are dropped (recipeSeq). */
@@ -1499,6 +1502,19 @@ export default function BuildModelWindow() {
         if (!workspaceId) return Promise.resolve(false);
         return savedOk((async () => {
             const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { categoryNormalisationNotice: null }));
+            if (workspaceIdRef.current !== workspaceId) return;
+            if (next?.failureGroupState) {
+                applyWritten(next);
+                await broadcastFailureGroups({ ...next.failureGroupState, workspaceId, origin: 'build-model' });
+            }
+        })());
+    };
+
+    const dismissStiffnessNotice = (): Promise<boolean> => {
+        if (!workspaceId) return Promise.resolve(false);
+        setStiffnessNotice(null);
+        return savedOk((async () => {
+            const next = await updateWorkspaceData(workspaceId, prev => withFailureGroupState(prev, { stiffnessSnapNotice: null }));
             if (workspaceIdRef.current !== workspaceId) return;
             if (next?.failureGroupState) {
                 applyWritten(next);
@@ -4421,6 +4437,23 @@ export default function BuildModelWindow() {
                     return (
                         <div className="rc-notice" role="status" data-testid="tests-changed-notice">
                             <b>{n.headline}.</b> {n.rest}
+                        </div>
+                    );
+                })()}
+
+                {stiffnessNotice && stiffnessNotice.length > 0 && (() => {
+                    const names = stiffnessNotice.map(id => allModels.find(m => m.id === id)).filter((m): m is FailureModel => !!m).map(m => `${m.name} (${stiffnessLabel(m.relStiffness)})`);
+                    const n = stiffnessNotice.length;
+                    return (
+                        <div role="status" data-testid="stiffness-snap-notice" className="f4-notice" style={{ margin: '12px 20px 0' }}>
+                            <span className="f4-notice-ico"><TriangleAlert size={16} aria-hidden="true" /></span>
+                            <div style={{ minWidth: 0 }}>
+                                <div className="f4-notice-title">
+                                    {n} Relation model{n === 1 ? ' is' : 's are'} Incomplete: stiffness changed
+                                </div>
+                                The old Strict stiffness is no longer a choice, so {n === 1 ? 'it was' : 'they were'} moved to the nearest step{names.length ? <>: {names.join(' · ')}</> : null}. Train again, then Mark complete. Set points are kept.
+                            </div>
+                            <button type="button" className="f4-notice-x" onClick={dismissStiffnessNotice}>Dismiss</button>
                         </div>
                     );
                 })()}

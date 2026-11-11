@@ -547,6 +547,7 @@ describe('migrateRelStiffness', () => {
         expect(out.healthVerdict).toBeUndefined();
         expect(out.healthSetPoints).toEqual(m.healthSetPoints);
         expect(isModelStale(out, fg)).toBe(true);
+        expect(fg.stiffnessSnapNotice).toEqual(['r']);
     });
 
     it('a step value, a non-relation model or a missing value is left as it is (same object)', () => {
@@ -556,6 +557,11 @@ describe('migrateRelStiffness', () => {
             rel({ id: 'c', relStiffness: undefined as never }),
         ] });
         expect(migrateRelStiffness(s)).toBe(s);
+    });
+
+    it('adds to a notice not dismissed yet, once per model', () => {
+        const s = ws({ models: [rel({ id: 'a' }), rel({ id: 'b' })], stiffnessSnapNotice: ['a', 'x'] });
+        expect(migrateRelStiffness(s).failureGroupState!.stiffnessSnapNotice).toEqual(['a', 'x', 'b']);
     });
 
     it('is idempotent', () => {

@@ -172,6 +172,33 @@ describe('presence', () => {
         expect(p.style.position).toBe('static');
     });
 
+    it('a parent whose own position changed while a copy was on screen keeps the new value', async () => {
+        vi.advanceTimersByTime(1000);
+        host().innerHTML = '<div id="p" style="position: static"><div class="m-swap">a</div></div>';
+        await flush();
+        const p = document.getElementById('p')!;
+        p.replaceChildren(el('<div class="m-swap">b</div>'));
+        await flush();
+        expect(p.style.position).toBe('relative');
+        p.style.position = 'sticky';
+        vi.advanceTimersByTime(500);
+        expect(p.style.position).toBe('sticky');
+    });
+
+    it('the portal root and its first popover in one batch: the popover still reveals', async () => {
+        vi.advanceTimersByTime(1000);
+        // As Portal does it: the root is appended, then React renders into it, before the observer runs.
+        const root = el('<div id="wizard-portal-root"></div>');
+        document.body.appendChild(root);
+        const pop = el('<p>first popover</p>');
+        root.appendChild(pop);
+        await flush();
+        expect(root.classList.contains('m-in')).toBe(false);
+        expect(pop.classList.contains('m-in')).toBe(true);
+        root.remove();
+        await flush();
+    });
+
     it('a crossfade lends its static parent position: relative only while the old copy is on screen', async () => {
         vi.advanceTimersByTime(1000);
         host().innerHTML = '<div id="p" style="position: static"><div class="m-swap">old</div></div>';

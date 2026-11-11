@@ -3633,9 +3633,17 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - สร้างโมเดล Relation model ใหม่ กาง Model settings แล้วกดปุ่ม Stiffness
   - กด Tab ไปที่ปุ่ม Stiffness แล้วกดลูกศร ← → (ปุ่มยังปิดอยู่) แล้วกด Enter, ↓, Enter
   - Train ด้วย "Very loose" ดูกราฟ Fit แล้วเปลี่ยนเป็น "Very strict" กด Save แล้ว Train อีกรอบ ดูกราฟ Fit อีกครั้ง
-  - เปิดโปรเจกต์เก่าที่มีโมเดล Relation model ตั้งไว้ "Strict" (ของเดิม) แล้วกาง Model settings
+  - เปิดโปรเจกต์เก่าที่มีโมเดล Relation model ตั้งไว้ "Very loose", "Loose" หรือ "Standard" (ของเดิม) แล้วกาง Model settings
   - ทำโมเดลให้ Complete ทุกตัว แล้วกด Export results เปิดไฟล์ `models/<ชื่อโมเดล>.json` ด้วย Notepad
-  - **คาดหวัง:** ปุ่ม Stiffness เป็นปุ่มเดียว (รูปเส้นโค้ง + ชื่อระดับ + "4/7") และใต้ปุ่มมีคำอธิบายหนึ่งบรรทัดของระดับนั้น · กดแล้วมีรายการหัว "Follows the data … Smooth" 7 แถว เรียง "Very loose", "Loose", "Slightly loose", "Standard · default", "Slightly strict", "Strict", "Very strict" แต่ละแถวมีรูปเส้นโค้งจากหยักไปเรียบ ระดับปัจจุบันมี ✓ · คลิกแถว = เลือกและรายการปิด · คลิกนอกรายการหรือกด Esc = ปิดโดยไม่เปลี่ยน · ← → เปลี่ยนระดับทีละขั้นโดยไม่ต้องเปิดรายการ · Enter เปิดรายการ ↓ เลื่อน Enter เลือก · โมเดลใหม่เริ่มที่ "Standard" · เส้น Fit ของ "Very loose" โค้งตามข้อมูลมากกว่า ส่วน "Very strict" เกือบเป็นเส้นตรง · โปรเจกต์เก่า: โมเดลที่เคยเป็น "Very loose", "Loose" และ "Standard" แบบเดิม ตอนนี้แสดงเป็น "Slightly strict", "Strict" และ "Very strict" ตามลำดับ โดยไม่ต้อง Train ใหม่ ส่วนโมเดลที่เคยเป็น "Strict" แบบเดิมแสดงเป็น "Very strict" (ค่าเดิมไม่มีในตารางใหม่ ถ้ากด Save จะต้อง Train ใหม่) · ในไฟล์ export มี `"schema_version": "1.2"` และ `"fit_profile"` เป็นชื่อระดับ (เช่น `"standard"`) ไม่มีตัวเลข
+  - **คาดหวัง:** ปุ่ม Stiffness เป็นปุ่มเดียว (รูปเส้นโค้ง + ชื่อระดับ + "4/7") และใต้ปุ่มมีคำอธิบายหนึ่งบรรทัดของระดับนั้น · กดแล้วมีรายการหัว "Follows the data … Smooth" 7 แถว เรียง "Very loose", "Loose", "Slightly loose", "Standard · default", "Slightly strict", "Strict", "Very strict" แต่ละแถวมีรูปเส้นโค้งจากหยักไปเรียบ ระดับปัจจุบันมี ✓ · คลิกแถว = เลือกและรายการปิด · คลิกนอกรายการหรือกด Esc = ปิดโดยไม่เปลี่ยน · ← → เปลี่ยนระดับทีละขั้นโดยไม่ต้องเปิดรายการ · Enter เปิดรายการ ↓ เลื่อน Enter เลือก · โมเดลใหม่เริ่มที่ "Standard" · เส้น Fit ของ "Very loose" โค้งตามข้อมูลมากกว่า ส่วน "Very strict" เกือบเป็นเส้นตรง · โปรเจกต์เก่า: โมเดลที่เคยเป็น "Very loose", "Loose" และ "Standard" แบบเดิม ตอนนี้แสดงเป็น "Slightly strict", "Strict" และ "Very strict" ตามลำดับ โดยไม่ต้อง Train ใหม่ (โมเดลที่เคยเป็น "Strict" แบบเดิม ดู BMW-426) · ในไฟล์ export มี `"schema_version": "1.2"` และ `"fit_profile"` เป็นชื่อระดับ (เช่น `"standard"`) ไม่มีตัวเลข
+
+- [ ] **BMW-426 — โปรเจกต์เก่าที่มีโมเดล Relation model ตั้งไว้ "Strict" (ของเดิม)** 🆕
+  - เปิดโปรเจกต์เก่าที่มีโมเดล Relation model ตั้งไว้ "Strict" แบบเดิม และโมเดลนั้นเคย Complete แล้ว
+  - เปิดหน้าต่าง Build Model แล้วดูด้านบน
+  - กาง Model settings ของโมเดลนั้น
+  - กด "Dismiss" ที่กล่องแจ้ง แล้วปิดและเปิดโปรเจกต์อีกครั้ง
+  - Train โมเดลนั้นใหม่ แล้ว Mark complete แล้วกด Export results
+  - **คาดหวัง:** ด้านบนมีกล่องแจ้ง "1 Relation model is Incomplete: stiffness changed" พร้อมชื่อโมเดลและระดับใหม่ในวงเล็บ เช่น "(Very strict)" และบอกว่าให้ Train ใหม่แล้ว Mark complete · โมเดลนั้นเป็น Incomplete · Stiffness แสดง "Very strict" · ค่า Health score ที่ตั้งไว้ยังอยู่ครบ · กด Dismiss แล้วกล่องหายและไม่กลับมาอีกหลังเปิดโปรเจกต์ใหม่ · หลัง Train และ Mark complete แล้ว Export results สำเร็จ
 
 - [ ] **BMW-40 — ช่องตั้งค่าใน Model settings: Stiffness (Relation model), จำนวน cluster (Clustering) และสวิตช์ Workspace/Custom (ทุกชนิด)** 🆕
   - กาง Model settings ของโมเดล Relation model — ดูตัวเลือก Stiffness 7 ระดับ (รายละเอียดดู BMW-425)

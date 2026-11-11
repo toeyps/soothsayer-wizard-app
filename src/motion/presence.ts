@@ -51,7 +51,7 @@ function unpin(g: HTMLElement) {
     lentBy.delete(g);
     if (--e.n > 0) return;
     lent.delete(parent);
-    parent.style.position = e.was;
+    if (parent.style.position === 'relative') parent.style.position = e.was; // React set its own value meanwhile: keep it
 }
 
 // Takes a copy out of the flow, pinned where it is now: what replaces it lays out at its final size at once.
@@ -222,7 +222,9 @@ export function installPresence(doc: Document = document) {
         }
         // Content swapped under a tab: whatever else left with it (a footer, a toolbar) must not hold its space either.
         for (const gs of left.values()) if (gs.some(([, k]) => k === 'swap')) for (const [g, k] of gs) if (k === 'fade') pin(g);
-        for (const el of added) { if (el.isConnected && !(el.parentElement && added.has(el.parentElement))) enter(el); }
+        // A parent that reveals covers its children; a direct child of <body> never reveals (see enter), so its children still do.
+        const covers = (p: HTMLElement | null) => !!p && added.has(p) && p.parentElement !== doc.body;
+        for (const el of added) { if (el.isConnected && !covers(el.parentElement)) enter(el); }
         // Swapped-in content reveals as one block: its own parts never reveal a second time inside it.
         for (const el of added) if (el.isConnected && el.matches(SWAP)) anims(el, { subtree: true }).forEach(a => { if ((a.effect as KeyframeEffect | null)?.target !== el) settle(a); });
         // After a tab click, colour eases on what merely followed it end at once (before the frame paints).

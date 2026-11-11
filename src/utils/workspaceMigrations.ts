@@ -131,19 +131,21 @@ function demote(m: FailureModel): FailureModel {
     return m.status ? { ...rest, status: false } : rest;
 }
 
-/** (f) A Relation model whose stiffness is not one of the seven steps (old 1 000 000) snaps to the nearest step and goes Incomplete (Export only knows the steps). Set points kept. */
+/** (f) A Relation model whose stiffness is not one of the seven steps (old 1 000 000) snaps to the nearest step and goes Incomplete (Export only knows the steps); its id joins `stiffnessSnapNotice`. Set points kept. */
 export function migrateRelStiffness(state: WorkspaceState): WorkspaceState {
     const fg = state.failureGroupState;
     if (!fg || !Array.isArray(fg.models)) return state;
-    let changed = false;
+    const snappedIds: string[] = [];
     const models = fg.models.map((m) => {
         if (m.kind !== 'relationship' || typeof m.relStiffness !== 'number') return m;
         const snapped = snapStiffness(m.relStiffness);
         if (snapped === m.relStiffness) return m;
-        changed = true;
+        snappedIds.push(m.id);
         return { ...demote(m), relStiffness: snapped };
     });
-    return changed ? withFailureGroupState(state, { models }) : state;
+    if (!snappedIds.length) return state;
+    const notice = [...new Set([...(fg.stiffnessSnapNotice ?? []), ...snappedIds])];
+    return withFailureGroupState(state, { models, stiffnessSnapNotice: notice });
 }
 
 export function migrateSingleRunningCondition(state: WorkspaceState): WorkspaceState {

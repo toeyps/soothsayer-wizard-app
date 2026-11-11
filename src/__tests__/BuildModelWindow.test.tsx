@@ -1591,6 +1591,33 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
         });
     });
 
+    describe('stiffness snap notice', () => {
+        it('names each snapped Relation model with its new step; Dismiss persists null and removes it', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({
+                failureGroupState: {
+                    groups: [makeGroup()],
+                    models: [makeModel({ id: 'i1' }), makeModel({ id: 'r1', kind: 'relationship', name: 'Bearing temp', predictorSensors: ['TAG2'], relStiffness: 100_000 })],
+                    stiffnessSnapNotice: ['r1'],
+                },
+            });
+            const notice = screen.getByTestId('stiffness-snap-notice');
+            expect(notice.textContent).toContain('1 Relation model is Incomplete');
+            expect(notice.textContent).toContain('Bearing temp (Very strict)');
+            fireEvent.click(within(notice).getByText('Dismiss'));
+            await flush();
+            const written = (await mockUpdateWorkspaceData.mock.results[mockUpdateWorkspaceData.mock.results.length - 1].value).failureGroupState;
+            expect(written.stiffnessSnapNotice).toBeNull();
+            expect(screen.queryByTestId('stiffness-snap-notice')).toBeNull();
+        });
+
+        it('no notice when nothing was snapped', async () => {
+            render(<BuildModelWindow />);
+            await deliverData({ failureGroupState: { groups: [makeGroup()], models: [makeModel()] } });
+            expect(screen.queryByTestId('stiffness-snap-notice')).toBeNull();
+        });
+    });
+
     // The window is a singleton fetching data once; it must not show or accept another project's data.
     describe('multi-project isolation', () => {
         async function fire(event: string, payload: any) {

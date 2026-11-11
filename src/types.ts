@@ -230,6 +230,8 @@ export interface FailureGroupStateSlice {
     /** Category changes made by the one-time normalisation. `undefined` =
      *  step not run yet; `null` = nothing to show / dismissed. */
     categoryNormalisationNotice?: CategoryChange[] | null;
+    /** Relation models whose old stiffness (not one of the seven steps) was snapped on open and made Incomplete; shown until dismissed (null). */
+    stiffnessSnapNotice?: string[] | null;
     /** OLD FILES ONLY: a leftover 'pending' is cleared to null by `migrateSingleRunningCondition`. */
     rcLegacyNotice?: 'pending' | null;
     /** OLD FILES ONLY: read once by `migrateSingleRunningCondition` as a source for the condition, then cleared. */
