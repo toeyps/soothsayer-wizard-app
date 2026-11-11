@@ -19,6 +19,8 @@ const COLLAPSE = [
 ].join(',');
 const WINDOWED = '.sensor-list-row, .bmw-srow, .pk-row, .pk-g, .sensor-run-prefix, .component-group-header';
 const SLIDE = '.bmw-side';
+// More leaving at once than this (a search narrowing a long list): they just go. Each copy costs layout reads.
+export const MAX_GHOSTS = 20;
 
 // --dur-exit is a calc(); a probe element resolves it to a plain duration.
 const exitMs = (doc: Document) => {
@@ -69,8 +71,7 @@ function pin(g: HTMLElement) {
     Object.assign(g.style, { position: 'absolute', top: `${top}px`, left: `${left}px`, width: `${w}px`, height: `${h}px`, margin: '0', overflow: 'hidden', zIndex: '1' });
 }
 
-function ghost(doc: Document, el: HTMLElement, parent: Node, next: Node | null, kind: 'fade' | 'collapse' | 'slide' | 'swap', born: Set<Node>) {
-    const ms = exitMs(doc);
+function ghost(ms: number, el: HTMLElement, parent: Node, next: Node | null, kind: 'fade' | 'collapse' | 'slide' | 'swap', born: Set<Node>) {
     if (ms <= 0) return null;
     const g = el.cloneNode(true) as HTMLElement;
     g.classList.add('m-ghost', `m-ghost--${kind === 'swap' ? 'fade' : kind}`);
@@ -178,6 +179,7 @@ export function installPresence(doc: Document = document) {
         const born = new Set<Node>(); // added in this batch: if also removed in it, it was never painted
         for (const r of records) if (r.type === 'childList') r.addedNodes.forEach(n => born.add(n));
         // A name swapped for another form of the same name in one parent (plain <-> split): same words, no cue either way.
+        const leaving: [HTMLElement, MutationRecord][] = [];
         const swapped = new Set<Node>();
         for (const r of records) {
             if (r.type !== 'childList') continue;
@@ -202,14 +204,21 @@ export function installPresence(doc: Document = document) {
                     if (n.matches(SKIP) || r.target === doc.body || (r.target instanceof Element && skip(r.target))) continue;
                     if (!n.textContent?.trim() && !n.querySelector('*')) continue;
                     if (n.matches(WINDOWED) && recycled(r.target)) continue;
-                    const kind = n.matches(SWAP) ? 'swap' : n.matches(SLIDE) ? 'slide' : (n.matches(COLLAPSE) || sameClassSibling(n, r.target)) ? 'collapse' : 'fade';
-                    const g = ghost(doc, n, r.target, r.nextSibling, still && isAction(n, r.target) ? 'fade' : kind, born);
-                    if (g && still && isAction(n, r.target)) pin(g);
-                    if (g) (left.get(r.target) ?? left.set(r.target, []).get(r.target)!).push([g, kind]);
+                    leaving.push([n, r]);
                 }
             } else if (r.type === 'characterData') {
                 if (!still && r.target.parentElement && r.oldValue !== r.target.textContent && !refit(r.target)) flash(r.target.parentElement);
             }
+        }
+        // Exit copies, once per batch; a swapped panel always gets its crossfade, a mass removal of rows gets none.
+        const crowd = leaving.filter(([n]) => !n.matches(SWAP)).length > MAX_GHOSTS;
+        const ms = leaving.some(([n]) => !crowd || n.matches(SWAP)) ? exitMs(doc) : 0;
+        for (const [n, r] of leaving) {
+            if (crowd && !n.matches(SWAP)) continue;
+            const kind = n.matches(SWAP) ? 'swap' : n.matches(SLIDE) ? 'slide' : (n.matches(COLLAPSE) || sameClassSibling(n, r.target)) ? 'collapse' : 'fade';
+            const g = ghost(ms, n, r.target, r.nextSibling, still && isAction(n, r.target) ? 'fade' : kind, born);
+            if (g && still && isAction(n, r.target)) pin(g);
+            if (g) (left.get(r.target) ?? left.set(r.target, []).get(r.target)!).push([g, kind]);
         }
         // Content swapped under a tab: whatever else left with it (a footer, a toolbar) must not hold its space either.
         for (const gs of left.values()) if (gs.some(([, k]) => k === 'swap')) for (const [g, k] of gs) if (k === 'fade') pin(g);

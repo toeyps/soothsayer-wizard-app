@@ -5827,7 +5827,7 @@ struct EngineRegistry {
     closed: bool,
     pids: Vec<u32>,
     /// Bumped by each [`stop_running_engine`]. A run compares it with its value
-    /// at start, so a caller still in line is not stopped.
+    /// when it joined the line, so a stop also refuses the callers waiting then.
     stops: u64,
 }
 
@@ -5851,7 +5851,11 @@ fn engine_stop_requested(registry: &std::sync::Mutex<EngineRegistry>, stops_at_s
     lock_engine_registry(registry).stops != stops_at_start
 }
 
-/// Stops the engine run holding the turn: its timer kills the tree within `ENGINE_WANTED_POLL` and its caller gets `ENGINE_STOPPED_ERROR`. Otherwise an unwanted run holds the turn up to `ENGINE_RUN_TIMEOUT`.
+fn engine_stops_now(registry: &std::sync::Mutex<EngineRegistry>) -> u64 {
+    lock_engine_registry(registry).stops
+}
+
+/// Stops the engine run holding the turn (its timer kills the tree within `ENGINE_WANTED_POLL`) and every caller already in line; all get `ENGINE_STOPPED_ERROR`. A caller that arrives later runs normally.
 #[tauri::command]
 fn stop_running_engine() -> Result<(), String> {
     request_engine_stop(&LIVE_ENGINES);
@@ -5964,12 +5968,17 @@ async fn run_engine(app: &tauri::AppHandle, line: String, generation: u64) -> Re
             session_generation(state.inner()).map_or(true, |current| current == Some(generation))
         }
     };
+    let arrival = engine_stops_now(&LIVE_ENGINES);
     run_in_engine_turn(&ENGINE_LOCK, &still_wanted, || async {
-        let ((rx, mut child), engine) = start_tracked_engine(&LIVE_ENGINES, kill_engine_tree, || {
+        if engine_stop_requested(&LIVE_ENGINES, arrival) {
+            return Err(ENGINE_STOPPED_ERROR.to_string());
+        }
+        let ((rx, mut child), mut engine) = start_tracked_engine(&LIVE_ENGINES, kill_engine_tree, || {
             let (rx, child) = spawn_sidecar(app)?;
             let pid = child.pid();
             Ok(((rx, child), pid))
         })?;
+        engine.stops_at_start = arrival; // a stop between the check and the start still counts
         let pid = engine.pid;
         let stops_at_start = engine.stops_at_start;
         let dataset_current = still_wanted.clone();
@@ -6570,8 +6579,13 @@ mod engine_run_tests {
         rx: tauri::async_runtime::Receiver<CommandEvent>,
         kill: impl Fn() + Send + Sync + 'static,
     ) -> Result<EngineOutput, String> {
+        let arrival = engine_stops_now(registry);
         run_in_engine_turn(lock, &|| true, || async move {
-            let ((), engine) = start_tracked_engine(registry, no_kill, || Ok(((), 5)))?;
+            if engine_stop_requested(registry, arrival) {
+                return Err(ENGINE_STOPPED_ERROR.to_string());
+            }
+            let ((), mut engine) = start_tracked_engine(registry, no_kill, || Ok(((), 5)))?;
+            engine.stops_at_start = arrival;
             let stops_at_start = engine.stops_at_start;
             let out = collect_engine_output(
                 rx,
@@ -6588,7 +6602,7 @@ mod engine_run_tests {
     }
 
     #[test]
-    fn a_stopped_run_is_killed_gets_its_own_error_and_frees_the_next_one() {
+    fn a_stop_kills_the_run_and_refuses_the_callers_already_in_line() {
         static LOCK: tauri::async_runtime::Mutex<()> = tauri::async_runtime::Mutex::const_new(());
         static REGISTRY: std::sync::Mutex<EngineRegistry> = std::sync::Mutex::new(EngineRegistry::new());
         let (hung_tx, hung_rx) = tauri::async_runtime::channel(8);
@@ -6606,8 +6620,8 @@ mod engine_run_tests {
             request_engine_stop(&REGISTRY);
             assert_eq!(hung.await.unwrap().unwrap_err(), ENGINE_STOPPED_ERROR);
             drop(hung_tx);
-            // The one in line was not stopped: it ran and answered normally.
-            assert!(next.await.unwrap().is_ok());
+            // The one in line was stopped too: it never started an engine.
+            assert_eq!(next.await.unwrap().unwrap_err(), ENGINE_STOPPED_ERROR);
         });
         assert_eq!(kills.load(Ordering::SeqCst), 1);
         assert_eq!(next_kills.load(Ordering::SeqCst), 0);

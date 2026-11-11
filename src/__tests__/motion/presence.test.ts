@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterAll, beforeAll, beforeEach, afterEach } from 'vitest';
-import { installPresence } from '../../motion/presence';
+import { installPresence, MAX_GHOSTS } from '../../motion/presence';
 
 // jsdom has no Web Animations and resolves no CSS: stub what presence reads.
 let exitDur = '0.12s';
@@ -54,6 +54,21 @@ describe('presence', () => {
         expect(g?.getAttribute('aria-hidden')).toBe('true');
         vi.advanceTimersByTime(161);
         expect(host().querySelector('.m-ghost')).toBeNull();
+    });
+
+    it('many rows leaving at once (a search narrowing a list) just go; a few still fade, and the duration is read once', async () => {
+        const rows = (n: number) => Array.from({ length: n }, (_, i) => '<p class="row">r' + i + '</p>').join('');
+        host().innerHTML = '<div id="many">' + rows(MAX_GHOSTS + 10) + '</div><div id="few">' + rows(3) + '</div>';
+        await flush();
+        vi.mocked(window.getComputedStyle).mockClear();
+        document.getElementById('many')!.replaceChildren();
+        await flush();
+        expect(host().querySelectorAll('#many .m-ghost')).toHaveLength(0);
+        document.getElementById('few')!.replaceChildren();
+        await flush();
+        expect(host().querySelectorAll('#few .m-ghost')).toHaveLength(3);
+        const durReads = vi.mocked(window.getComputedStyle).mock.calls.filter(([e]) => e.tagName === 'I');
+        expect(durReads).toHaveLength(1);
     });
 
     it('--dur-exit = 0 (reduced motion) leaves no copy', async () => {

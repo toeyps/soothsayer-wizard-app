@@ -318,7 +318,8 @@ beforeEach(() => {
     lineChartProps.length = 0;
     mockListen.mockClear();
     mockEmit.mockClear().mockResolvedValue(undefined);
-    mockClose.mockClear().mockResolvedValue(undefined);
+    // Like Tauri: close() runs the close-requested handler first (not prevented: the window goes).
+    mockClose.mockClear().mockImplementation(async () => { await mockCloseRequestedHandler?.({ preventDefault: () => {} }); });
     mockUpdateWorkspaceData.mockReset().mockImplementation(async (id: string, patch: (s: any) => any) => {
         const prev = { id, failureGroupState: { groups: [makeGroup()], models: [makeModel()], runningConditionFilters: [RC_ON], rcLegacyNotice: null, runningConditionTimePeriods: ALL_TIME_TRAIN, runningConditionTestPeriods: ONE_TEST } };
         return patch(prev);
@@ -6233,6 +6234,18 @@ describe('Health score - QA fixes 2026-10-04', () => {
             expect((await hsLastModel()).status).toBe(true); // saved BEFORE the window went away
         });
 
+        it('a second native close while the first still waits is held and adds nothing: one close, no "kept"', async () => {
+            await startMark();
+            let closing!: Promise<void>;
+            await act(async () => { closing = mockCloseRequestedHandler!({ preventDefault: vi.fn() }) as Promise<void>; await Promise.resolve(); });
+            const second = vi.fn();
+            await act(async () => { await mockCloseRequestedHandler!({ preventDefault: second }); });
+            expect(second).toHaveBeenCalledTimes(1);
+            await act(async () => { finishExport(); await closing; });
+            expect(mockClose).toHaveBeenCalledTimes(1);
+            expect(mockEmit.mock.calls.filter(c => c[0] === 'build-model-close-kept')).toHaveLength(0);
+        });
+
         it('the toolbar Close button does the same', async () => {
             await startMark();
             fireEvent.click(screen.getByTitle('Close'));
@@ -7439,14 +7452,17 @@ describe('train queue wiring — review fixes (phase 4)', () => {
             expect(stopCalls()).toHaveLength(0);
             // A waiting main window is told this one stayed.
             expect(keptEmits()).toEqual([{ workspaceId: 'ws1' }]);
-            // The next close goes through (no dialog) and stops the engine; a rejected close() is caught.
+            // The next close goes through (no dialog). A rejected close() is caught, keeps the window and does NOT stop the run.
             mockClose.mockRejectedValueOnce(new Error('window already closing'));
             await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
             expect(screen.queryByRole('alertdialog')).toBeNull();
             await waitFor(() => expect(mockClose).toHaveBeenCalledTimes(1));
-            expect(stopCalls()).toHaveLength(1);
-            const preventDefault = vi.fn();
-            await act(async () => { await mockCloseRequestedHandler!({ preventDefault }); });
+            await waitFor(() => expect(keptEmits()).toHaveLength(2));
+            expect(stopCalls()).toHaveLength(0);
+            // A close that really happens stops the engine, once.
+            await act(async () => { fireEvent.click(screen.getByTitle('Close')); await Promise.resolve(); await Promise.resolve(); });
+            await waitFor(() => expect(stopCalls()).toHaveLength(1));
+            expect(mockClose).toHaveBeenCalledTimes(2);
             expect(screen.queryByRole('alertdialog')).toBeNull();
         } finally {
             MARK_COMPLETE_CLOSE_WAIT.ms = wait;

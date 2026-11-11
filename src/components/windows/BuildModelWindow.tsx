@@ -549,6 +549,8 @@ export default function BuildModelWindow() {
     const closeAfterRunRef = useRef(false);
     /** Window.close() was called: its `close-requested` pass lets the window go. */
     const leavingRef = useRef(false);
+    /** A native close is being handled (waiting on saves, an export or the fade). */
+    const closeHandlingRef = useRef(false);
     /** The close-with-unsaved-edits dialog is open. */
     const [unsavedAsk, setUnsavedAsk] = useState(false);
     const unsavedAskRef = useRef(false);
@@ -1934,9 +1936,8 @@ export default function BuildModelWindow() {
         if (running) queueRef.current.stopAfterCurrent('close');
         await stopRunningEngine();
     }, []);
-    /** Window.close() re-enters onCloseRequested; leavingRef lets it pass so nothing asks or waits twice. */
+    /** Window.close() re-enters onCloseRequested; leavingRef lets it pass so nothing asks or waits twice (the engine stops there, once the close is really happening). */
     const leaveWindow = useCallback(async () => {
-        await stopEngineIfBusy();
         leavingRef.current = true;
         try {
             await fadeOutWindow();
@@ -1946,7 +1947,7 @@ export default function BuildModelWindow() {
             leavingRef.current = false;
             tellCloseKept();
         }
-    }, [stopEngineIfBusy, tellCloseKept]);
+    }, [tellCloseKept]);
     /** Model settings or Running condition edits that closing would drop (none when the workspace is closing from the Dashboard). */
     const unsavedEditsAtClose = useCallback((): boolean => {
         if (closeBypassRef.current) return false;
@@ -2020,45 +2021,52 @@ export default function BuildModelWindow() {
         const win = getCurrentWindow();
         Promise.resolve(win.onCloseRequested(async (event) => {
             tellCloseSeen();
-            if (leavingRef.current) return;
-            // "Stop after this model and close" is waiting: it decides, no second question.
-            if (stopClosingRef.current && !closeBypassRef.current) {
+            if (leavingRef.current) { await stopEngineIfBusy(); return; }
+            // A close already on its way (a second X while it waits): this one adds nothing, and a late "kept" from it could hold the main window.
+            if (closeHandlingRef.current) { event.preventDefault(); return; }
+            closeHandlingRef.current = true;
+            try {
+                // "Stop after this model and close" is waiting: it decides, no second question.
+                if (stopClosingRef.current && !closeBypassRef.current) {
+                    event.preventDefault();
+                    return;
+                }
+                // A training run is active: keep the window and ask, unless the workspace is closing or an earlier "stop and close" gave up.
+                if (mustAskBeforeClose()) {
+                    event.preventDefault();
+                    setCloseAsk(true);
+                    return;
+                }
+                flushSync(flushFocusedInput);
+                // A Save in flight decides whether its edit is still unsaved.
+                const saving = pendingSaveRef.current;
+                if (saving) {
+                    event.preventDefault();
+                    await saving;
+                }
+                if (unsavedEditsAtClose()) {
+                    event.preventDefault();
+                    setUnsavedAsk(true);
+                    return;
+                }
+                closeAfterRunRef.current = false;
+                // A set-point draft typed but never blurred is a pending write too.
+                if (!leaveUnsavedRef.current) void commitSetPointDrafts();
+                const pending = pendingSaveRef.current;
+                // A running Mark complete counts as pending too, and so does a running Export results.
+                if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) {
+                    // Nothing pending: held only for the fade-out (none under reduced motion), then leaveWindow closes it.
+                    if (exitMs() > 0) { event.preventDefault(); await leaveWindow(); return; }
+                    await stopEngineIfBusy();
+                    return;
+                }
                 event.preventDefault();
-                return;
+                await waitForExportBeforeClose();
+                if (!(await flushAllPending())) { tellCloseKept(); return; }
+                await leaveWindow();
+            } finally {
+                closeHandlingRef.current = false;
             }
-            // A training run is active: keep the window and ask, unless the workspace is closing or an earlier "stop and close" gave up.
-            if (mustAskBeforeClose()) {
-                event.preventDefault();
-                setCloseAsk(true);
-                return;
-            }
-            flushSync(flushFocusedInput);
-            // A Save in flight decides whether its edit is still unsaved.
-            const saving = pendingSaveRef.current;
-            if (saving) {
-                event.preventDefault();
-                await saving;
-            }
-            if (unsavedEditsAtClose()) {
-                event.preventDefault();
-                setUnsavedAsk(true);
-                return;
-            }
-            closeAfterRunRef.current = false;
-            // A set-point draft typed but never blurred is a pending write too.
-            if (!leaveUnsavedRef.current) void commitSetPointDrafts();
-            const pending = pendingSaveRef.current;
-            // A running Mark complete counts as pending too, and so does a running Export results.
-            if (!saving && !pending && markRunsRef.current.size === 0 && !exportRunRef.current) {
-                // Nothing pending: held only for the fade-out (none under reduced motion), then leaveWindow closes it.
-                if (exitMs() > 0) { event.preventDefault(); await leaveWindow(); return; }
-                await stopEngineIfBusy();
-                return;
-            }
-            event.preventDefault();
-            await waitForExportBeforeClose();
-            if (!(await flushAllPending())) { tellCloseKept(); return; }
-            await leaveWindow();
         })).then(fn => { if (disposed) fn(); else unlisten = fn; });
         return () => { disposed = true; if (unlisten) unlisten(); };
     }, [flushAllPending, commitSetPointDrafts, waitForExportBeforeClose, leaveWindow, mustAskBeforeClose, unsavedEditsAtClose, stopEngineIfBusy, tellCloseKept, tellCloseSeen]);
