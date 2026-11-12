@@ -86,9 +86,31 @@ const median = (xs: number[]) => {
 };
 const finite = (v: number) => (Number.isFinite(v) ? v : NaN);
 
-/** lib.rs `FORMULA_FUNCTION_LIST` (shown with "unknown function"). */
-export const FORMULA_FUNCTION_LIST =
-    'abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()';
+/** lib.rs `FORMULA_FUNCTION_LIST` (shown with "unknown function" / "no longer available"). */
+export const FORMULA_FUNCTION_LIST = 'abs, sqrt, pow, exp, min, max';
+/** lib.rs `OFFERED_FORMULA_FUNCTIONS`: what `preview_formula` sends as `functions`. */
+export const OFFERED_FORMULA_FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'];
+/** formula_diagnostics.rs `REMOVED_FORMULA_FNS`: still replay, the editor / create refuse them. */
+export const REMOVED_FORMULA_FNS = ['ln', 'log', 'log10', 'sign', 'int', 'round', 'ceil', 'floor',
+    'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'pi', 'e'];
+
+/** formula_diagnostics.rs `removed_function`: the first removed name outside sensor references (UTF-16 range), or null. */
+export function fakeRemovedIssue(formula: string): { message: string; range: [number, number] } | null {
+    const spans = rustScanRefs(formula);
+    const masked = Array.from(formula)
+        .map((c, i) => (spans.some(sp => i >= sp.start && i < sp.end) ? ' '.repeat(c.length) : c))
+        .join('');
+    for (const m of masked.matchAll(/(?<![\w.])[A-Za-z_]\w*/g)) {
+        if (REMOVED_FORMULA_FNS.includes(m[0])) {
+            return {
+                message: `Formula error: '${m[0]}' is no longer available. Available functions: ${FORMULA_FUNCTION_LIST}.`,
+                range: [m.index!, m.index! + m[0].length],
+            };
+        }
+    }
+    return null;
+}
+export const fakeRemovedFunction = (formula: string): string | null => fakeRemovedIssue(formula)?.message ?? null;
 
 // fasteval: `round(x)` = nearest integer, `round(modulus, x)` = nearest multiple, half AWAY from zero (unlike `Math.round`).
 // `log(x)` is BASE 10; `log(base, x)` takes the base first.
@@ -124,7 +146,7 @@ export function prepareFormula(formula: string): { expr: string; safe: string[] 
 /** One braced-or-bare reference to `name` (lib.rs `sensor_ref_token`). */
 const refToken = (name: string) => (/^[\p{Alphabetic}\p{N}_]+$/u.test(name) ? `$${name}` : `\${${name}}`);
 
-/** Mirrors lib.rs `compile_formula`, the gate `validate_formula` and `evaluate_formula` share: parse, trial evaluation with every sensor = 1 (unknown name/function is an ERROR), then the `round($A, 2)` refusal. Argument counts are not modelled. `expr` has every reference replaced by `__v[j]`. */
+/** Mirrors lib.rs `compile_formula`: parse, trial evaluation with every sensor = 1 (unknown name/function is an ERROR), then the `round($A, 2)` refusal. Argument counts are not modelled. `expr` has every reference replaced by `__v[j]`. Callers answer a removed function first (`fakeRemovedIssue`), so the bare-pi/e and round-order messages never reach the user. */
 export function compileFakeFormula(formula: string, expr: string, safe: string[]): (v: number[]) => number {
     const js = expr.replace(/\^/g, '**');
     let fn: (...a: any[]) => number;
@@ -136,11 +158,7 @@ export function compileFakeFormula(formula: string, expr: string, safe: string[]
     }
     // `pi` / `e` without brackets: JS would see the function object.
     const bare = /(?<![\w.])(pi|e)\b(?!\s*\()/.exec(js.replace(/__v\[\d+\]/g, '0'));
-    if (bare) {
-        throw bare[1] === 'pi'
-            ? "Formula error: unknown name 'pi'. Write pi() for π."
-            : "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…).";
-    }
+    if (bare) throw `Formula error: unknown name '${bare[1]}'.`;
     try {
         fn(safe.map(() => 1), ...FN_VALUES);
     } catch (e) {
@@ -162,15 +180,7 @@ export function compileFakeFormula(formula: string, expr: string, safe: string[]
     }
     // lib.rs `check_round_argument_order`: `round(<sensor expr>, <whole number>)`.
     const r = /round\(\s*([^,()]*\$[^,()]*?)\s*,\s*(\d+)\s*\)/u.exec(formula);
-    if (r) {
-        const arg = r[1];
-        const n = Number(r[2]);
-        if (n === 0) throw `Formula error: round(${arg}, 0) is not supported. Write round(${arg}) to round to a whole number.`;
-        const operand = rustScanRefs(arg).length === 1 && rustScanRefs(arg)[0].token === arg ? arg : `(${arg})`;
-        const f = `1${'0'.repeat(n)}`;
-        throw `Formula error: round(${arg}, ${n}) does not round to ${n} decimal place${n === 1 ? '' : 's'}. `
-            + `Write round(${operand} * ${f}) / ${f} instead.`;
-    }
+    if (r) throw `Formula error: round(${r[1]}, ${r[2]}) is refused.`;
     return (v: number[]) => fn(v, ...FN_VALUES);
 }
 
@@ -185,6 +195,7 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
     // Optional `expectedGeneration` (camelCase), like the sibling
     // special-sensor commands -- mismatch / nothing loaded = STALE_SESSION.
     validate_formula: { required: ['formula'], optional: ['expectedGeneration'] },
+    preview_formula: { required: [], optional: ['formula', 'aggregate', 'maxPoints', 'replace', 'requestId', 'expectedGeneration'] },
     load_csv: { required: ['paths'] },
     // `#[tauri::command(rename_all = "snake_case")]`
     get_chart_data: { required: ['filter', 'sampling', 'max_points'], optional: ['operation'] },
@@ -193,6 +204,8 @@ const SIGNATURES: Record<string, { required: string[]; optional?: string[] }> = 
 export interface FakeRustOptions {
     /** CSV contents per `load_csv` `paths` (joined with `|`): loads the named dataset, rejects unknown paths and keeps the session (lib.rs fails before the write lock). Without it every `load_csv` reloads `raw`. */
     datasets?: Record<string, RawCsv>;
+    /** Answer `preview_formula` (removed_function / unknown_sensor / compile refusals, OFFERED functions). Off = null, as before. */
+    preview?: boolean;
 }
 
 /** Rust `commit_derived`'s refusal when `load_csv` replaced the session while a special sensor was being computed. */
@@ -271,7 +284,11 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
         } else if (findCi(name) >= 0) {
             throw `A sensor named '${name}' already exists`;
         }
-        const fn = compileFakeFormula(formula, expr, safe);
+        // lib.rs `compute_formula_sensor`: create refuses a removed function before compiling; a replay that does not compile names it too.
+        const removed = fakeRemovedFunction(formula);
+        if (!replace && removed) throw removed;
+        let fn: (v: number[]) => number;
+        try { fn = compileFakeFormula(formula, expr, safe); } catch (e) { throw removed ?? e; }
         const col: number[] = [];
         for (let r = 0; r < nRows; r++) {
             const v = idx.map(i => columns[i][r]);
@@ -282,6 +299,38 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
             col.push(finite(out));
         }
         return store(name, col, replace);
+    };
+
+    /** lib.rs `build_formula_preview_with` (gate order: references -> removed -> compile); values are not downsampled. */
+    const previewFormula = (formula: string | undefined, aggregate: unknown) => {
+        const base = {
+            stats: null, timestamps: [] as string[], values: [] as (number | null)[], period: null as [string, string] | null,
+            functions: OFFERED_FORMULA_FUNCTIONS, limits: { max_len: 4096, max_depth: 64 },
+        };
+        const refuse = (code: string, message: string, range?: [number, number]) =>
+            ({ ...base, ok: false, issues: [{ code, message, ...(range ? { range } : {}) }] });
+        if (!formula) return aggregate ? { ...base, ok: true, issues: [] } : refuse('parse_error', 'Nothing to preview');
+        const spans = rustScanRefs(formula);
+        if (spans.length === 0) return refuse('constant_only', 'Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.');
+        const missing = spans.find(sp => resolve(sp.name) < 0);
+        if (missing) return refuse('unknown_sensor', `Sensor not found: ${missing.name}`);
+        const removed = fakeRemovedIssue(formula);
+        if (removed) return refuse('removed_function', removed.message, removed.range);
+        const { expr, safe } = prepareFormula(formula);
+        let fn: (v: number[]) => number;
+        try { fn = compileFakeFormula(formula, expr, safe); } catch (e) { return refuse('parse_error', String(e)); }
+        const idx = safe.map(resolve);
+        const values = Array.from({ length: nRows }, (_, r) => {
+            const v = idx.map(i => columns[i][r]);
+            if (v.some(Number.isNaN)) return null;
+            const out = finite(fn(v));
+            return Number.isNaN(out) ? null : out;
+        });
+        const nums = values.filter((x): x is number => x !== null);
+        const stats = nums.length
+            ? { min: Math.min(...nums), max: Math.max(...nums), mean: nums.reduce((a, b) => a + b, 0) / nums.length, rows: nRows, missing: nRows - nums.length }
+            : null;
+        return { ...base, ok: true, issues: [], stats, timestamps: [...timestamps], values, period: nRows ? [timestamps[0], timestamps[nRows - 1]] as [string, string] : null };
     };
 
     const calcOperation = (sensors: string[], config: any, replace: boolean): string => {
@@ -467,6 +516,9 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
                 }
                 const missing = refs.find(r => resolve(r) < 0);
                 if (missing) return { valid: false, error: `Sensor not found: ${missing}`, referenced_sensors: refs };
+                // lib.rs `formula_gate`: removed functions are refused before compiling.
+                const removed = fakeRemovedFunction(args.formula);
+                if (removed) return { valid: false, error: removed, referenced_sensors: refs };
                 // The same gate `evaluate_formula` uses (lib.rs `compile_formula`).
                 try {
                     const { expr, safe } = prepareFormula(args.formula);
@@ -475,6 +527,12 @@ export function createFakeRust(raw: RawCsv, opts: FakeRustOptions = {}) {
                     return { valid: false, error: String(e), referenced_sensors: refs };
                 }
                 return { valid: true, error: null, referenced_sensors: refs };
+            }
+            case 'preview_formula': {
+                if (!opts.preview) return null;
+                checkExpected(args);
+                if (!loaded) throw 'No data loaded';
+                return previewFormula(args.formula, args.aggregate);
             }
             case 'get_chart_data':
                 return chart(args.filter);

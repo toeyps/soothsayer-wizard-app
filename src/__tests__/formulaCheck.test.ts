@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-    checkAggregate, checkFormula, DIV_ZERO_MESSAGE, NO_SENSOR_MESSAGE, numberValue, roundOrderMessage, sensorResolver,
+    checkAggregate, checkFormula, DIV_ZERO_MESSAGE, NO_SENSOR_MESSAGE, numberValue, REMOVED_FUNCTIONS, sensorResolver,
 } from '../utils/formulaCheck';
 import { tokenizeFormula } from '../utils/formulaTokens';
 
-const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'ln', 'log', 'log10', 'round', 'min', 'max', 'ceil', 'floor',
-    'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'sign', 'int', 'pi', 'e'];
+// Rust's preview_formula `functions` since 2026-11-12.
+const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'];
+const REMOVED = ['ln', 'log', 'log10', 'sign', 'int', 'round', 'ceil', 'floor',
+    'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh', 'pi', 'e'];
 const check = (f: string, ctx = {}) => checkFormula(f, tokenizeFormula(f), ctx);
 const code = (f: string, ctx = {}) => {
     const i = check(f, ctx);
@@ -18,7 +20,7 @@ describe('checkFormula: the structural scan matches Rust locate_syntax_issue (co
     const table: Array<[string, unknown]> = [
         ['$A + $B', null],
         ['-$A + max($A, -1)', null],
-        ['pi() * $A', null],
+        ['abs(1) * $A', null],
         ['$A $B', ['missing_operator', 0, 5]],
         ['$A (1)', ['missing_operator', 0, 4]],
         ['$A + )', ['op_no_right', 3, 4]],
@@ -39,7 +41,7 @@ describe('checkFormula: the structural scan matches Rust locate_syntax_issue (co
     }
 
     it('accepts what the engine accepts: unary signs, comparisons, SI suffixes, [ ] and ; spellings', () => {
-        for (const f of ['$A * -$B', '!$A', '$A % 2', '$A ^ -2', '$A >= 2k && $B < 5m', 'round[$A]', 'max($A; $B)', '-(($A))', '.5 * $A', '$A / 1e-3']) {
+        for (const f of ['$A * -$B', '!$A', '$A % 2', '$A ^ -2', '$A >= 2k && $B < 5m', 'abs[$A]', 'max($A; $B)', '-(($A))', '.5 * $A', '$A / 1e-3']) {
             expect(check(f, { functions: FUNCTIONS }), f).toBeNull();
         }
     });
@@ -50,7 +52,7 @@ describe('checkFormula: the structural scan matches Rust locate_syntax_issue (co
     });
 });
 
-describe('checkFormula: the gate order (limits -> references -> structure -> names -> round_excel -> div_zero)', () => {
+describe('checkFormula: the gate order (limits -> references -> removed functions -> structure -> names -> div_zero)', () => {
     it('too_long counts UTF-16 units, too_deep counts ( [ { together and is ranged on the first bracket over', () => {
         expect(check('$A' + ' '.repeat(4095))?.code).toBe('too_long');
         expect(check(`${'('.repeat(65)}$A${')'.repeat(65)}`)).toMatchObject({ code: 'too_deep', range: [64, 65] });
@@ -78,20 +80,47 @@ describe('checkFormula: the gate order (limits -> references -> structure -> nam
         expect(check('$A * TAG1', { functions: FUNCTIONS })!.message).toMatch(/^Unknown name 'TAG1'/);
     });
 
-    it('fn_no_bracket for a function written without its bracket, pi / e included', () => {
+    it('fn_no_bracket for a kept function written without its bracket', () => {
         expect(check('abs + $A', { functions: FUNCTIONS })).toMatchObject({ code: 'fn_no_bracket', range: [0, 3] });
-        expect(check('$A * pi', { functions: FUNCTIONS })).toEqual({ code: 'fn_no_bracket', message: 'Write pi() for π.', range: [5, 7] });
-        expect(check('$A * pi()', { functions: FUNCTIONS })).toBeNull();
+        expect(check('$A * sqrt', { functions: FUNCTIONS })).toMatchObject({ code: 'fn_no_bracket', range: [5, 9] });
     });
 
-    it('round_excel for the spreadsheet order, with Rust\'s message, ranged on the call', () => {
-        expect(check('round($A, 2) + 1', { functions: FUNCTIONS })).toEqual({
-            code: 'round_excel',
-            message: 'Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead.',
-            range: [0, 12],
-        });
-        expect(check('round(0.01, $A)', { functions: FUNCTIONS })).toBeNull();
-        expect(check('round($A * 100) / 100', { functions: FUNCTIONS })).toBeNull();
+    it('removed_function for every removed name, with or without its bracket, ranged on the name', () => {
+        expect([...REMOVED_FUNCTIONS].sort()).toEqual([...REMOVED].sort());
+        for (const name of REMOVED) {
+            for (const f of [`$A + ${name}($A)`, `$A + ${name}`]) {
+                expect(check(f, { functions: FUNCTIONS }), f).toEqual({
+                    code: 'removed_function',
+                    message: `Formula error: '${name}' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.`,
+                    range: [5, 5 + name.length],
+                });
+            }
+        }
+        // Old Excel-order round is also just "no longer available".
+        expect(check('round($A, 2) + 1', { functions: FUNCTIONS })?.code).toBe('removed_function');
+        expect(check('round($A * 100) / 100', { functions: FUNCTIONS })?.code).toBe('removed_function');
+    });
+
+    it('removed_function never fires on a sensor whose name is a removed word', () => {
+        const isKnownSensor = sensorResolver(['round', 'ln', 'pi']);
+        expect(check('$round + ${ln} * $pi', { functions: FUNCTIONS, isKnownSensor })).toBeNull();
+    });
+
+    it('kept functions pass', () => {
+        for (const f of ['abs($A)', 'sqrt($A)', 'pow($A, 2)', 'exp($A)', 'min($A, 1)', 'max($A, 1)']) {
+            expect(check(f, { functions: FUNCTIONS }), f).toBeNull();
+        }
+    });
+
+    it('removed_function fires before Rust has sent its function list, and before a structure problem', () => {
+        const message = "Formula error: 'ln' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.";
+        for (const functions of [undefined, null, []]) {
+            expect(check('ln($A) + 1', { functions })).toEqual({ code: 'removed_function', message, range: [0, 2] });
+        }
+        expect(check('round($A, 2) + 1')?.code).toBe('removed_function');
+        expect(check('$A * pi +')?.code).toBe('removed_function');
+        // References still come first, like Rust's gate.
+        expect(check('ln($Nope)', { isKnownSensor: sensorResolver(['A']) })?.code).toBe('unknown_sensor');
     });
 
     it('div_zero only when creating (Rust skips it on a Save of an existing sensor)', () => {
@@ -99,14 +128,6 @@ describe('checkFormula: the gate order (limits -> references -> structure -> nam
         expect(check('$A / 0', { mode: 'edit' })).toBeNull();
         expect(check('$A / 0 ^ 0')).toBeNull();
         expect(check('$A / 0.5')).toBeNull();
-    });
-});
-
-describe('roundOrderMessage (Rust round_order_message)', () => {
-    it('words each case like Rust', () => {
-        expect(roundOrderMessage('$A', '0')).toBe('Formula error: round($A, 0) is not supported. Write round($A) to round to a whole number.');
-        expect(roundOrderMessage('$A + $B', '1')).toBe('Formula error: round($A + $B, 1) does not round to 1 decimal place. Write round(($A + $B) * 10) / 10 instead.');
-        expect(roundOrderMessage('$A', '0.5')).toBe('Formula error: round($A, 0.5) is not supported. To round to the nearest step, put the step first: round(0.5, $A).');
     });
 });
 
@@ -130,8 +151,6 @@ describe('checkAggregate (Rust check_multi_operation)', () => {
         expect(checkAggregate({ type: 'mode' as never, sources: ['A', 'B'] })?.code).toBe('unknown_operation');
         expect(checkAggregate({ type: 'median', sources: ['A'] })).toEqual({ code: 'agg_too_few', message: 'Median needs at least 2 sensors.' });
         expect(checkAggregate({ type: 'median', sources: ['A'] }, { mode: 'edit' })).toBeNull();
-        expect(checkAggregate({ type: 'mean', sources: ['A', 'B'], decimals: 11 })?.code).toBe('bad_decimals');
-        expect(checkAggregate({ type: 'mean', sources: ['A', 'B'], decimals: 1.5 })?.code).toBe('bad_decimals');
         expect(checkAggregate({ type: 'mean', sources: ['A', 'B'], decimals: 2 }, { isKnownSensor })).toBeNull();
     });
 });

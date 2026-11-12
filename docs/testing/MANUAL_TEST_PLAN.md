@@ -1,8 +1,8 @@
 # Wizard — แผนทดสอบด้วยมือ (Manual Test Plan)
 
-> 955 ข้อ · อัปเดต 2026-11-10 — Export ตาม WIZARD_OUTPUT_SPEC v1.1 (BMW-423, BMW-424) · 2026-11-09 — เพิ่มการเคลื่อนไหวทั้งโปรแกรม (VIS-23 – VIS-29) · 2026-11-04 — ตามงานแก้จากการรีวิวทั้งโปรเจกต์ (ปิดหน้าต่างเมื่อมีค่าค้าง, บันทึกไม่สำเร็จ, การรวมไฟล์ CSV, รายการโปรเจกต์) · 2026-11-02 — เพิ่มหมวด LN (ชื่อ sensor ยาว) · 2026-10-26 — เพิ่ม workflow WFK (ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ) · 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
+> 952 ข้อ · อัปเดต 2026-11-12 — special sensor: เอาการปัดทศนิยมและฟังก์ชันที่เลิกใช้ออก (SPC-93 – SPC-100, EDT-83, EDT-85 – EDT-87) · 2026-11-10 — Export ตาม WIZARD_OUTPUT_SPEC v1.1 (BMW-423, BMW-424) · 2026-11-09 — เพิ่มการเคลื่อนไหวทั้งโปรแกรม (VIS-23 – VIS-29) · 2026-11-04 — ตามงานแก้จากการรีวิวทั้งโปรเจกต์ (ปิดหน้าต่างเมื่อมีค่าค้าง, บันทึกไม่สำเร็จ, การรวมไฟล์ CSV, รายการโปรเจกต์) · 2026-11-02 — เพิ่มหมวด LN (ชื่อ sensor ยาว) · 2026-10-26 — เพิ่ม workflow WFK (ตรวจไฟล์ Export results แบบที่ลูกค้าจะตรวจ) · 2026-10-22 — **เขียนใหม่ทั้งแผนให้ผู้ทดสอบที่ไม่ใช่ developer อ่านเข้าใจ** (ตัดศัพท์เทคนิค แยกขั้นตอนทีละการกระทำ บอกสิ่งที่ต้องเห็นให้ชัด) ข้อและ id เหมือนเดิมทุกข้อ ผลที่เคยกรอกไว้ยังใช้ได้
 >
-> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (802 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (153 จุดตรวจ, หมวด WFA–WFK) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
+> แผนนี้มี 2 ส่วน: **ส่วนที่ 1 ทดสอบทีละฟังก์ชัน** (799 ข้อ) — ลองทีละปุ่ม ทีละหน้าจอ และ **ส่วนที่ 2 ทดสอบตามการใช้งานจริง** (153 จุดตรวจ, หมวด WFA–WFK) — แต่ละหมวดคือเรื่องเล่า 1 เรื่องของผู้ใช้ ทำต่อเนื่องตามลำดับ ห้ามล้างข้อมูลระหว่างทาง
 
 ## วิธีใช้แผนนี้
 
@@ -69,7 +69,7 @@
 - [LINE — กราฟเส้น (Line chart)](#line) (25 ข้อ)
 - [SCAT — กราฟจุด (Scatter plot)](#scat) (18 ข้อ)
 - [PAIR — Pair Plot](#pair) (24 ข้อ)
-- [SPC — สร้าง Special Sensor — แท็บ Create](#spc) (70 ข้อ)
+- [SPC — สร้าง Special Sensor — แท็บ Create](#spc) (67 ข้อ)
 - [MNG — แท็บ Manage — ดูรายการและลบ special sensor](#mng) (36 ข้อ)
 - [EDT — แก้ไข special sensor ที่สร้างไว้แล้ว (ปุ่มดินสอในแท็บ Manage)](#edt) (61 ข้อ)
 - [FG — แท็บ Failure Groups ใน Dashboard](#fg) (21 ข้อ)
@@ -2203,7 +2203,7 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - พิมพ์ `$TAG1 + ` ในช่องสูตร (ให้เคอร์เซอร์อยู่ท้ายข้อความ)
   - ชี้เมาส์ที่แถว TAG2 ในรายการด้านซ้าย แล้วกดปุ่ม `$` ท้ายแถว (ชี้ที่ปุ่มจะขึ้น "Insert at the cursor in the formula")
   - ทำซ้ำกับ sensor ที่ชื่อมีช่องว่างหรือสัญลักษณ์
-  - ทำซ้ำตอนที่ช่องสูตรเป็นบล็อก Average (ทำบล็อกตามวิธีใน SPC-50)
+  - ทำซ้ำตอนที่ช่องสูตรเป็นบล็อก Average (ทำบล็อกตามวิธีใน SPC-95)
   - **คาดหวัง:** ช่องสูตรกลายเป็น `$TAG1 + $TAG2` (เว้นวรรคให้เอง) · ชื่อที่มีช่องว่าง/สัญลักษณ์ถูกใส่เป็นรูป `${…}` · แถวนั้น**ไม่**ขึ้นป้าย Picked · ถ้าช่องเป็นบล็อก Average/Median sensor ถูกเพิ่มเป็นชิป sensor ต้นทางของบล็อกแทน
 
 - [ ] **SPC-59 — การ์ด Quick build ตอนยังไม่ได้เลือก sensor** 🆕
@@ -2211,16 +2211,16 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - ดูการ์ด "Quick build"
   - **คาดหวัง:** หัวการ์ดเขียน "Quick build" มุมขวาเขียน "0 picked" และมีข้อความ "Pick sensors on the left to get started — one sensor offers a number or a transform, two or more a chain and combinations. Or type straight into the formula below." · การ์ดนี้อยู่**เหนือ**ช่องสูตร
 
-- [ ] **SPC-34 — Quick build เมื่อเลือก 1 ตัว: บวก/ลบ/คูณ/หารกับตัวเลข หรือแปลงค่า (Transform)** 🆕
+- [ ] **SPC-93 — Quick build เมื่อเลือก 1 ตัว: บวก/ลบ/คูณ/หารกับตัวเลข หรือแปลงค่า (Transform มีแค่ abs / √ / exp)** 🆕
   - เลือก TAG1 ตัวเดียว ดูการ์ด Quick build (หัวการ์ดแสดงชื่อ sensor ที่เลือก และลิงก์ "Clear picks")
   - กดปุ่ม `+` (ยังไม่พิมพ์ตัวเลข) ดูบรรทัด Formula ท้ายการ์ด
   - พิมพ์ `5` ในช่องตัวเลข
   - ลองปุ่ม `−` `×` `÷` `^` ทีละปุ่ม
-  - ลองปุ่ม Transform ทีละปุ่ม: `abs` `√` `log₁₀` `exp` `ceil` `floor` `round` (สำหรับ round ลองเปลี่ยนช่อง decimals เป็น 1 และ 0 ด้วย)
+  - ดูแถว Transform แล้วลองกดทีละปุ่ม
   - กดปุ่มที่เลือกอยู่ซ้ำอีกครั้ง
   - กด "Use this formula" แล้วกรอกช่องที่เหลือ สร้าง sensor
   - เทียบค่าของ sensor ใหม่ 2-3 จุดกับที่คำนวณเอง
-  - **คาดหวัง:** ตอนยังไม่เลือกปุ่มใด (As-is): บรรทัด Formula เป็น `$TAG1` พร้อมข้อความ "As-is: the sensor itself. Pick a number or a transform to change it." · กด `+` แล้วมีช่อง "value" ขึ้นมา บรรทัด Formula เป็นสีจาง (`$TAG1 + …`) เขียน "Enter the number." และปุ่ม Use this formula กดไม่ได้จนกว่าจะพิมพ์ตัวเลข · round 2 ตำแหน่งเขียนเป็น `round($TAG1 * 100) / 100` (1 ตำแหน่ง `round($TAG1 * 10) / 10`, 0 ตำแหน่ง `round($TAG1)`) — ต้องไม่ใช่ `round(0.01, …)` และไม่ใช่ `round($TAG1, 2)` · กดปุ่มเดิมซ้ำ = ยกเลิกตัวเลือกนั้น · กด Use แล้วสูตรเข้าไปอยู่ในช่องสูตร แก้ต่อได้ · ค่าที่สร้างออกมาถูกต้องทุกแบบ
+  - **คาดหวัง:** ตอนยังไม่เลือกปุ่มใด (As-is): บรรทัด Formula เป็น `$TAG1` พร้อมข้อความ "As-is: the sensor itself. Pick a number or a transform to change it." · กด `+` แล้วมีช่อง "value" ขึ้นมา บรรทัด Formula เป็นสีจาง (`$TAG1 + …`) เขียน "Enter the number." และปุ่ม Use this formula กดไม่ได้จนกว่าจะพิมพ์ตัวเลข · แถว Transform มี 3 ปุ่มเท่านั้น: `abs` `√` `exp` (ไม่มี `log₁₀` `ceil` `floor` `round` และไม่มีช่อง decimals) · abs → `abs($TAG1)`, √ → `sqrt($TAG1)`, exp → `exp($TAG1)` · กดปุ่มเดิมซ้ำ = ยกเลิกตัวเลือกนั้น · กด Use แล้วสูตรเข้าไปอยู่ในช่องสูตร แก้ต่อได้ · ค่าที่สร้างออกมาถูกต้องทุกแบบ
 
 - [ ] **SPC-60 — ช่องตัวเลขของ Quick build รับเลขติดลบ / ตัวย่อ / เลขยกกำลัง และไม่รับข้อความที่ไม่ใช่ตัวเลข** 🆕
   - เลือก TAG1 ตัวเดียว แล้วกดปุ่ม `−`
@@ -2253,12 +2253,13 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - กด Spread ซ้ำเพื่อยกเลิก
   - **คาดหวัง:** ตอนเลือก Combine all แถว Chain จาง ปุ่มเครื่องหมายกดไม่ได้ (ชี้เมาส์ขึ้น "Signs are off while a combination is chosen") ข้อความ "+ by default…" หายไป และบรรทัด Formula ท้ายการ์ดเป็นสูตรของ Spread · ยกเลิกแล้วกลับเป็น Chain พร้อมเครื่องหมาย `−` ที่เลือกไว้เดิม
 
-- [ ] **SPC-62 — Quick build "Then wrap" ครอบผลลัพธ์ทั้งหมด และไม่มีให้เลือกตอนเป็น Average / Median** 🆕
+- [ ] **SPC-94 — Quick build "Then wrap" (abs / √ / exp) ครอบผลลัพธ์ทั้งหมด และไม่มีให้เลือกตอนเป็น Average / Median** 🆕
   - เลือก sensor 2 ตัว (Chain เป็น `+`)
-  - ในแถว "Then wrap" เลือก `abs` ดูบรรทัด Formula
-  - เปลี่ยนเป็น `√`, `log₁₀`, `round` (decimals 2 และ 0) ทีละแบบ
+  - ดูปุ่มในแถว "Then wrap"
+  - เลือก `abs` ดูบรรทัด Formula
+  - เปลี่ยนเป็น `√` แล้วเป็น `exp`
   - เปลี่ยน Combine all เป็น Average
-  - **คาดหวัง:** abs → `abs($TAG1 + $TAG2)` · √ → `sqrt($TAG1 + $TAG2)` · log₁₀ → `log10($TAG1 + $TAG2)` · round 2 → `round(($TAG1 + $TAG2) * 100) / 100` · round 0 → `round($TAG1 + $TAG2)` · พอเลือก Average แถว Then wrap หายไป (บล็อก Average ใช้ "Round the result" ปัดค่าแทน)
+  - **คาดหวัง:** แถว Then wrap มี 3 ปุ่มเท่านั้น: `abs` `√` `exp` (ไม่มี `log₁₀` `round` และไม่มีช่อง decimals) · abs → `abs($TAG1 + $TAG2)` · √ → `sqrt($TAG1 + $TAG2)` · exp → `exp($TAG1 + $TAG2)` · พอเลือก Average แถว Then wrap หายไป
 
 - [ ] **SPC-46 — Quick build ล้างตัวเลือกเมื่อจำนวน sensor ที่เลือกเปลี่ยนกลุ่ม (0 / 1 / 2 ตัวขึ้นไป)** 🆕
   - เลือก 1 ตัว แล้วเลือก Transform `abs`
@@ -2269,12 +2270,12 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
 
 - [ ] **SPC-63 — Quick build ตอนช่องสูตรมีข้อความอยู่แล้ว: "Insert at cursor" ใส่วงเล็บให้เอง / "Replace formula" แทนทั้งช่อง** 🆕
   - ดูปุ่มของ Quick build ตอนช่องสูตรยังว่าง
-  - พิมพ์ `2 * ` ในช่องสูตร แล้วตั้ง Round the result = 2
+  - พิมพ์ `2 * ` ในช่องสูตร
   - เลือก TAG1, TAG2 (Chain `+`) แล้วกด "Insert at cursor"
   - ล้างช่องสูตร พิมพ์ `2 * ` ใหม่ เลือก TAG1 ตัวเดียว (As-is) แล้วกด "Insert at cursor"
   - กด "Replace formula"
-  - ทำบล็อก Average ไว้ในช่องสูตร (วิธีตาม SPC-50) แล้วเลือก 2 ตัว ดูปุ่มของ Quick build
-  - **คาดหวัง:** ตอนช่องว่างมีปุ่มเดียว "Use this formula" · พอช่องมีข้อความ มี 2 ปุ่ม "Insert at cursor" และ "Replace formula" · Insert ของ Chain ได้ `2 * ($TAG1 + $TAG2)` (มีวงเล็บครอบให้) และ Round the result ยังเป็น 2 · Insert ของ sensor เดียวได้ `2 * $TAG1` ไม่มีวงเล็บ · Replace formula แทนทั้งช่องด้วยสูตรของ Quick build และ Round the result กลับเป็น "Off" · ตอนช่องเป็นบล็อก ไม่มีปุ่ม Insert at cursor (มีแค่ "Replace formula" หรือ "Replace with this block")
+  - ทำบล็อก Average ไว้ในช่องสูตร (วิธีตาม SPC-95) แล้วเลือก 2 ตัว ดูปุ่มของ Quick build
+  - **คาดหวัง:** ตอนช่องว่างมีปุ่มเดียว "Use this formula" · พอช่องมีข้อความ มี 2 ปุ่ม "Insert at cursor" และ "Replace formula" · Insert ของ Chain ได้ `2 * ($TAG1 + $TAG2)` (มีวงเล็บครอบให้) · Insert ของ sensor เดียวได้ `2 * $TAG1` ไม่มีวงเล็บ · Replace formula แทนทั้งช่องด้วยสูตรของ Quick build · ตอนช่องเป็นบล็อก ไม่มีปุ่ม Insert at cursor (มีแค่ "Replace formula" หรือ "Replace with this block")
 
 - [ ] **SPC-39 — Sum (สูตร A + B) แถวที่ sensor ต้นทางว่างจะได้ผลว่าง ส่วน Average/Median (บล็อก) ข้ามค่าที่ว่าง** 🆕
   - ใช้ sensor 2 ตัวที่มีบางแถวที่ตัวใดตัวหนึ่งว่าง
@@ -2283,15 +2284,16 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - ทำซ้ำด้วย "Average" และ "Median" (กด "Use this block") ดูบรรทัดตรวจใต้ช่องสูตรด้วย
   - **คาดหวัง:** Sum = `$A + $B` กราฟ**ขาดเป็นช่วงว่าง**ตรงแถวที่ sensor ต้นทางว่าง · Average/Median เป็น**บล็อก** (การ์ดเขียน "Average block" และบรรทัด "2 sensors · missing values skipped") กราฟใช้ค่าของตัวที่ยังมีค่าคำนวณต่อ ไม่ขาด · Preview ของ Sum บอกจำนวนแถวที่ไม่มีผลเป็นสีส้ม · บรรทัดตรวจของบล็อกเขียน "missing values are skipped; a row is missing only when every source is."
 
-- [ ] **SPC-50 — Average / Median เป็นบล็อก: แก้ sensor ต้นทางด้วยปุ่ม "Add…" และ Round the result เก็บเป็นทศนิยมของบล็อกเอง** 🆕
+- [ ] **SPC-95 — Average / Median เป็นบล็อก: แก้ sensor ต้นทางด้วยปุ่ม "Add…" และไม่มีการปัดทศนิยม** 🆕
   - เลือก 2 ตัว → กด "Average" → กด "Use this block"
   - กด "Add…" (เปิดหน้าต่าง "Select source sensors" เลือกได้หลายตัว มีตัวนับ "N selected") ติ๊กตัวที่ 3 แล้วกด OK
   - กด "Add…" อีกครั้ง ติ๊กเพิ่ม แล้วกด Cancel
   - กด × ที่ชิปตัวหนึ่งเพื่อเอาออก
-  - เลือก Round the result = 1 กรอกช่องที่เหลือ แล้วสร้าง
+  - ดูใต้การ์ดว่ามีแถว "Round the result" หรือไม่
+  - กรอกช่องที่เหลือ แล้วสร้าง
   - ดูค่าบนกราฟ และดูแถวนี้ในแท็บ Manage
   - กลับมาแท็บ Create ทำบล็อกใหม่ แล้วกด "Clear" ที่หัวการ์ด
-  - **คาดหวัง:** การ์ดเขียน "Average block" มีกล่อง "Average of" + ชิป sensor ต้นทาง และข้อความ "An Average block stands alone — it skips missing values, which a formula cannot. To combine it with other maths, create it first, then use it as a source in a new sensor. Clear starts over." · OK เพิ่ม sensor จริง, Cancel ไม่เปลี่ยนอะไร, × เอาออกได้ · ข้างปุ่ม Round เขียน "Rounds to 1 decimal; stored with the Average’s own decimals." · ค่าบนกราฟปัดทศนิยม 1 ตำแหน่ง · ในแท็บ Manage เขียน "Average of … · missing values skipped · rounded to 1 decimal" (ชื่อ sensor ต้นทางแสดงเป็น description) และมีป้าย Σ · กด Clear แล้วกลับเป็นช่องสูตรว่าง
+  - **คาดหวัง:** การ์ดเขียน "Average block" มีกล่อง "Average of" + ชิป sensor ต้นทาง และข้อความ "An Average block stands alone — it skips missing values, which a formula cannot. To combine it with other maths, create it first, then use it as a source in a new sensor. Clear starts over." · OK เพิ่ม sensor จริง, Cancel ไม่เปลี่ยนอะไร, × เอาออกได้ · **ไม่มีแถว "Round the result"** · ค่าบนกราฟเป็นค่าเฉลี่ยเต็ม ไม่ถูกปัด · ในแท็บ Manage เขียน "Average of … · missing values skipped" (ไม่มี "rounded to") ชื่อ sensor ต้นทางแสดงเป็น description และมีป้าย Σ · กด Clear แล้วกลับเป็นช่องสูตรว่าง
 
 - [ ] **SPC-64 — บล็อก Average / Median ตอนสร้างใหม่ต้องมี sensor ต้นทางอย่างน้อย 2 ตัว** 🆕
   - สร้างบล็อก Average จาก 2 ตัว (ยังไม่กด Add sensor)
@@ -2351,44 +2353,31 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - กด Ctrl+Z หลายครั้ง แล้วกด Ctrl+Shift+Z
   - **คาดหวัง:** ไม่ได้เลือกข้อความ ปุ่ม ( ) Wrap กดไม่ได้ · เคอร์เซอร์ไม่ได้ชิดวงเล็บ ปุ่ม Unwrap กดไม่ได้ · ข้อความที่เลือกถูกครอบเป็น `($A + $B) * 2` และข้อความข้างในยังถูกเลือกอยู่ · Unwrap เอาคู่วงเล็บออก (ถ้าเป็น `abs(…)` เอาชื่อฟังก์ชันออกด้วย) · ปุ่ม `+ − × ÷ ^` เว้นวรรคให้เอง · Ctrl+Z ย้อนการครอบ/แกะ/ปุ่มแก้/การเลือกจากรายการแนะนำ/Quick build ได้เหมือนพิมพ์เอง และ Ctrl+Shift+Z ทำซ้ำได้
 
-- [ ] **SPC-66 — ปุ่มฟังก์ชันในแถบเครื่องมือ: ครอบส่วนที่เลือก หรือใส่ fn() ตรงเคอร์เซอร์** 🆕
-  - ดูแถวปุ่มฟังก์ชัน `abs √ ln log₁₀ exp round min max ceil floor` และชี้เมาส์ดูคำอธิบาย
+- [ ] **SPC-96 — ปุ่มฟังก์ชันในแถบเครื่องมือ (abs / √ / exp / min / max): ครอบส่วนที่เลือก หรือใส่ fn() ตรงเคอร์เซอร์** 🆕
+  - ดูแถวปุ่มฟังก์ชันในแถบเครื่องมือใต้ช่องสูตร และชี้เมาส์ดูคำอธิบายแต่ละปุ่ม
   - วางเคอร์เซอร์ในที่ว่างแล้วกด `√`
   - ลากเลือก `$TAG1 + $TAG2` แล้วกด `abs`
-  - **คาดหวัง:** ชี้เมาส์เห็นความหมาย (เช่น round = "round(x) to a whole number · for decimals round(x * 100) / 100") · ไม่ได้เลือกข้อความ กด √ ได้ `sqrt()` และเคอร์เซอร์อยู่ในวงเล็บ · เลือกไว้แล้วกด abs ได้ `abs($TAG1 + $TAG2)` และข้อความข้างในยังถูกเลือก · กดปุ่มแล้วเคอร์เซอร์ยังอยู่ในช่องสูตร พิมพ์ต่อได้ทันที
+  - **คาดหวัง:** มี 5 ปุ่มเท่านั้น: `abs √ exp min max` (ไม่มี `ln` `log₁₀` `round` `ceil` `floor`) · ชี้เมาส์เห็นความหมาย (เช่น √ = "square root", min = "smallest of the values") · ไม่ได้เลือกข้อความ กด √ ได้ `sqrt()` และเคอร์เซอร์อยู่ในวงเล็บ · เลือกไว้แล้วกด abs ได้ `abs($TAG1 + $TAG2)` และข้อความข้างในยังถูกเลือก · กดปุ่มแล้วเคอร์เซอร์ยังอยู่ในช่องสูตร พิมพ์ต่อได้ทันที
 
-- [ ] **SPC-44 — เมนู "All functions ▾" แสดงทุกฟังก์ชันที่แอปคำนวณได้ และกติกา round / log / ln / pi() / 5k / เครื่องหมายลบ** 🆕
+- [ ] **SPC-97 — เมนู "All functions ▾" มีแค่ 6 ฟังก์ชัน (abs, sqrt, pow, exp, min, max) และกติกา 5k / เครื่องหมายลบ** 🆕
   - เปิดหน้าต่างใหม่ ยังไม่พิมพ์อะไร กด "All functions ▾" ในแถบเครื่องมือใต้ช่องสูตร
   - พิมพ์สูตรอะไรก็ได้ 1 ตัวอักษรขึ้นไป รอครึ่งวินาที แล้วเปิด All functions ใหม่
   - กดฟังก์ชันหนึ่งในรายการ (ลองทั้งตอนไม่ได้เลือกข้อความ และตอนลากเลือกข้อความบางส่วนไว้)
   - เปิดเมนูแล้วกด Esc
-  - สร้าง sensor ด้วยสูตร `round($TAG1)`, `ln($TAG1)`, `log($TAG1)`, `$TAG1 * pi()`, `$TAG1 * 5k`, `-$TAG1 ^ 2` ทีละสูตร เทียบค่า 2-3 จุด
-  - **คาดหวัง:** ครั้งแรก (ยังไม่เคยมีการตรวจสูตร) เขียน "The list comes from the engine with the first check — type a formula first." · หลังตรวจสูตรแล้ว หัวเมนูเขียน "Every function the engine evaluates · click to insert" มีครบ 28 ตัว: abs, sqrt, pow, exp, ln, log, log10, round, min, max, ceil, floor, sin, cos, tan, asin, acos, atan, sinh, cosh, tanh, asinh, acosh, atanh, sign, int, pi, e พร้อมความหมาย (pi / e แสดงเป็น `pi()` `e()`) · บรรทัดล่างเขียน "log = log base 10 · ln = natural log · round(x) = whole number; for decimals round(x * 100) / 100 · 5k = 5000 · −A ^ 2 = (−A)²" · กดฟังก์ชันแล้วเมนูปิด และครอบส่วนที่เลือกไว้ (หรือใส่ `fn()` ตรงเคอร์เซอร์) · Esc ปิดเมนู · ค่าที่คำนวณได้ตรงตามกติกา (log ฐาน 10, ln ฐาน e, −A ^ 2 = (−A)² เป็นบวกเสมอ)
+  - สร้าง sensor ด้วยสูตร `pow($TAG1, 2)`, `exp($TAG1 / 100)`, `max($TAG1, $TAG2)`, `$TAG1 * 5k`, `-$TAG1 ^ 2` ทีละสูตร เทียบค่า 2-3 จุด
+  - **คาดหวัง:** ครั้งแรก (ยังไม่เคยมีการตรวจสูตร) เขียน "The list comes from the engine with the first check — type a formula first." · หลังตรวจสูตรแล้ว หัวเมนูเขียน "Every function you can use · click to insert" มี 6 ตัวเท่านั้น: abs, sqrt, pow, exp, min, max พร้อมความหมาย (ไม่มี ln, log, round, ceil, floor, sin, pi, e ฯลฯ) · บรรทัดล่างเขียน "5k = 5000 · −A ^ 2 = (−A)²" · กดฟังก์ชันแล้วเมนูปิด และครอบส่วนที่เลือกไว้ (หรือใส่ `fn()` ตรงเคอร์เซอร์) · Esc ปิดเมนู · ค่าที่คำนวณได้ตรงตามกติกา (−A ^ 2 = (−A)² เป็นบวกเสมอ)
 
 - [ ] **SPC-67 — หัวการ์ด Formula: นับจำนวน sensor และความยาวสูตร และลิงก์ "Clear"** 🆕
   - ดูหัวการ์ด Formula ตอนช่องว่าง
   - พิมพ์ `$TAG1 + $TAG2 + $TAG1` ดูมุมขวาของหัวการ์ด Formula
-  - ตั้ง Round the result = 2 แล้วกด "Clear"
-  - **คาดหวัง:** มุมขวาเขียน "2 sensors · <จำนวนตัวอักษรในช่อง> / 4,096" (sensor ที่ใช้ซ้ำนับครั้งเดียว ตัวเลขความยาวเพิ่ม/ลดตามทุกตัวอักษรที่พิมพ์ รวมช่องว่าง) · Clear ล้างช่องสูตร และ Round the result กลับเป็น Off · ตอนช่องว่างไม่มีตัวนับและไม่มีลิงก์ Clear · บรรทัดตรวจกลับเป็น "Type the formula, or pick sensors on the left to start."
+  - กด "Clear"
+  - **คาดหวัง:** มุมขวาเขียน "2 sensors · <จำนวนตัวอักษรในช่อง> / 4,096" (sensor ที่ใช้ซ้ำนับครั้งเดียว ตัวเลขความยาวเพิ่ม/ลดตามทุกตัวอักษรที่พิมพ์ รวมช่องว่าง) · Clear ล้างช่องสูตร · ตอนช่องว่างไม่มีตัวนับและไม่มีลิงก์ Clear · บรรทัดตรวจกลับเป็น "Type the formula, or pick sensors on the left to start."
 
-- [ ] **SPC-45 — "Round the result" ตั้งที่เดียว แสดงรูปสูตรที่เก็บจริง และค่าปัดทศนิยมตรงตามที่ตั้ง** 🆕
-  - พิมพ์ `$A + $B` (ใช้ชื่อจริง) แล้วเลือก Round the result = 2
-  - อ่านข้อความข้างปุ่ม และชี้เมาส์ที่ `round(… * 100) / 100`
-  - สร้าง sensor แล้วชี้เมาส์ดูค่าบนกราฟ
-  - ไปแท็บ Manage ดูสูตร (ชี้เมาส์ค้างไว้ที่สูตร)
-  - กดรูปดินสอเพื่อเปิดแก้
-  - **คาดหวัง:** ตัวเลือกคือ Off / 0 / 1 / 2 / 3 · ข้างปุ่มเขียน "Rounds to 2 decimals · stored as round(… * 100) / 100" ชี้เมาส์เห็นรูปเต็ม `round(($A + $B) * 100) / 100` · ค่าบนกราฟปัด 2 ตำแหน่ง (เช่น `1.13`) · Manage เขียน `$A + $B · rounded to 2 decimals` (ชี้เมาส์เห็น `round(($A + $B) * 100) / 100`) · เปิดแก้แล้วช่องสูตรแสดง `$A + $B` และปุ่ม Round = 2 ถูกเลือกอยู่ (ไม่มีข้อความ round ซ้อนอยู่ในช่องสูตร) · Preview แสดงค่าที่ปัดแล้ว
-
-- [ ] **SPC-68 — Round the result = 0 และ Off** 🆕
-  - พิมพ์ `$TAG1 / 3` เลือก Round the result = 0 ดูข้อความข้างปุ่มและ Preview แล้วสร้าง sensor
-  - สร้างอีกตัวด้วยสูตรเดียวกัน แต่ Round = Off
-  - ดูทั้งสองตัวในแท็บ Manage
-  - **คาดหวัง:** 0 → ข้างปุ่มเขียน "Rounds to 0 decimals · stored as round(…)" ค่าเป็นจำนวนเต็ม (.5 ปัดออกจากศูนย์ เช่น 2.5 → 3, -2.5 → -3) · Off → "Keeps the full value." ค่ามีทศนิยมเต็ม · Manage ตัวแรกเขียน `$TAG1 / 3 · rounded to 0 decimals` ตัวที่สองเขียนแค่ `$TAG1 / 3`
-
-- [ ] **SPC-69 — Round the result ไม่ทำให้สูตรที่วงเล็บไม่ครบกลายเป็นสูตรที่ "ถูก"** 🆕
-  - เลือก Round the result = 2 ก่อน
-  - พิมพ์ `$TAG1) + ($TAG2`
-  - **คาดหวัง:** บรรทัดตรวจขึ้น ✕ เรื่องวงเล็บที่ผู้ใช้พิมพ์ (`)` ที่ไม่มีคู่) พร้อมปุ่ม "Remove it" — **ต้องไม่ขึ้น ✓ Valid** · ปุ่ม Add sensor กดไม่ได้
+- [ ] **SPC-98 — ไม่มีการปัดทศนิยมในหน้าสูตร และฟังก์ชันที่เลิกใช้ (ln, log, round, ceil, floor, sin, pi, e ฯลฯ) พิมพ์แล้วใช้ไม่ได้** 🆕
+  - พิมพ์ `$TAG1 + $TAG2` ดูใต้ช่องสูตรว่ามีแถว "Round the result" หรือไม่
+  - ลบแล้วพิมพ์ทีละสูตร (ลบของเดิมก่อนทุกครั้ง) รอครึ่งวินาทีทุกครั้ง: `round($TAG1)`, `ln($TAG1)`, `$TAG1 * pi()`, `floor($TAG1) + 1`, `sin($TAG1)`, `round($TAG1, 2)`
+  - กรอกช่อง Name / Description / Unit / Component ให้ครบ แล้วดูปุ่ม Add sensor
+  - **คาดหวัง:** ไม่มีแถว "Round the result" และไม่มีช่อง decimals ที่ไหนเลย · ทุกสูตรขึ้น ✕ ข้อความแบบเดียวกัน เช่น "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max." (ชื่อฟังก์ชันในข้อความตรงกับที่พิมพ์ เช่น 'ln', 'pi', 'floor', 'sin') · ชื่อฟังก์ชันนั้นในช่องสูตรถูกขีดแดง · ไม่มีปุ่มแก้ให้อัตโนมัติ · ปุ่ม Add sensor กดไม่ได้ · ลบชื่อฟังก์ชันออก (เช่นเหลือ `$TAG1`) แล้วขึ้น ✓ Valid
 
 - [ ] **SPC-70 — บรรทัดตรวจใต้ช่องสูตร: ตอนว่าง / กำลังตรวจ / ถูกต้อง** 🆕
   - เปิดแท็บ Create ใหม่ ดูบรรทัดตรวจตอนช่องสูตรว่าง
@@ -2418,29 +2407,20 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - ลบแล้วพิมพ์ `($TAG1]` (วงเล็บคนละแบบ)
   - **คาดหวัง:** `)` ที่เกินถูกขีดแดง กด Remove it แล้ว `)` หายไป สูตรถูกต้อง · `($TAG1]` ขึ้นข้อความว่าวงเล็บไม่เข้าคู่กัน (ไม่ถือว่า `[` `]` กับ `(` `)` เป็นคู่เดียวกัน)
 
-- [ ] **SPC-75 — ชื่อฟังก์ชันผิด → มีปุ่ม "Use sqrt" (ถ้ามีชื่อใกล้เคียง) และบอกรายชื่อฟังก์ชันที่ใช้ได้** 🆕
+- [ ] **SPC-99 — ชื่อฟังก์ชันผิด → มีปุ่ม "Use sqrt" (ถ้ามีชื่อใกล้เคียง) และบอกรายชื่อฟังก์ชันที่ใช้ได้ 6 ตัว** 🆕
   - พิมพ์ `sqr($TAG1)` แล้วกด "Use sqrt"
   - ลบแล้วพิมพ์ `ABS($TAG1)` แล้วกดปุ่มแก้
   - ลบแล้วพิมพ์ `foo($TAG1)`
-  - **คาดหวัง:** `sqr` ถูกขีดแดง ข้อความ "Formula error: unknown function 'sqr'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()." · กด Use sqrt แล้วได้ `sqrt($TAG1)` · `ABS` มีปุ่ม "Use abs" · `foo` ขึ้นข้อความแบบเดียวกันแต่**ไม่มีปุ่มแก้** (ไม่มีชื่อใกล้เคียง)
+  - **คาดหวัง:** `sqr` ถูกขีดแดง ข้อความ "Formula error: unknown function 'sqr'. Available functions: abs, sqrt, pow, exp, min, max." · กด Use sqrt แล้วได้ `sqrt($TAG1)` · `ABS` มีปุ่ม "Use abs" · `foo` ขึ้นข้อความแบบเดียวกันแต่**ไม่มีปุ่มแก้** (ไม่มีชื่อใกล้เคียง)
 
-- [ ] **SPC-76 — ฟังก์ชันที่ไม่มีวงเล็บ (pi / e / abs) → มีปุ่ม "Add ( )"** 🆕
-  - พิมพ์ `$TAG1 * pi` แล้วกด "Add ( )"
-  - ลบแล้วพิมพ์ `$TAG1 * e` แล้วกดปุ่มแก้
-  - ลบแล้วพิมพ์ `abs + $TAG1` แล้วกดปุ่มแก้
-  - **คาดหวัง:** `pi` ถูกขีดแดง ข้อความลงท้าย "… Write pi() for π." กด Add ( ) แล้วได้ `$TAG1 * pi()` (เคอร์เซอร์อยู่หลังวงเล็บ) · `e` → "Write e() for Euler's number (2.718…)." → ได้ `e()` · `abs` → "abs needs a value in brackets, e.g. abs($A)." → ได้ `abs() + $TAG1` และเคอร์เซอร์อยู่ในวงเล็บ
+- [ ] **SPC-100 — ฟังก์ชันที่ไม่มีวงเล็บ (เช่น abs / sqrt) → มีปุ่ม "Add ( )"** 🆕
+  - พิมพ์ `abs + $TAG1` แล้วกดปุ่มแก้
+  - ลบแล้วพิมพ์ `$TAG1 * sqrt` แล้วกดปุ่มแก้
+  - **คาดหวัง:** `abs` → "abs needs a value in brackets, e.g. abs($A)." กด "Add ( )" แล้วได้ `abs() + $TAG1` และเคอร์เซอร์อยู่ในวงเล็บ · `sqrt` ถูกขีดแดง กด "Add ( )" แล้วได้ `$TAG1 * sqrt()` และเคอร์เซอร์อยู่ในวงเล็บ
 
 - [ ] **SPC-77 — ใส่จำนวนค่าในฟังก์ชันผิด → บอกจำนวนที่ถูก ไม่มีปุ่มแก้** 🆕
   - พิมพ์ทีละสูตร (ลบของเดิมก่อนทุกครั้ง): `sqrt($TAG1, 2)`, `pow($TAG1)`, `abs($TAG1, 2)`
   - **คาดหวัง:** `sqrt` → "Formula error: sqrt takes 1 value but was given 2. Example: sqrt($A)." · `pow` → "… pow takes 2 values but was given 1. Example: pow($A, 2)." · `abs` สองค่า ขึ้นข้อความว่า abs รับค่าเดียว · ทุกกรณีส่วนของฟังก์ชันนั้นถูกขีดแดง ไม่มีปุ่มแก้ และปุ่ม Add sensor กดไม่ได้
-
-- [ ] **SPC-78 — `round(x, n)` แบบ Excel ใช้ไม่ได้ แต่มีปุ่มแปลงให้, ส่วน `round(step, x)` ใช้ได้** 🆕
-  - พิมพ์ `round($TAG1, 2)` แล้วกดปุ่มแก้
-  - ลบแล้วพิมพ์ `round($TAG1, 0)` แล้วกดปุ่มแก้
-  - ลบแล้วพิมพ์ `2 ^ round($TAG1 + $TAG2, 1)` แล้วกดปุ่มแก้
-  - ลบแล้วพิมพ์ `round($TAG1, 0.5)` ดูข้อความ
-  - ลบแล้วพิมพ์ `round(0.5, $TAG1)`
-  - **คาดหวัง:** `round($TAG1, 2)` → "Formula error: round($TAG1, 2) does not round to 2 decimal places. Write round($TAG1 * 100) / 100 instead." ปุ่ม "Use round(… * 100) / 100" กดแล้วได้ `round($TAG1 * 100) / 100` · `, 0` → "… is not supported. Write round($TAG1) to round to a whole number." ปุ่ม "Use round(…)" กดแล้วได้ `round($TAG1)` · กรณี `2 ^` ปุ่มชื่อ "Use round(… * 10) / 10" กดแล้วได้ `2 ^ (round(($TAG1 + $TAG2) * 10) / 10)` (มีวงเล็บกันลำดับการคำนวณเพี้ยน) · `round($TAG1, 0.5)` → "… To round to the nearest step, put the step first: round(0.5, $TAG1)." **ไม่มีปุ่มแก้** · `round(0.5, $TAG1)` ขึ้น ✓ Valid (ปัดค่าเป็นทวีคูณของ 0.5)
 
 - [ ] **SPC-52 — sensor ที่ไม่มีในข้อมูล: ชิปแดงมี "Replace…" เปลี่ยนทุกจุดในสูตรในครั้งเดียว** 🆕
   - พิมพ์ `$GONE * 2 + $GONE`
@@ -2450,7 +2430,7 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - **คาดหวัง:** บรรทัดตรวจขึ้น "✕ Sensor not found: GONE" · ชิปแดงเส้นประเขียน "GONE · not in this dataset · Replace…" · กล่องเลือก sensor เปิดใต้ปุ่ม หัวเขียน "Replace GONE everywhere in the formula with…" (ค้นหาได้ จัดกลุ่มตาม component) · เลือกแล้ว `$GONE` **ทั้งสองจุด**เปลี่ยนเป็นตัวใหม่ · Esc / คลิกนอกกล่อง ปิดโดยไม่เปลี่ยนอะไร
 
 - [ ] **SPC-79 — สูตรที่ไม่มี sensor เลยใช้ไม่ได้** 🆕
-  - พิมพ์ทีละสูตร (ลบของเดิมก่อนทุกครั้ง): `42`, `pi() * 2`, `abs(-5)`
+  - พิมพ์ทีละสูตร (ลบของเดิมก่อนทุกครั้ง): `42`, `exp(1) * 2`, `abs(-5)`
   - **คาดหวัง:** ทุกกรณีขึ้น ✕ "Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax." ไม่มีปุ่มแก้ · ปุ่ม Add sensor กดไม่ได้
 
 - [ ] **SPC-80 — เครื่องหมาย / วงเล็บว่าง / จุลภาคผิดที่ → ข้อความบอกตำแหน่ง ไม่มีปุ่มแก้** 🆕
@@ -2483,10 +2463,10 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - สร้าง sensor ทีละสูตร แล้วเทียบค่า 2-3 จุด: `$TAG1 > 5`, `$TAG1 % 10`, `$TAG1 * 1k`, `$TAG1 * 1M`, `$TAG1 * 1m`, `$TAG1 * 2e3`
   - **คาดหวัง:** `> 5` ได้ 1 เมื่อจริง ได้ 0 เมื่อเท็จ · `% 10` = เศษจากการหารด้วย 10 · `1k` = ×1,000 · `1M` = ×1,000,000 · `1m` = ×0.001 (มิลลิ ไม่ใช่เมกะ) · `2e3` = ×2,000 · ทุกสูตรตรวจผ่าน ไม่มีข้อความแดง
 
-- [ ] **SPC-86 — แถวที่คำนวณไม่ได้ (หาร 0 จากข้อมูล, รากที่สองของค่าลบ, ln ของ 0) กลายเป็นค่าว่าง แต่ยังสร้าง sensor ได้** 🆕
+- [ ] **SPC-86 — แถวที่คำนวณไม่ได้ (หาร 0 จากข้อมูล, รากที่สองของค่าลบ) กลายเป็นค่าว่าง แต่ยังสร้าง sensor ได้** 🆕
   - ใช้ TAG2 ที่มีบางแถวเป็น 0 และ TAG1 ที่มีบางแถวติดลบ (ถ้าไม่มี ใช้สูตร `$TAG1 - ค่าเฉลี่ย` ให้มีค่าติดลบ)
   - พิมพ์ `$TAG1 / $TAG2` ดู Preview แล้วสร้าง sensor
-  - ทำซ้ำกับ `sqrt($TAG1)` และ `ln($TAG2)`
+  - ทำซ้ำกับ `sqrt($TAG1)`
   - **คาดหวัง:** ตรวจผ่าน (✓ Valid) และสร้างได้ · Preview ขึ้นสีส้ม "⚠ N rows have no result (missing input, ÷ 0 or invalid maths) — they stay missing" · กราฟขาดเป็นช่วงตรงแถวเหล่านั้น ไม่มีค่าอนันต์ หรือเส้นพุ่งไปสุดขอบกราฟ · Min / Max / Mean ใน Preview คิดจากแถวที่มีค่าเท่านั้น
 
 - [ ] **SPC-51 — การ์ด Preview ใต้ช่องสูตร: เส้นของทั้งชุดข้อมูล + Min/Max/Mean/Rows + จำนวนแถวที่ไม่มีผลเป็นสีส้ม** 🆕
@@ -2573,7 +2553,7 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
   - แบบที่ 2 (Quick build): เลือก 2 ตัว → กด Use this formula → ตั้งชื่อ `First` กรอกครบ → กด Add sensor แล้วเลือก 2 ตัวนั้นซ้ำ
   - แบบที่ 3: กด Average → Use this block แล้วสร้างหนึ่งตัว
   - (ถ้าทำได้) ลองทำให้ Add ล้มเหลว เช่น วิธีใน SPC-90 แล้วดูฟอร์ม
-  - **คาดหวัง:** หลัง Add สำเร็จ **ช่องสูตร, การเลือก (ไม่มีป้าย Picked), Name, Description, Unit, Component ว่างหมด** Round the result กลับเป็น Off การ์ด Quick build กลับเป็น "0 picked" บล็อกไม่ค้าง — **ช่อง Name ต้องไม่ขึ้น "A sensor named ... already exists"** และข้อความท้ายหน้าต่างตรงกับสิ่งที่ช่องแสดง · ถ้า Add **ล้มเหลว** ฟอร์มต้องคงค่าที่กรอกไว้ทั้งหมด (รวมการเลือกและสูตร)
+  - **คาดหวัง:** หลัง Add สำเร็จ **ช่องสูตร, การเลือก (ไม่มีป้าย Picked), Name, Description, Unit, Component ว่างหมด** การ์ด Quick build กลับเป็น "0 picked" บล็อกไม่ค้าง — **ช่อง Name ต้องไม่ขึ้น "A sensor named ... already exists"** และข้อความท้ายหน้าต่างตรงกับสิ่งที่ช่องแสดง · ถ้า Add **ล้มเหลว** ฟอร์มต้องคงค่าที่กรอกไว้ทั้งหมด (รวมการเลือกและสูตร)
 
 - [ ] **SPC-90 — สร้างไม่สำเร็จ: ข้อความแดงท้ายหน้าต่าง (ไม่ใช่หน้าต่างเด้ง), ฟอร์มคงอยู่, ข้อความหายเมื่อแก้สูตรหรือชื่อ** 🆕
   - ทำให้การสร้างล้มเหลวด้วยวิธีใน SPC-24 (สูตรอ้าง special sensor ที่เพิ่งกดลบและยังอยู่ในช่วง Undo)
@@ -2616,7 +2596,7 @@ _เตรียม: โปรเจกต์ที่มี sensor จากไ
 
 - [ ] **SPC-92 — สร้าง sensor บนข้อมูลใหญ่: แอปยังตอบสนองระหว่างคำนวณ** 👀
   - ใช้ไฟล์ CSV ขนาดใหญ่ (หลายล้านแถว)
-  - สร้าง sensor ด้วยสูตรยาวพอสมควร (เช่น `abs($TAG1 - $TAG2) * sqrt($TAG3) + ln($TAG1)`)
+  - สร้าง sensor ด้วยสูตรยาวพอสมควร (เช่น `abs($TAG1 - $TAG2) * sqrt($TAG3) + exp($TAG1 / 1000)`)
   - ระหว่างที่หัวหน้าต่างขึ้น "Applying changes…" ลองลากหน้าต่างหลักและหน้าต่างนี้ และซูม / เลื่อนกราฟที่ Dashboard
   - **คาดหวัง:** ลากหน้าต่างได้ กราฟที่ Dashboard ยังตอบสนอง (อาจช้าลงได้) ไม่ขึ้น "Not responding" · ถ้าทั้งแอปค้างจนคำนวณเสร็จ ให้จดเวลาที่ค้างและจำนวนแถวของไฟล์ไว้รายงาน
 
@@ -2659,7 +2639,7 @@ _เตรียม: โปรเจกต์ที่มี special sensor ห�
 - [ ] **MNG-27 — สูตร/บล็อกแสดงเป็นข้อความที่อ่านเข้าใจ และชี้เมาส์เห็นรูปสูตรที่เก็บจริง** 🆕
   - ดูคอลัมน์ขวาของแต่ละแถว
   - ชี้เมาส์ค้างไว้ที่ข้อความสูตร และที่ป้าย ƒ / Σ
-  - **คาดหวัง:** สูตรแสดงตามที่พิมพ์ (ถ้าตั้ง Round the result ไว้ ต่อท้ายด้วย "· rounded to N decimals") · บล็อกเขียน "Average of <description ของ sensor ต้นทาง>, … · missing values skipped" · Sum แบบเก่าเขียน "Sum of …" · การคำนวณตัวเดียวแบบเก่าเขียน เช่น "<description ของ sensor ต้นทาง> + 10" / "<description> rounded to 2 decimals" · ชี้เมาส์ที่ข้อความเห็นรูปที่เก็บจริง (เช่น `mean(A, B)` หรือ `round(($A + $B) * 100) / 100`) · ชี้ป้าย ƒ / Σ บอกชนิด (Formula / Average block / Median block / Sum / Operation)
+  - **คาดหวัง:** สูตรแสดงตามที่พิมพ์ (sensor จากเวอร์ชันเก่าที่มีการปัดทศนิยม ต่อท้ายด้วย "· rounded to N decimals") · บล็อกเขียน "Average of <description ของ sensor ต้นทาง>, … · missing values skipped" · Sum แบบเก่าเขียน "Sum of …" · การคำนวณตัวเดียวแบบเก่าเขียน เช่น "<description ของ sensor ต้นทาง> + 10" / "<description> rounded to 2 decimals" · ชี้เมาส์ที่ข้อความเห็นรูปที่เก็บจริง (เช่น `mean(A, B)` หรือ `round(($A + $B) * 100) / 100`) · ชี้ป้าย ƒ / Σ บอกชนิด (Formula / Average block / Median block / Sum / Operation)
 
 - [ ] **MNG-3 — ช่องค้นหาในแท็บ Manage** 🆕
   - พิมพ์ค้นหาทีละแบบ: ชื่อ (tag), คำใน description, ชื่อ component และบางส่วนของสูตร
@@ -2867,7 +2847,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ไปแท็บ Manage → ชี้เมาส์ที่ปุ่มดินสอของแถวหนึ่ง (ต้องขึ้นข้อความ "Edit <ชื่อ>") → กดดินสอ
   - กด "Cancel edit"
   - กดดินสอแถวเดิมอีกครั้ง → แก้อะไรสักอย่าง → กด "Save changes"
-  - **คาดหวัง:** หน้าจอสลับไปแท็บ Create พร้อมช่องสูตรที่ใส่สูตรเดิมไว้แล้ว (รวมค่า Round the result เดิม) · การ์ดล่างเขียน "Edit sensor" และช่อง Name / Description / Unit / Component มีค่าเดิม · ท้ายหน้าต่างมีปุ่ม "Cancel edit" และ "Save changes" (ไม่มีปุ่ม Add sensor) พร้อมข้อความ "Saves the changes; the chart updates." · sensor ที่เลือกไว้ในแท็บ Create ถูกล้างออกตอนเปิดแก้ · กด Cancel edit หรือ Save สำเร็จแล้วกลับไปแท็บ Manage · แถวที่กำลังแก้อยู่ ปุ่มดินสอเป็นสีฟ้า
+  - **คาดหวัง:** หน้าจอสลับไปแท็บ Create พร้อมช่องสูตรที่ใส่สูตรเดิมไว้ครบทั้งสูตร · การ์ดล่างเขียน "Edit sensor" และช่อง Name / Description / Unit / Component มีค่าเดิม · ท้ายหน้าต่างมีปุ่ม "Cancel edit" และ "Save changes" (ไม่มีปุ่ม Add sensor) พร้อมข้อความ "Saves the changes; the chart updates." · sensor ที่เลือกไว้ในแท็บ Create ถูกล้างออกตอนเปิดแก้ · กด Cancel edit หรือ Save สำเร็จแล้วกลับไปแท็บ Manage · แถวที่กำลังแก้อยู่ ปุ่มดินสอเป็นสีฟ้า
 
 - [ ] **EDT-63 — ระหว่างแก้ ตัวมันเองและตัวที่สร้างต่อจากมันต้องไม่อยู่ในรายการให้เลือก** 🆕
   - เตรียม special sensor: A, B = `${A} + 1`, C = `${B} * 2` และ Z ที่ไม่เกี่ยวกับ A (A ต้องไม่มีโมเดลใช้)
@@ -2966,22 +2946,18 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - เปิดแก้อีกครั้ง → กด × เอาตัวสุดท้ายออก
   - **คาดหวัง:** เหลือ 1 ตัวแล้วไม่ขึ้น "needs at least 2 sensors" (ต่างจากตอนสร้าง ดู SPC-64) กด Save ได้ และค่าเท่ากับ sensor ตัวนั้น (แถวที่ sensor ต้นทางว่างก็ว่างด้วย) · เอาออกหมดแล้วขึ้น ✕ "No sensors selected" และกด Save ไม่ได้
 
-- [ ] **EDT-56 — sensor ที่สร้างด้วยปุ่มของเวอร์ชันเก่า (Sum / Add 10 / Round to decimals / sqrt) เปิดเป็นสูตรพร้อมหมายเหตุ · บันทึกโดยไม่แก้การคำนวณแล้วยังเก็บแบบเดิม** 🆕
-  - เตรียม special sensor ที่สร้างด้วยโปรแกรมเวอร์ชันเก่า 4 แบบ: Sum all, `TAG + 10`, Round to decimals และ sqrt
+- [ ] **EDT-86 — sensor ที่สร้างด้วยปุ่มของเวอร์ชันเก่า (Sum / Add 10 / Round to decimals / sqrt) เปิดเป็นสูตรพร้อมหมายเหตุ · แก้แค่ Description บันทึกได้ทุกตัว · ตัว Round จะแก้สูตรต้องเอา round ออกก่อน** 🆕
+  - เตรียม special sensor ที่สร้างด้วยโปรแกรมเวอร์ชันเก่า 4 แบบ: Sum all, `TAG + 10`, Round to decimals (2 ตำแหน่ง) และ sqrt (ไม่มีโมเดลใช้)
   - กดดินสอทีละตัว ดูช่องสูตรและบรรทัดหมายเหตุ → แก้แค่ Description → กด Save changes
+  - เปิดแก้ตัว Round อีกครั้ง → เปลี่ยน `100` ทั้งสองที่เป็น `10` (ยังมี round อยู่) → ดูปุ่ม Save changes
+  - ลบ `round(` กับ `)` ออกให้เหลือ `$TAG * 10 / 10` → Save changes
   - เปิดแก้ตัว Sum อีกครั้ง → เปลี่ยนสูตรเป็น `$A + $B * 2` → Save changes
-  - **คาดหวัง:** ตัว Sum เปิดเป็น `$A + $B + $C` พร้อมหมายเหตุ "Opened from a Sum recipe as A + B + C. Saving keeps the same result (a row is missing when any source is missing) and stores it as a formula." · ตัว Add 10 เปิดเป็น `$TAG + 10`, ตัว sqrt เปิดเป็น `sqrt($TAG)`, ตัว Round เปิดเป็น `$TAG` พร้อมปุ่ม Round = N — ทั้งสามมีหมายเหตุ "Opened from a one-sensor operation as its formula. Saving without changing the maths keeps the stored recipe as it is." · แก้แค่คำอธิบายแล้วไม่มีการคำนวณใหม่ และในแท็บ Manage ยังเป็นแบบเดิม (ป้าย Σ) · แก้การคำนวณแล้วกลายเป็นสูตร (ป้าย ƒ) และค่าถูกต้อง
+  - **คาดหวัง:** ตัว Sum เปิดเป็น `$A + $B + $C` พร้อมหมายเหตุ "Opened from a Sum recipe as A + B + C. Saving without changing it keeps the stored recipe; a changed one saves as a formula, without round()." · ตัว Add 10 เปิดเป็น `$TAG + 10`, ตัว sqrt เปิดเป็น `sqrt($TAG)`, ตัว Round เปิดเป็น `round($TAG * 100) / 100` — ทั้งสามมีหมายเหตุ "Opened from a one-sensor operation as its formula. Saving without changing the maths keeps the stored recipe as it is." · ตัว Round ขึ้น ✕ "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max." · ทั้ง 4 ตัวแก้แค่ Description แล้วบันทึกได้ (รวมตัว Round) ไม่มีการคำนวณใหม่ ค่าบนกราฟเท่าเดิม และในแท็บ Manage ยังเป็นแบบเดิม · ตัว Round ที่แก้สูตรแต่ยังมี round อยู่ กด Save changes ไม่ได้ · พอเอา round ออกแล้วบันทึกได้ เป็นสูตร (ป้าย ƒ) · แก้การคำนวณของ Sum แล้วกลายเป็นสูตร (ป้าย ƒ) และค่าถูกต้อง
 
 - [ ] **EDT-59 — รายการในแท็บ Manage บอกจำนวนทศนิยมของ sensor ที่มีการปัดเศษ** 🆕
-  - เตรียม sensor แบบ Round to decimals = 0 และ = 3 (สร้างจากเวอร์ชันเก่า) และ sensor สูตรที่ตั้ง Round the result = 2
+  - เตรียม sensor แบบ Round to decimals = 0 และ = 3 และ sensor สูตร `round(($A + $B) * 100) / 100` (ทั้งหมดสร้างจากเวอร์ชันเก่า)
   - เปิดแท็บ Manage ดูทั้งสามแถว
   - **คาดหวัง:** แสดงเป็น "<description ของ sensor ต้นทาง> rounded to 0 decimals", "<description ของ sensor ต้นทาง> rounded to 3 decimals" และ "<สูตร> · rounded to 2 decimals" — แยกออกจากกันได้ชัด
-
-- [ ] **EDT-71 — sensor ที่ปัดทศนิยมเป็นจำนวนที่ไม่มีในปุ่มให้เลือก (เช่น 4 ตำแหน่ง) แสดงเป็นปุ่มพิเศษที่ถูกเลือกอยู่** 🆕
-  - เตรียม sensor ที่สูตรเป็น `round($TAG1 * 10000) / 10000` (หรือ Round to decimals = 4 จากเวอร์ชันเก่า)
-  - เปิดแก้ ดูแถว "Round the result"
-  - กด Save changes โดยไม่แก้อะไร
-  - **คาดหวัง:** ปุ่มเป็น Off / 0 / 1 / 2 / 3 / 4 โดยปุ่ม 4 ถูกเลือกอยู่ (ไม่ใช่ไม่มีปุ่มไหนถูกเลือก) · ช่องสูตรแสดง `$TAG1` · Save แล้วค่าไม่เปลี่ยน
 
 - [ ] **EDT-8 — ⭐ แก้ตัวต้นสายแล้วตัวที่สร้างต่อต้องเปลี่ยนตาม** 🆕
   - สร้าง A = `$TAG * 2`, B = `${A} + 10`, C = `${B} * 3`
@@ -3107,7 +3083,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - สร้าง special sensor `A` แล้วให้โมเดล Individual ชื่อ M ใช้ `A` (กดปุ่ม 📁 ที่แถว `A`)
   - กลับไปแท็บ Manage → กดดินสอที่ `A`
   - ทำซ้ำโดยให้ `A` ถูกใช้เป็น predictor / X / Y / criteria / Custom running condition ของโมเดล
-  - **คาดหวัง:** หัวการ์ด Formula มีป้ายกุญแจสีเทา "Used by 1 model" · ใต้ช่องสูตรมีบรรทัดพร้อมไอคอนกุญแจ (ขึ้นครั้งเดียว): "Name and formula are locked. Used by 1 model: M (Individual). Remove it from those models first, then you can edit it. Description, unit and component below can still change; to change the maths, create a new sensor." · ช่องสูตรขอบเส้นประ พิมพ์ไม่ได้ ไม่มีลิงก์ Clear · ไม่มีการ์ด Quick build และแถบเครื่องมือ · ปุ่ม Round the result กดไม่ได้ · ช่อง Preview เขียน "Preview is off while the formula is locked." · ช่อง Name แก้ไม่ได้และมีไอคอนกุญแจ (ชี้เมาส์เห็นเหตุผล) · รายการ sensor ด้านซ้ายจางกดไม่ได้ ใต้รายการเขียน "The formula is locked, so sensors cannot be added." · Description / Unit / Component แก้ได้ ท้ายหน้าต่างเขียน "Saves the description, unit and component." · ปุ่มถังขยะของแถวยังกดไม่ได้
+  - **คาดหวัง:** หัวการ์ด Formula มีป้ายกุญแจสีเทา "Used by 1 model" · ใต้ช่องสูตรมีบรรทัดพร้อมไอคอนกุญแจ (ขึ้นครั้งเดียว): "Name and formula are locked. Used by 1 model: M (Individual). Remove it from those models first, then you can edit it. Description, unit and component below can still change; to change the maths, create a new sensor." · ช่องสูตรขอบเส้นประ พิมพ์ไม่ได้ ไม่มีลิงก์ Clear · ไม่มีการ์ด Quick build และแถบเครื่องมือ · ช่อง Preview เขียน "Preview is off while the formula is locked." · ช่อง Name แก้ไม่ได้และมีไอคอนกุญแจ (ชี้เมาส์เห็นเหตุผล) · รายการ sensor ด้านซ้ายจางกดไม่ได้ ใต้รายการเขียน "The formula is locked, so sensors cannot be added." · Description / Unit / Component แก้ได้ ท้ายหน้าต่างเขียน "Saves the description, unit and component." · ปุ่มถังขยะของแถวยังกดไม่ได้
 
 - [ ] **EDT-74 — ข้อความล็อกเรียกชนิดโมเดลแบบเดียวกับทั้งแอป ("Relation model") และย่อเมื่อเกิน 3 โมเดล** 🆕
   - ใส่ `A` เป็น predictor ของ Relation model ชื่อ R → กดดินสอที่ `A`
@@ -3161,11 +3137,11 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ดูสถานะโมเดลในหน้าต่าง Build Model และแท็บ Failure Groups
   - **คาดหวัง:** โมเดลขึ้น "Re-train needed" (หรือกราฟขึ้น "Out of date") ไม่ใช่ "Trained" / Complete เหมือนเดิม เพราะค่าของ `A` ที่ใช้ตอน Train เปลี่ยนไปแล้ว · กด Mark complete ไม่ได้จนกว่าจะ Train ใหม่ · set point ที่ตั้งไว้ยังอยู่
 
-- [ ] **EDT-46 — โปรเจกต์เก่าที่มีสูตรซึ่งตอนนี้ใช้ไม่ได้แล้ว (เช่น `$A * pi`) ยังเปิดได้ และบอกเหตุผล** 🆕
+- [ ] **EDT-85 — โปรเจกต์เก่าที่มีสูตรซึ่งตอนนี้ใช้ไม่ได้แล้ว (เช่น `$A * pi`) ยังเปิดได้ และบอกเหตุผล** 🆕
   - ใช้โปรเจกต์ที่บันทึกด้วยเวอร์ชันก่อน 2026-10-08 ที่มี special sensor สูตร `$TAG1 * pi` (ถ้าไม่มี ให้แก้ไฟล์โปรเจกต์ด้วย Notepad แบบ EDT-31 ใส่สูตรนี้เอง)
   - เปิดโปรเจกต์จาก Recent Workspaces
   - เปิดหน้าต่าง Special Sensors → แท็บ Manage → กดดินสอที่ตัวนั้น
-  - **คาดหวัง:** โปรเจกต์เปิดได้ · มีข้อความแจ้งสีแดงอันเดียว "1 special sensor couldn't be restored: <ชื่อ> (Formula error: unknown name 'pi'. Write pi() for π.)." พร้อม "To fix: on the Dashboard open Add Special Sensor > Manage and edit it (pencil) to correct the formula." · sensor นั้นไม่ขึ้นบนกราฟ แต่ยังอยู่ในแท็บ Manage พร้อมป้าย "No data — fix formula" · เปิดแก้แล้ว `pi` มีขีดแดง พร้อมปุ่ม "Add ( )" · special sensor อื่นคำนวณครบ
+  - **คาดหวัง:** โปรเจกต์เปิดได้ · มีข้อความแจ้งสีแดงอันเดียว "1 special sensor couldn't be restored: <ชื่อ> (Formula error: 'pi' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.)." พร้อม "To fix: on the Dashboard open Add Special Sensor > Manage and edit it (pencil) to correct the formula." · sensor นั้นไม่ขึ้นบนกราฟ แต่ยังอยู่ในแท็บ Manage พร้อมป้าย "No data — fix formula" · เปิดแก้แล้ว `pi` มีขีดแดง บรรทัดตรวจขึ้นข้อความเดียวกัน และไม่มีปุ่ม "Add ( )" หรือปุ่มแก้ให้อัตโนมัติ · ลบ `* pi` ออกแล้ว Save ได้ · special sensor อื่นคำนวณครบ
 
 - [ ] **EDT-60 — ⭐ sensor ที่โหลดไม่ได้ตอนเปิดโปรเจกต์และมีโมเดลใช้อยู่ เข้าโหมดซ่อม: แก้สูตรได้ ชื่อล็อก มีปุ่มแก้ในข้อความ และท้ายหน้าต่างบอกจำนวนโมเดล** 🆕
   - เตรียมโปรเจกต์ (แก้ไฟล์โปรเจกต์ด้วย Notepad แบบ EDT-31) ที่มี special sensor `A` สูตร `$TAG1 ($TAG2)` (ขาดเครื่องหมายคูณ) · มีโมเดลที่ใช้ `A` และ Mark complete แล้ว · และมีโมเดลอีกตัวที่ไม่ใช้ `A` ซึ่ง Complete อยู่
@@ -3218,11 +3194,22 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - ปิดโปรแกรม แล้วเปิดโปรเจกต์เดิมอีกครั้ง
   - **คาดหวัง:** Dashboard เปิดตามปกติ แล้วมีกล่องข้อความแบบแจ้งข้อมูล (ไม่ใช่ข้อความผิดพลาดสีแดง) หัวเรื่อง "Rounding updated" หนึ่งกล่อง เขียนว่า "Updated the rounding in 1 special sensor (A): the old spreadsheet form round(x, n) is now written round(x * 10ⁿ) / 10ⁿ. Its values differ from what was shown before, because the old form computed them wrongly. 1 model set back to Incomplete — train it again." (ถ้าแปลง 2 ตัว จะเป็น "… in 2 special sensors (A, B) … Their values differ …") · แท็บ Manage เขียน `$TAG1 · rounded to 2 decimals` (ไม่มีป้ายส้ม "No data") · กราฟมีค่า (ปัด 2 ตำแหน่งจริง) · โมเดลที่ใช้ `A` ไม่เป็น Complete แล้ว · เปิดครั้งที่สองไม่มีกล่องข้อความนี้อีก
 
-- [ ] **EDT-81 — โปรเจกต์เก่าที่มี `round($TAG1, 0.5)` แปลงให้ไม่ได้: ไม่มีกล่อง Rounding updated แต่บอกว่าโหลดไม่ได้ และแก้เองได้** 🆕
+- [ ] **EDT-83 — โปรเจกต์เก่าที่มี `round($TAG1, 0.5)` แปลงให้ไม่ได้: ไม่มีกล่อง Rounding updated แต่บอกว่าโหลดไม่ได้ และแก้ได้เมื่อเอา round ออก** 🆕
   - เตรียมโปรเจกต์ (แก้ไฟล์โปรเจกต์ด้วย Notepad แบบ EDT-31) ที่มี `S` = `round($TAG1, 0.5)`
   - เปิดโปรเจกต์ อ่านข้อความแจ้ง → ไปแท็บ Manage → กดดินสอที่ `S`
-  - แก้สูตรเป็น `round(0.5, $TAG1)` → Save
-  - **คาดหวัง:** ไม่มีกล่อง "Rounding updated" สำหรับตัวนี้ · มีข้อความแจ้งสีแดงบอกว่า S โหลดไม่ได้ พร้อมเหตุผล "… round($TAG1, 0.5) is not supported. To round to the nearest step, put the step first: round(0.5, $TAG1)." · ในหน้าแก้ บรรทัดตรวจขึ้นข้อความเดียวกัน และไม่มีปุ่มแก้ให้อัตโนมัติ · แก้เป็น `round(0.5, $TAG1)` แล้ว Save ได้ ข้อความแจ้ง "✓ Restored S." และมีค่า (ปัดเป็นทวีคูณของ 0.5)
+  - แก้สูตรเป็น `round(0.5, $TAG1)` ดูบรรทัดตรวจ
+  - แก้สูตรเป็น `$TAG1` → Save
+  - **คาดหวัง:** ไม่มีกล่อง "Rounding updated" สำหรับตัวนี้ · มีข้อความแจ้งสีแดงบอกว่า S โหลดไม่ได้ พร้อมเหตุผล "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max." · ในหน้าแก้ บรรทัดตรวจขึ้นข้อความเดียวกัน และไม่มีปุ่มแก้ให้อัตโนมัติ · `round(0.5, $TAG1)` ก็ยังขึ้นข้อความเดียวกัน กด Save ไม่ได้ · แก้เป็น `$TAG1` แล้ว Save ได้ ข้อความแจ้ง "✓ Restored S." และมีค่า
+
+- [ ] **EDT-87 — ⭐ โปรเจกต์เก่าที่มี special sensor ใช้ `ln` / `round` ยังแสดงค่าได้ แก้แค่ Description บันทึกได้ แต่จะแก้สูตรต้องเอาฟังก์ชันนั้นออกก่อน** 🆕
+  - เตรียมโปรเจกต์ที่บันทึกด้วยเวอร์ชันก่อน 2026-11-12 ที่มี special sensor `L` = `ln($TAG1)` และ `R` = `round($TAG1 * 100) / 100` (ไม่มีโมเดลใช้) · ถ้าทำได้ ให้จดค่าเดิมบนกราฟไว้
+  - เปิดโปรเจกต์จาก Recent Workspaces เลือก `L` และ `R` ให้ขึ้นบนกราฟ
+  - ไปหน้าต่าง Add Special Sensor แท็บ Manage ดูสองแถวนี้ → กดดินสอที่ `L`
+  - แก้แค่ Description → กด Save changes
+  - กดดินสอที่ `L` อีกครั้ง → เปลี่ยนสูตรเป็น `ln($TAG1) * 2` → ดูปุ่ม Save changes
+  - ลบ `ln(` และ `)` ออกให้เหลือ `$TAG1 * 2` → Save changes
+  - ทำแบบเดียวกันกับ `R` (แก้แค่ Description ก่อน แล้วลบ round ออก เช่นเหลือ `$TAG1 * 100 / 100`)
+  - **คาดหวัง:** เปิดโปรเจกต์ได้ตามปกติ ไม่มีข้อความแจ้งสีแดง · `L` และ `R` มีค่าบนกราฟเท่าเดิม · แท็บ Manage แสดงสูตรเดิม ไม่มีป้ายส้ม "No data" · เปิดแก้แล้วช่องสูตรแสดงสูตรเต็มตามที่เก็บไว้ (`ln($TAG1)`) · บรรทัดตรวจขึ้น ✕ "Formula error: 'ln' is no longer available. Available functions: abs, sqrt, pow, exp, min, max." ชื่อ `ln` ถูกขีดแดง ไม่มีปุ่มแก้ให้อัตโนมัติ · แก้แค่ Description แล้วบันทึกได้ สูตรและค่าบนกราฟเท่าเดิม · พอแก้สูตรแต่ยังมี ln อยู่ ปุ่ม Save changes กดไม่ได้ · ลบ ln ออกแล้วขึ้น ✓ Valid บันทึกได้ และค่าบนกราฟเปลี่ยนตามสูตรใหม่ · `R` เป็นแบบเดียวกัน (ข้อความเขียน 'round')
 
 ---
 
@@ -5032,7 +5019,7 @@ _ปุ่มดินสอที่แต่ละแถวในแท็บ 
   - **คาดหวัง:** หัวคอลัมน์ `อุณหภูมิ1` อ่านออกใน Excel — ถ้าเห็นเป็นตัวอักษรแปลก ๆ (เช่น `à¸­à¸¸...`) ให้จดไว้: ไฟล์ถูกเขียนแบบที่ Excel บางเวอร์ชันเปิดภาษาไทยแล้วเพี้ยน (ตามข้อกำหนด ไม่ใช่ปัญหาของระบบที่นำไฟล์ไปใช้ต่อ แต่ผู้ใช้อาจเข้าใจผิด) · `FLOW A` อยู่ในคอลัมน์เดียว (ไม่แตกเป็นสองคอลัมน์) · คอลัมน์ TimeStamp แสดงเป็นข้อความ `2026-01-01T00:00:00+07:00` (+07:00 หมายถึงเวลาไทย; Excel ไม่แปลงเป็นวันที่ผิด) · จำนวนแถวเท่ากับที่ Peek / หน้าต่าง Export บอก
 
 - [ ] **BMW-364 — ส่วน derived_sensors: คำอธิบายวิธีสร้าง (how_to_build) ของ special sensor แต่ละแบบ** 🆕
-  - สร้าง special sensor 5 ตัว และใช้ทุกตัวในโมเดลที่ Complete: (1) สูตร `$TEMP_A - $TEMP_B` (2) สูตรที่ปัดทศนิยม (Quick build → ปัด 2 ตำแหน่ง) (3) Average ของ 3 sensor (4) Sum ของ 2 sensor ปัด 1 ตำแหน่ง (5) special sensor ที่สร้างจาก special sensor ข้อ (1) อีกที
+  - สร้าง special sensor 5 ตัว และใช้ทุกตัวในโมเดลที่ Complete: (1) สูตร `$TEMP_A - $TEMP_B` (2) สูตรที่ปัดทศนิยม (จากโปรเจกต์เวอร์ชันเก่า เช่น `round(($TEMP_A - $TEMP_B) * 100) / 100`) (3) Average ของ 3 sensor (4) Sum ของ 2 sensor ปัด 1 ตำแหน่ง (จากโปรเจกต์เวอร์ชันเก่า) (5) special sensor ที่สร้างจาก special sensor ข้อ (1) อีกที
   - Export results → คลิกขวา `machine_info.json` → Open with → Notepad → Ctrl+F หา `derived_sensors` (รายการ special sensor) และ `sensors`
   - เปิดไฟล์ CSV ของโมเดลที่ใช้ special sensor ด้วย Notepad หรือ Excel → เทียบค่ากับกราฟ Dashboard ที่เวลาเดียวกัน
   - **คาดหวัง:** ช่อง `how_to_build` เป็นภาษาที่อ่านเข้าใจได้ และอ้าง tag จริง: (1) "Calculated as TEMP_A - TEMP_B" (ไม่มี `$`) (2) "Calculated as …, rounded to 2 decimal places" (3) "Average of A, B, C (rows where a source is missing use the others)" (4) "Sum of A, B, rounded to 1 decimal place" (5) อ้างชื่อ special sensor ข้อ (1) · sensor ดิบทุกตัวที่ special sensor ใช้ (รวมของข้อ 5 ที่ซ้อนสองชั้น) อยู่ใน `sensors[]` แม้ไม่มีโมเดลใช้โดยตรง · tag ของ special sensor ไม่อยู่ใน `sensors[]` และไม่ชนกับ tag ดิบ · ในไฟล์ CSV คอลัมน์ special sensor มีค่าที่คำนวณแล้ว ตรงกับกราฟ Dashboard ที่เวลาเดียวกัน

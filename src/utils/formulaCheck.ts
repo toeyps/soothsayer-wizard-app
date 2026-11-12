@@ -1,8 +1,7 @@
 import type { FormulaIssue, FormulaPreviewAggregate } from '../types/formula';
-import { excelRoundCalls, isFormulaAtom, tokenizeFormula, type FormulaToken } from './formulaTokens';
-import { roundPlaces } from './formulaRounding';
+import { tokenizeFormula, type FormulaToken } from './formulaTokens';
 
-/** Cheap front-end check of a special-sensor formula: per-keystroke feedback with the same stable codes (and ranges where possible) as Rust's gate (`formula_gate`, `formula_diagnostics.rs`), in Rust's order: size limits, references, structure, names, round_excel, div_zero (CREATE only). Rust has the last word (`preview_formula`, `resolveFormulaVerdict`); this never flags what Rust wouldn't and skips what it can't know (argument counts, function names before Rust sends its list). O(n) per call. */
+/** Cheap front-end check of a special-sensor formula: per-keystroke feedback with the same stable codes (and ranges where possible) as Rust's gate (`formula_gate`, `formula_diagnostics.rs`), in Rust's order: size limits, references, removed functions, structure, names, div_zero (CREATE only). Rust has the last word (`preview_formula`, `resolveFormulaVerdict`); this never flags what Rust wouldn't and skips what it can't know (argument counts, function names before Rust sends its list). O(n) per call. */
 
 export const DEFAULT_MAX_FORMULA_LEN = 4096;
 export const DEFAULT_MAX_FORMULA_DEPTH = 64;
@@ -13,8 +12,14 @@ export const NO_SENSOR_MESSAGE = 'Formula contains no sensor references. Use $Se
 export const DIV_ZERO_MESSAGE =
     'Formula error: division by 0 gives no value on any row. Divide by a sensor or a number other than 0.';
 
-/** Functions that take no value: written `pi()` / `e()`. */
-export const ZERO_ARG_FUNCTIONS: ReadonlySet<string> = new Set(['pi', 'e']);
+/** Rust's `REMOVED_FORMULA_FNS`: saved sensors still compute, the editor refuses them (2026-11-12). */
+export const REMOVED_FUNCTIONS: ReadonlySet<string> = new Set([
+    'ln', 'log', 'log10', 'sign', 'int', 'round', 'ceil', 'floor',
+    'sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'asinh', 'acosh', 'atanh',
+    'pi', 'e',
+]);
+/** Rust's offered list, named in the `removed_function` message. */
+export const AVAILABLE_FUNCTIONS_TEXT = 'abs, sqrt, pow, exp, min, max';
 
 export interface FormulaCheckContext {
     /** Does this name resolve to a dataset column? Omitted = not checked. Build with `sensorResolver`. */
@@ -52,9 +57,9 @@ export function checkFormula(
     if (!text.trim()) return null;
     return limitIssue(text, ctx)
         ?? referenceIssue(tokens, ctx)
+        ?? removedFunctionIssue(tokens)
         ?? syntaxIssue(tokens)
         ?? nameIssue(tokens, ctx)
-        ?? roundExcelIssue(text)
         ?? ((ctx.mode ?? 'create') === 'create' ? divisionByZero(tokens) : null);
 }
 
@@ -204,6 +209,17 @@ export function numberValue(text: string): number | null {
     return Number(body) * scale;
 }
 
+/** Rust's `removed_function` check: needs no function list, so it fires before Rust has answered. */
+function removedFunctionIssue(toks: FormulaToken[]): FormulaIssue | null {
+    const t = toks.find(x => x.kind === 'word' && REMOVED_FUNCTIONS.has(x.text));
+    if (!t) return null;
+    return {
+        code: 'removed_function',
+        message: `Formula error: '${t.text}' is no longer available. Available functions: ${AVAILABLE_FUNCTIONS_TEXT}.`,
+        range: [t.start, t.end],
+    };
+}
+
 /** Unknown function names and functions without a bracket; needs Rust's function list. Argument counts are left to Rust. */
 function nameIssue(toks: FormulaToken[], ctx: FormulaCheckContext): FormulaIssue | null {
     const fns = ctx.functions;
@@ -214,13 +230,7 @@ function nameIssue(toks: FormulaToken[], ctx: FormulaCheckContext): FormulaIssue
         const w = t.text;
         if (known.has(w)) {
             if (!t.call) {
-                return {
-                    code: 'fn_no_bracket',
-                    message: w === 'pi' ? 'Write pi() for π.'
-                        : w === 'e' ? "Write e() for Euler's number (2.718…)."
-                            : `${w} needs a value in brackets, e.g. ${w}($A).`,
-                    range: [t.start, t.end],
-                };
+                return { code: 'fn_no_bracket', message: `${w} needs a value in brackets, e.g. ${w}($A).`, range: [t.start, t.end] };
             }
             continue;
         }
@@ -233,27 +243,6 @@ function nameIssue(toks: FormulaToken[], ctx: FormulaCheckContext): FormulaIssue
         };
     }
     return null;
-}
-
-/** Rust's `check_round_argument_order` (`round_excel`, ranged on the call). */
-function roundExcelIssue(text: string): FormulaIssue | null {
-    const call = excelRoundCalls(text)[0];
-    if (!call) return null;
-    const x = text.slice(call.x[0], call.x[1]).trim();
-    const n = text.slice(call.n[0], call.n[1]).trim();
-    return { code: 'round_excel', message: roundOrderMessage(x, n), range: [call.start, call.end] };
-}
-
-/** Rust's `round_order_message`. */
-export function roundOrderMessage(x: string, n: string): string {
-    const places = roundPlaces(n);
-    if (places === 0) return `Formula error: round(${x}, ${n}) is not supported. Write round(${x}) to round to a whole number.`;
-    if (places !== null) {
-        const scale = 10 ** places;
-        const xw = isFormulaAtom(x) ? x : `(${x})`;
-        return `Formula error: round(${x}, ${n}) does not round to ${places} decimal place${places === 1 ? '' : 's'}. Write round(${xw} * ${scale}) / ${scale} instead.`;
-    }
-    return `Formula error: round(${x}, ${n}) is not supported. To round to the nearest step, put the step first: round(${n}, ${x}).`;
 }
 
 /** Rust's `division_by_zero`: `/ 0` (a literal zero not raised to a power). */
@@ -270,8 +259,6 @@ function divisionByZero(toks: FormulaToken[]): FormulaIssue | null {
 }
 
 const AGG_LABEL: Record<string, string> = { mean: 'Average', median: 'Median', sum: 'Sum' };
-/** Rust's `MAX_OPERATION_DECIMALS`. */
-export const MAX_BLOCK_DECIMALS = 10;
 
 /** Rust's `check_multi_operation` for an Average / Median / Sum block. */
 export function checkAggregate(
@@ -286,10 +273,6 @@ export function checkAggregate(
     if (!(block.type in AGG_LABEL)) return { code: 'unknown_operation', message: `Unknown multi operation: ${block.type}` };
     if ((ctx.mode ?? 'create') === 'create' && block.sources.length < 2) {
         return { code: 'agg_too_few', message: `${AGG_LABEL[block.type]} needs at least 2 sensors.` };
-    }
-    const d = block.decimals;
-    if (d !== undefined && d !== null && !(Number.isInteger(d) && d >= 0 && d <= MAX_BLOCK_DECIMALS)) {
-        return { code: 'bad_decimals', message: `Decimals must be a whole number from 0 to ${MAX_BLOCK_DECIMALS} (got ${d}).` };
     }
     return null;
 }

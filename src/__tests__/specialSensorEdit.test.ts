@@ -410,7 +410,7 @@ describe('runSpecialSensorEdit -- repair mode', () => {
         const outcome = await run(rust, { recipes: [badA, badB], next: F('A', '$TAG1 * 3'), repair: { missingBefore: ['A', 'B'] } });
         expect(rust.has('A')).toBe(true);
         expect(rust.has('B')).toBe(false);
-        expect(outcome.stillBroken).toEqual([{ tag: 'B', reason: expect.stringMatching(/does not round to 2 decimal places/) }]);
+        expect(outcome.stillBroken).toEqual([{ tag: 'B', reason: expect.stringMatching(/'round' is no longer available/) }]);
         expect(outcome.downstream.map(r => r.tag)).toEqual(['B']);
         expect(rust.cmds('remove_sensor_columns')).toHaveLength(0);
         // The stored list keeps B's recipe as it is -- only A changed.

@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { SpecialSensorRecipe } from '../types';
 import {
-    applyTransform, blockOperationConfig, blockPreviewAggregate, editorStateFormula, editorStateToRecipe,
+    QUICK_TRANSFORMS, applyTransform, blockOperationConfig, blockPreviewAggregate, editorStateFormula, editorStateToRecipe,
     insertQuickPiece, numberOperand, quickMulti, quickSingle, recipeToEditorState, type QuickFormula,
 } from '../utils/quickBuild';
 import { checkFormula } from '../utils/formulaCheck';
 import { tokenizeFormula } from '../utils/formulaTokens';
 
-const valid = (f: string) => checkFormula(f, tokenizeFormula(f), { functions: ['abs', 'sqrt', 'log10', 'exp', 'ceil', 'floor', 'round', 'min', 'max'] });
+const valid = (f: string) => checkFormula(f, tokenizeFormula(f), { functions: ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'] });
 
 describe('quickSingle (1 picked sensor)', () => {
     it('As-is, combine with a number, transforms; names use the shared brace rule', () => {
@@ -15,8 +15,8 @@ describe('quickSingle (1 picked sensor)', () => {
         expect(quickSingle('Flow (m3/h)', { kind: 'number', op: '*', value: '1.5' })).toMatchObject({ formula: '${Flow (m3/h)} * 1.5', ready: true, hasTopLevelOperator: true });
         expect(quickSingle('A', { kind: 'number', op: '-', value: '-5' }).formula).toBe('$A - (-5)');
         expect(quickSingle('A', { kind: 'number', op: '/', value: '2k' }).formula).toBe('$A / 2k');
-        expect(quickSingle('A', { kind: 'transform', transform: { fn: 'sqrt' } }).formula).toBe('sqrt($A)');
-        expect(quickSingle('A', { kind: 'transform', transform: { fn: 'log10' } }).formula).toBe('log10($A)');
+        expect(quickSingle('A', { kind: 'transform', transform: 'sqrt' }).formula).toBe('sqrt($A)');
+        expect(quickSingle('A', { kind: 'transform', transform: 'exp' }).formula).toBe('exp($A)');
     });
 
     it('stays dim ("Enter the number") until a number is typed', () => {
@@ -24,13 +24,12 @@ describe('quickSingle (1 picked sensor)', () => {
         expect(quickSingle('A', { kind: 'number', op: '+', value: 'abc' }).ready).toBe(false);
     });
 
-    it('round writes round(X * 10^N) / 10^N -- never round(0.01, X)', () => {
-        expect(quickSingle('A', { kind: 'transform', transform: { fn: 'round', decimals: 2 } }).formula).toBe('round($A * 100) / 100');
-        expect(quickSingle('A', { kind: 'transform', transform: { fn: 'round', decimals: 0 } }).formula).toBe('round($A)');
+    it('offers exactly abs, sqrt and exp (no rounding transform)', () => {
+        expect([...QUICK_TRANSFORMS]).toEqual(['abs', 'sqrt', 'exp']);
     });
 
     it('everything it writes passes the check', () => {
-        for (const c of [null, { kind: 'number', op: '^', value: '2' }, { kind: 'transform', transform: { fn: 'abs' } }, { kind: 'transform', transform: { fn: 'round', decimals: 3 } }] as const) {
+        for (const c of [null, { kind: 'number', op: '^', value: '2' }, { kind: 'transform', transform: 'abs' }, { kind: 'transform', transform: 'sqrt' }, { kind: 'transform', transform: 'exp' }] as const) {
             expect(valid(quickSingle('A', c).formula)).toBeNull();
         }
     });
@@ -56,18 +55,22 @@ describe('quickMulti (2+ picked sensors)', () => {
         expect(quickMulti(three, { combine: 'efficiency', inputTag: 'A' }).ready).toBe(false);
     });
 
-    it('Then wrap; round wraps in the engine form', () => {
-        expect((quickMulti(['A', 'B'], { combine: null, wrap: { fn: 'abs' } }) as QuickFormula)).toMatchObject({ formula: 'abs($A + $B)', hasTopLevelOperator: false });
-        expect((quickMulti(['A', 'B'], { combine: 'sum', wrap: { fn: 'round', decimals: 2 } }) as QuickFormula).formula).toBe('round(($A + $B) * 100) / 100');
+    it('Then wrap with a kept transform; the result passes the check', () => {
+        expect((quickMulti(['A', 'B'], { combine: null, wrap: 'abs' }) as QuickFormula)).toMatchObject({ formula: 'abs($A + $B)', hasTopLevelOperator: false });
+        const wrapped = (quickMulti(['A', 'B'], { combine: 'sum', wrap: 'sqrt' }) as QuickFormula).formula;
+        expect(wrapped).toBe('sqrt($A + $B)');
+        expect(valid(wrapped)).toBeNull();
     });
 
-    it('Average / Median are BLOCKS with their own decimals, never a round() wrap', () => {
-        const b = quickMulti(three, { combine: 'mean', wrap: { fn: 'round', decimals: 2 }, blockDecimals: 1 });
+    it('Average / Median are BLOCKS with no rounding and no wrap', () => {
+        const b = quickMulti(three, { combine: 'mean', wrap: 'abs' });
         expect(b).toEqual({
-            kind: 'block', type: 'mean', sources: three, decimals: 1,
+            kind: 'block', type: 'mean', sources: three,
             label: 'Average of 3 sensors · missing values skipped', ready: true, hint: null,
         });
-        expect(quickMulti(['A', 'B'], { combine: 'median' })).toMatchObject({ kind: 'block', type: 'median', decimals: null, label: 'Median of 2 sensors · missing values skipped' });
+        expect(b).not.toHaveProperty('decimals');
+        expect(quickMulti(['A', 'B'], { combine: 'median' })).toMatchObject({ kind: 'block', type: 'median', label: 'Median of 2 sensors · missing values skipped' });
+        // An old recipe's block decimals still reach the config / preview.
         expect(blockOperationConfig('mean', 1, 'AVG')).toEqual({ mode: 'multi', multiOp: { type: 'mean', decimals: 1 }, customName: 'AVG' });
         expect(blockOperationConfig('median', null)).toEqual({ mode: 'multi', multiOp: { type: 'median' } });
         expect(blockPreviewAggregate({ type: 'mean', sources: ['A', 'B'], decimals: 2 })).toEqual({ type: 'mean', sources: ['A', 'B'], decimals: 2 });
@@ -90,8 +93,8 @@ describe('numberOperand / applyTransform', () => {
         expect(numberOperand('$A')).toBeNull();
     });
     it('transforms', () => {
-        expect(applyTransform('$A + $B', { fn: 'ceil' })).toBe('ceil($A + $B)');
-        expect(applyTransform('$A', { fn: 'round', decimals: 99 })).toBe('round($A * 1000000000000000) / 1000000000000000');
+        expect(applyTransform('$A + $B', 'exp')).toBe('exp($A + $B)');
+        expect(applyTransform(' $A ', 'abs')).toBe('abs($A)');
     });
 });
 
@@ -109,31 +112,35 @@ describe('recipe <-> editor state', () => {
     const op = (sources: string[], operationConfig: SpecialSensorRecipe & { kind: 'operation' } extends { operationConfig: infer C } ? C : never): SpecialSensorRecipe =>
         ({ kind: 'operation', tag: 'S', sourceSensors: sources, operationConfig });
 
-    it('a formula opens with its "Round the result" split off', () => {
+    it('a formula opens as its full stored text (an old round() is not split off)', () => {
         expect(recipeToEditorState({ kind: 'formula', tag: 'S', formula: 'round(($A + $B) * 100) / 100' }))
-            .toEqual({ mode: 'formula', text: '$A + $B', roundDecimals: 2, note: null });
+            .toEqual({ mode: 'formula', text: 'round(($A + $B) * 100) / 100', note: null });
         expect(recipeToEditorState({ kind: 'formula', tag: 'S', formula: '$A * 2' }))
-            .toEqual({ mode: 'formula', text: '$A * 2', roundDecimals: null, note: null });
+            .toEqual({ mode: 'formula', text: '$A * 2', note: null });
     });
 
     it('Average / Median open as blocks; a legacy Sum opens as A + B + C with a note', () => {
         expect(recipeToEditorState(op(['A', 'B'], { mode: 'multi', multiOp: { type: 'mean', decimals: 2 } })))
             .toEqual({ mode: 'block', type: 'mean', sources: ['A', 'B'], decimals: 2, note: null });
         expect(recipeToEditorState(op(['A', 'B c', 'C'], { mode: 'multi', multiOp: { type: 'sum' } })))
-            .toEqual({ mode: 'formula', text: '$A + ${B c} + $C', roundDecimals: null, note: 'legacy-sum' });
+            .toEqual({ mode: 'formula', text: '$A + ${B c} + $C', note: 'legacy-sum' });
+        // A legacy Sum with decimals shows its rounding as round() text.
+        expect(recipeToEditorState(op(['A', 'B'], { mode: 'multi', multiOp: { type: 'sum', decimals: 2 } })))
+            .toEqual({ mode: 'formula', text: 'round(($A + $B) * 100) / 100', note: 'legacy-sum' });
     });
 
     it('a one-sensor operation opens as its formula', () => {
         expect(recipeToEditorState(op(['A'], { mode: 'single', singleOp: { type: 'add', value: -2 } }))).toMatchObject({ text: '$A + (-2)', note: 'legacy-operation' });
         expect(recipeToEditorState(op(['A'], { mode: 'single', singleOp: { type: 'sqrt', value: 0 } }))).toMatchObject({ text: 'sqrt($A)' });
         const r = recipeToEditorState(op(['A'], { mode: 'single', singleOp: { type: 'round', value: 2 } }));
-        expect(r).toMatchObject({ mode: 'formula', text: '$A', roundDecimals: 2 });
+        expect(r).toEqual({ mode: 'formula', text: 'round($A * 100) / 100', note: 'legacy-operation' });
         expect(editorStateFormula(r as never)).toBe('round($A * 100) / 100');
     });
 
     it('editorStateToRecipe: formula / block recipes; an UNTOUCHED legacy recipe is returned as it was', () => {
-        expect(editorStateToRecipe({ mode: 'formula', text: ' $A + 1 ', roundDecimals: 1, note: null }, 'S'))
-            .toEqual({ kind: 'formula', tag: 'S', formula: 'round(($A + 1) * 10) / 10' });
+        // Saved trimmed, as before the rounding row was removed.
+        expect(editorStateToRecipe({ mode: 'formula', text: ' $A + 1 ', note: null }, 'S'))
+            .toEqual({ kind: 'formula', tag: 'S', formula: '$A + 1' });
         expect(editorStateToRecipe({ mode: 'block', type: 'median', sources: ['A', 'B'], decimals: null, note: null }, 'S'))
             .toEqual({ kind: 'operation', tag: 'S', sourceSensors: ['A', 'B'], operationConfig: { mode: 'multi', multiOp: { type: 'median' }, customName: 'S' } });
         const legacy = op(['A', 'B'], { mode: 'multi', multiOp: { type: 'sum' }, customName: 'S' });

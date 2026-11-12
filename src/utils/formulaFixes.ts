@@ -1,8 +1,6 @@
 import type { FormulaIssue } from '../types/formula';
 import { sensorRef } from './specialSensorNaming';
-import { bracketPairAt, excelRoundCalls, tokenizeFormula, type FormulaToken } from './formulaTokens';
-import { convertExcelRoundCall, roundPlaces } from './formulaRounding';
-import { ZERO_ARG_FUNCTIONS } from './formulaCheck';
+import { bracketPairAt, tokenizeFormula, type FormulaToken } from './formulaTokens';
 
 /** Pure editing helpers of the Formula editor (fix buttons, Wrap/Unwrap, palette insertion, 'Replace…'): each returns the edit to apply (new text + selection), applied as a native insertion so Ctrl+Z works. Rust decides validity. */
 
@@ -20,11 +18,9 @@ export type FormulaFix =
 export interface FixContext {
     /** Rust's function list (`preview_formula`'s `functions`), for "Use sqrt". */
     functions?: readonly string[] | null;
-    /** Rust's `converted_formula` for this text (a `round_excel` refusal whose whole conversion passes the gate); preferred over the local rewrite. */
-    convertedFormula?: string | null;
 }
 
-/** Fix for `issue` on `text`, or null; keyed on the stable issue code (front-end check or Rust), e.g. unclosed_bracket 'Add )', round_excel, unknown_sensor 'Replace…'. */
+/** Fix for `issue` on `text`, or null; keyed on the stable issue code (front-end check or Rust), e.g. unclosed_bracket 'Add )', unknown_sensor 'Replace…'. */
 export function fixForIssue(text: string, issue: FormulaIssue | null | undefined, ctx: FixContext = {}): FormulaFix | null {
     if (!issue) return null;
     const tokens = tokenizeFormula(text);
@@ -47,21 +43,6 @@ export function fixForIssue(text: string, issue: FormulaIssue | null | undefined
             const caret = first.end + 3;
             return { kind: 'edit', label: 'Insert ×', edit: { text: next, selection: [caret, caret] } };
         }
-        case 'round_excel': {
-            if (ctx.convertedFormula && ctx.convertedFormula !== text) {
-                const label = roundFixLabel(text, range);
-                const c = ctx.convertedFormula;
-                return { kind: 'edit', label, edit: { text: c, selection: [c.length, c.length] } };
-            }
-            if (!range) return null;
-            const call = excelRoundCalls(text).find(c => c.start === range[0]);
-            if (!call) return null;
-            const rep = convertExcelRoundCall(text, call);
-            if (rep === null) return null;
-            const next = text.slice(0, call.start) + rep + text.slice(call.end);
-            const caret = call.start + rep.length;
-            return { kind: 'edit', label: roundFixLabel(text, range), edit: { text: next, selection: [caret, caret] } };
-        }
         case 'unknown_function': {
             if (!range || !ctx.functions?.length) return null;
             const word = text.slice(range[0], range[1]);
@@ -71,15 +52,14 @@ export function fixForIssue(text: string, issue: FormulaIssue | null | undefined
             const needsBracket = tok?.kind === 'word' && !tok.call;
             const piece = needsBracket ? `${guess}()` : guess;
             const next = text.slice(0, range[0]) + piece + text.slice(range[1]);
-            // Inside the new brackets, or after `pi()` / `e()`.
-            const caret = range[0] + guess.length + (needsBracket ? (ZERO_ARG_FUNCTIONS.has(guess) ? 2 : 1) : 0);
+            // Inside the new brackets.
+            const caret = range[0] + guess.length + (needsBracket ? 1 : 0);
             return { kind: 'edit', label: `Use ${guess}`, edit: { text: next, selection: [caret, caret] } };
         }
         case 'fn_no_bracket': {
             if (!range) return null;
-            const name = text.slice(range[0], range[1]);
             const next = `${text.slice(0, range[1])}()${text.slice(range[1])}`;
-            const caret = range[1] + (ZERO_ARG_FUNCTIONS.has(name) ? 2 : 1);
+            const caret = range[1] + 1;
             return { kind: 'edit', label: 'Add ( )', edit: { text: next, selection: [caret, caret] } };
         }
         case 'unmatched_close': {
@@ -104,15 +84,6 @@ function unclosedClosers(tokens: FormulaToken[]): string {
         else if (t.kind === 'close' && stack.length > 0) stack.pop();
     }
     return stack.reverse().map(o => (o === '(' ? ')' : ']')).join('');
-}
-
-function roundFixLabel(text: string, range: [number, number] | undefined): string {
-    const call = range ? excelRoundCalls(text).find(c => c.start === range[0]) : undefined;
-    const places = call ? roundPlaces(text.slice(call.n[0], call.n[1])) : null;
-    if (places === 0) return 'Use round(…)';
-    if (places === null) return 'Use round(… * 10ⁿ) / 10ⁿ';
-    const scale = 10 ** places;
-    return `Use round(… * ${scale}) / ${scale}`;
 }
 
 /** The sensor an `unknown_sensor` issue is about: the reference at its range,
@@ -218,10 +189,9 @@ export function insertOperator(text: string, start: number, end: number, op: '+'
     return insertPiece(text, start, end, op);
 }
 
-/** Function pill: wraps the selection (`abs(<selection>)`), or inserts `fn()` with the caret inside; `pi()` / `e()` take no value. */
+/** Function pill: wraps the selection (`abs(<selection>)`), or inserts `fn()` with the caret inside. */
 export function insertFunction(text: string, start: number, end: number, name: string): FormulaEdit {
     const [a, b] = start <= end ? [start, end] : [end, start];
-    if (ZERO_ARG_FUNCTIONS.has(name)) return insertPiece(text, a, b, `${name}()`);
     const inner = text.slice(a, b);
     if (!inner) return insertPiece(text, a, b, `${name}()`, name.length + 1);
     const edit = insertPiece(text, a, b, `${name}(${inner})`, name.length + 1);

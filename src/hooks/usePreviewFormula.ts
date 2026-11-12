@@ -60,7 +60,6 @@ export interface UsePreviewFormulaReturn {
     /** The engine's function list (sticky across answers and editors). */
     functions: string[] | null;
     limits: FormulaPreviewLimits | null;
-    converted_formula: string | null;
     /** A call for the current input is scheduled or in flight. */
     loading: boolean;
     /** The answer above belongs to the current input. */
@@ -185,7 +184,6 @@ export function usePreviewFormula(options: UsePreviewFormulaOptions): UsePreview
         period: r?.period ?? null,
         functions,
         limits,
-        converted_formula: r?.converted_formula ?? null,
         loading,
         isCurrent: answer.key !== null && answer.key === key,
         stale: answer.stale,

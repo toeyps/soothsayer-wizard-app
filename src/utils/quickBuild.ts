@@ -2,16 +2,16 @@ import type { SensorOperationConfig, SpecialSensorRecipe } from '../types';
 import type { FormulaPreviewAggregate } from '../types/formula';
 import { sensorRef } from './specialSensorNaming';
 import { hasTopLevelOperator, isFormulaAtom } from './formulaTokens';
-import { roundExpression, splitRoundResult, withRoundResult } from './formulaRounding';
+import { roundExpression, withRoundResult } from './formulaRounding';
 import { numberValue } from './formulaCheck';
 import { insertPiece, type FormulaEdit } from './formulaFixes';
 
-/** Pure generators returning formula text or, for Average/Median, the aggregate block. Sensors follow Rust `sensor_ref_token` (`sensorRef`); a block rounds via `multiOp.decimals`, not a `round()` wrap. */
+/** Pure generators returning formula text or, for Average/Median, the aggregate block. Sensors follow Rust `sensor_ref_token` (`sensorRef`). */
 
 export type QuickNumberOp = '+' | '-' | '*' | '/' | '^';
-/** The transforms the card offers (`log10` = log₁₀; `sqrt` = √). */
-export type QuickTransform = 'abs' | 'sqrt' | 'log10' | 'exp' | 'ceil' | 'floor' | 'round';
-export const QUICK_TRANSFORMS: readonly QuickTransform[] = ['abs', 'sqrt', 'log10', 'exp', 'ceil', 'floor', 'round'];
+/** The transforms the card offers (`sqrt` = √). */
+export type QuickTransform = 'abs' | 'sqrt' | 'exp';
+export const QUICK_TRANSFORMS: readonly QuickTransform[] = ['abs', 'sqrt', 'exp'];
 export const QUICK_NUMBER_OPS: readonly QuickNumberOp[] = ['+', '-', '*', '/', '^'];
 
 /** Formula text Quick build would write. */
@@ -32,7 +32,6 @@ export interface QuickBlock {
     kind: 'block';
     type: 'mean' | 'median';
     sources: string[];
-    decimals: number | null;
     /** "Average of 3 sensors · missing values skipped". */
     label: string;
     ready: boolean;
@@ -41,16 +40,9 @@ export interface QuickBlock {
 
 export type QuickResult = QuickFormula | QuickBlock;
 
-/** A transform choice: `round` carries its decimals (0 = whole number). */
-export interface QuickTransformChoice {
-    fn: QuickTransform;
-    decimals?: number;
-}
-
-/** `fn(inner)` for a transform, or the round form. */
-export function applyTransform(inner: string, choice: QuickTransformChoice): string {
-    if (choice.fn === 'round') return roundExpression(inner, clampDecimals(choice.decimals ?? 0));
-    return `${choice.fn}(${inner.trim()})`;
+/** `fn(inner)` for a transform. */
+export function applyTransform(inner: string, fn: QuickTransform): string {
+    return `${fn}(${inner.trim()})`;
 }
 
 function clampDecimals(d: number): number {
@@ -74,7 +66,7 @@ export function numberOperand(value: string): string | null {
 export type QuickSingleChoice =
     | null
     | { kind: 'number'; op: QuickNumberOp; value: string }
-    | { kind: 'transform'; transform: QuickTransformChoice };
+    | { kind: 'transform'; transform: QuickTransform };
 
 export function quickSingle(tag: string, choice: QuickSingleChoice): QuickFormula {
     const a = sensorRef(tag);
@@ -98,9 +90,7 @@ export interface QuickMultiChoice {
     /** Efficiency %: which picked sensor is the input (= 100 %). */
     inputTag?: string | null;
     /** "Then wrap" (not for blocks). */
-    wrap?: QuickTransformChoice | null;
-    /** Rounding of an Average / Median block (`multiOp.decimals`); null = none. */
-    blockDecimals?: number | null;
+    wrap?: QuickTransform | null;
 }
 
 const BLOCK_NAME = { mean: 'Average', median: 'Median' } as const;
@@ -113,9 +103,8 @@ export function quickMulti(tags: readonly string[], choice: QuickMultiChoice): Q
     const { combine } = choice;
 
     if (combine === 'mean' || combine === 'median') {
-        const decimals = choice.blockDecimals ?? null;
         return {
-            kind: 'block', type: combine, sources: [...tags], decimals,
+            kind: 'block', type: combine, sources: [...tags],
             label: `${BLOCK_NAME[combine]} of ${n} sensors · missing values skipped`,
             ready: true, hint: null,
         };
@@ -179,9 +168,9 @@ export function insertQuickPiece(text: string, start: number, end: number, piece
 }
 
 
-/** What the editor holds: free formula text + "Round the result", or a block. */
+/** What the editor holds: formula text, or a block (`decimals` only kept from an old recipe; no new block rounds). */
 export type FormulaEditorState =
-    | { mode: 'formula'; text: string; roundDecimals: number | null; note: FormulaEditorNote | null }
+    | { mode: 'formula'; text: string; note: FormulaEditorNote | null }
     | { mode: 'block'; type: 'mean' | 'median' | 'sum'; sources: string[]; decimals: number | null; note: FormulaEditorNote | null };
 
 /** Why an opened recipe differs from its stored form: `legacy-sum` (Sum as `A + B + C`), `legacy-operation` (shown as a formula). */
@@ -192,8 +181,7 @@ const SINGLE_BINARY: Record<string, QuickNumberOp> = { add: '+', subtract: '-', 
 /** A stored recipe as editor state (Manage › Edit). */
 export function recipeToEditorState(recipe: SpecialSensorRecipe): FormulaEditorState {
     if (recipe.kind === 'formula') {
-        const { body, decimals } = splitRoundResult(recipe.formula);
-        return { mode: 'formula', text: body, roundDecimals: decimals, note: null };
+        return { mode: 'formula', text: recipe.formula, note: null };
     }
     const cfg = recipe.operationConfig;
     const sources = recipe.sourceSensors ?? [];
@@ -201,26 +189,26 @@ export function recipeToEditorState(recipe: SpecialSensorRecipe): FormulaEditorS
         const type = cfg.multiOp?.type ?? 'sum';
         const decimals = cfg.multiOp?.decimals ?? null;
         if (type === 'mean' || type === 'median') return { mode: 'block', type, sources: [...sources], decimals, note: null };
-        // A legacy Sum expands to editable text; its decimals become 'Round the result'.
-        return { mode: 'formula', text: sources.map(sensorRef).join(' + '), roundDecimals: decimals, note: 'legacy-sum' };
+        // A legacy Sum expands to editable text; its rounding shows as round().
+        return { mode: 'formula', text: withRoundResult(sources.map(sensorRef).join(' + '), decimals), note: 'legacy-sum' };
     }
     const op = cfg.singleOp;
     const a = sensorRef(sources[0] ?? '');
-    if (!op) return { mode: 'formula', text: a, roundDecimals: null, note: 'legacy-operation' };
+    if (!op) return { mode: 'formula', text: a, note: 'legacy-operation' };
     const bin = SINGLE_BINARY[op.type];
     if (bin) {
         const operand = numberOperand(String(op.value)) ?? String(op.value);
-        return { mode: 'formula', text: `${a} ${bin} ${operand}`, roundDecimals: null, note: 'legacy-operation' };
+        return { mode: 'formula', text: `${a} ${bin} ${operand}`, note: 'legacy-operation' };
     }
     if (op.type === 'round') {
-        return { mode: 'formula', text: a, roundDecimals: clampDecimals(op.value), note: 'legacy-operation' };
+        return { mode: 'formula', text: roundExpression(a, clampDecimals(op.value)), note: 'legacy-operation' };
     }
-    return { mode: 'formula', text: `${op.type}(${a})`, roundDecimals: null, note: 'legacy-operation' };
+    return { mode: 'formula', text: `${op.type}(${a})`, note: 'legacy-operation' };
 }
 
-/** The stored formula text of a formula-mode state (round setting applied). */
+/** The stored formula text of a formula-mode state. */
 export function editorStateFormula(state: Extract<FormulaEditorState, { mode: 'formula' }>): string {
-    return withRoundResult(state.text, state.roundDecimals).formula;
+    return state.text.trim();
 }
 
 /** Returns the ORIGINAL recipe while the editor still matches `recipeToEditorState(original)`. So a metadata-only save never turns an operation into a formula or sends trained models back to Incomplete. */

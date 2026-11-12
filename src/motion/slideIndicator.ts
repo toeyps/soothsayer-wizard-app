@@ -14,7 +14,6 @@ const TARGETS: Target[] = [
     { container: '.special-sensor-tabs', active: 'button.is-on' },
     { container: '.fg-sheet-seg', active: 'button.on' },
     { container: '.filter-op-seg', active: 'button.is-on' },
-    { container: '.fx-seg', active: 'button.on' },
 ];
 const SEL = TARGETS.map(t => t.container).join(',');
 

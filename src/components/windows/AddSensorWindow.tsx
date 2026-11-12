@@ -1063,7 +1063,7 @@ export default function AddSensorWindow() {
             component: snap.component.trim() || 'Uncategorized',
         });
         if (snap.state.mode === 'formula') {
-            // The stored text: the field's own text with "Round the result" applied.
+            // The stored text: the field's own text.
             const formula = editorStateFormula(snap.state);
             const newSensorName = await inv('evaluate_formula', { formula, customName: customName || null }) as string;
             return {
@@ -1072,7 +1072,7 @@ export default function AddSensorWindow() {
                 newRecipes: [{ kind: 'formula', tag: newSensorName, formula }],
             };
         }
-        // An Average / Median block: the aggregate path, rounding in `multiOp.decimals`.
+        // An Average / Median block: the aggregate path (an old block keeps its `multiOp.decimals`).
         const config = blockOperationConfig(snap.state.type, snap.state.decimals, customName);
         const sources = [...snap.state.sources];
         const newSensorName = await inv('calculate_new_sensor', { sensors: sources, config }) as string;

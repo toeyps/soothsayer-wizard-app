@@ -1,6 +1,5 @@
 import type { FormulaIssue } from '../types/formula';
 import { sensorRef } from './specialSensorNaming';
-import { ZERO_ARG_FUNCTIONS } from './formulaCheck';
 import type { FormulaEdit } from './formulaFixes';
 
 /** Autocomplete context of the Formula editor: what the caret can complete and what a pick replaces. `$...` / `${...` complete sensors; a word of 2+ ASCII letters completes sensors then functions; Ctrl+Space (`force`) also works on shorter words. `[start, end)` runs over the rest of the same name after the caret, so `${Name}` keeps no stray `}`. */
@@ -49,7 +48,7 @@ export function autocompleteContext(text: string, caret: number, opts: { force?:
 export type CompletionItem = { kind: 'sensor'; tag: string } | { kind: 'function'; name: string };
 
 /** Apply a picked suggestion: `$TAG` / `${TAG}` (shared brace rule), or
- *  `fn()` with the caret inside (`pi()` / `e()`: caret after). */
+ *  `fn()` with the caret inside. */
 export function applyCompletion(text: string, ctx: AutocompleteContext, item: CompletionItem): FormulaEdit {
     let piece: string;
     let caretIn: number;
@@ -60,7 +59,7 @@ export function applyCompletion(text: string, ctx: AutocompleteContext, item: Co
         // Keep an existing bracket right after the word: `abs|(` -> `abs(`.
         const hasBracket = /^\s*[([]/.test(text.slice(ctx.end));
         piece = hasBracket ? item.name : `${item.name}()`;
-        caretIn = hasBracket ? piece.length : ZERO_ARG_FUNCTIONS.has(item.name) ? piece.length : piece.length - 1;
+        caretIn = hasBracket ? piece.length : piece.length - 1;
     }
     const next = text.slice(0, ctx.start) + piece + text.slice(ctx.end);
     const caret = ctx.start + caretIn;

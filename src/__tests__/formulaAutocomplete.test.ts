@@ -36,19 +36,19 @@ describe('applyCompletion', () => {
         expect(applyCompletion('${Fl}', braced, { kind: 'sensor', tag: 'FLOW' }).text).toBe('$FLOW');
     });
 
-    it('writes fn() with the caret inside; pi() / e() with the caret after; keeps an existing bracket', () => {
+    it('writes fn() with the caret inside; keeps an existing bracket', () => {
         const ctx = autocompleteContext('$A * sq', 7)!;
         expect(applyCompletion('$A * sq', ctx, { kind: 'function', name: 'sqrt' })).toEqual({ text: '$A * sqrt()', selection: [10, 10] });
-        expect(applyCompletion('$A * pi', autocompleteContext('$A * pi', 7)!, { kind: 'function', name: 'pi' }).selection).toEqual([9, 9]);
+        expect(applyCompletion('$A * ex', autocompleteContext('$A * ex', 7)!, { kind: 'function', name: 'exp' })).toEqual({ text: '$A * exp()', selection: [9, 9] });
         const withBracket = autocompleteContext('sq($A)', 2)!;
         expect(applyCompletion('sq($A)', withBracket, { kind: 'function', name: 'sqrt' })).toEqual({ text: 'sqrt($A)', selection: [4, 4] });
     });
 });
 
 describe('functionSuggestions', () => {
-    const fns = ['abs', 'sqrt', 'sign', 'sin', 'asin', 'pi'];
+    const fns = ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'];
     it('prefix matches first, then contains; none for a $ context', () => {
-        expect(functionSuggestions({ kind: 'word', query: 'si', start: 0, end: 2 }, fns)).toEqual(['sign', 'sin', 'asin']);
+        expect(functionSuggestions({ kind: 'word', query: 'p', start: 0, end: 1 }, fns)).toEqual(['pow', 'exp']);
         expect(functionSuggestions({ kind: 'sensor', query: 'si', start: 0, end: 3 }, fns)).toEqual([]);
         expect(functionSuggestions({ kind: 'any', query: '', start: 0, end: 0 }, fns, 2)).toEqual(['abs', 'sqrt']);
     });

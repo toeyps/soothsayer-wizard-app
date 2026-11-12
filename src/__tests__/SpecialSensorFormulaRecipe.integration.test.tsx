@@ -90,7 +90,7 @@ vi.mock('../hooks/useAppMenu', () => ({ useAppMenu: () => {} }));
 import { env, resetEnv } from './helpers/healthEnv';
 import { createCrossFeatureBackend, type CrossFeatureBackend } from './helpers/crossFeatureBackend';
 import { plantDataset } from './helpers/fakeHealthRust';
-import { rustScanRefs } from './helpers/fakeRustSession';
+import { fakeRemovedIssue, OFFERED_FORMULA_FUNCTIONS, rustScanRefs } from './helpers/fakeRustSession';
 import {
     BASE_FG, bmw, bmwEl, enterSp, markComplete, model, openHealth, openSettings, pickInModal, pill, selectSensor, settle, train,
 } from './helpers/healthWorkbench';
@@ -122,7 +122,7 @@ function fakeConvertLegacyRound(formula: string): string {
     });
 }
 
-const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'ln', 'log', 'log10', 'round', 'min', 'max', 'ceil', 'floor', 'sin', 'cos', 'tan', 'pi', 'e'];
+const FUNCTIONS = OFFERED_FORMULA_FUNCTIONS;
 
 let be: CrossFeatureBackend;
 /** Calls of the two phase-5 commands (the shared fakes do not know them). */
@@ -143,8 +143,11 @@ function makeBackend() {
             }
             if (cmd === 'preview_formula') {
                 extraCalls.push({ cmd, args: structuredClone(args) });
-                const base = { stats: null, timestamps: [], values: [], period: null, functions: FUNCTIONS, limits: { max_len: 2000, max_depth: 32 }, converted_formula: null };
+                const base = { stats: null, timestamps: [], values: [], period: null, functions: FUNCTIONS, limits: { max_len: 2000, max_depth: 32 } };
                 if (typeof args.formula !== 'string') return { ok: true, issues: [], ...base };
+                // lib.rs `formula_gate`: a removed function is refused (both replace modes), ranged on its name.
+                const removed = fakeRemovedIssue(args.formula);
+                if (removed) return { ok: false, issues: [{ code: 'removed_function', message: removed.message, range: removed.range }], ...base };
                 // The same gate Create uses (session fake's validate_formula), generation-pinned.
                 const v: any = await be.session.invoke('validate_formula', { formula: args.formula, expectedGeneration: args.expectedGeneration });
                 return v.valid ? { ok: true, issues: [], ...base } : { ok: false, issues: [{ code: 'parse_error', message: v.error }], ...base };
@@ -467,11 +470,12 @@ describe('(a) opening an old workspace with a legacy round($TAG1, 2) special sen
         // Manage describes the engine form in words; the legacy text is gone.
         expect(screen.getByTestId('add-sensor-window').textContent).toContain('$TAG1 · rounded to 2 decimals');
         expect(screen.getByTestId('add-sensor-window').textContent).not.toContain(LEGACY);
-        // Edit opens it as `$TAG1` with "Round the result" = 2 (the stored text, split back).
+        // Edit (locked: a model uses it) shows the full stored text, no rounding row; the value still replays.
         await act(async () => { fireEvent.click(ASW().getByLabelText(/^Edit (.* · )?SPR$/)); });
         await settle(100);
-        expect(formulaBox().value).toBe('$TAG1');
-        expect(within(ASW().getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { checked: true }).textContent).toBe('2');
+        expect(formulaBox().value).toBe(CONVERTED);
+        expect(formulaBox().readOnly).toBe(true);
+        expect(ASW().queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
         await act(async () => { fireEvent.click(ASW().getByText('Cancel edit')); });
         await settle(50);
         await closeAddSensorWindow();

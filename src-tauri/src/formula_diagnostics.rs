@@ -26,6 +26,7 @@ pub(crate) const BAD_NUMBER: &str = "bad_number";
 pub(crate) const BAD_CHAR: &str = "bad_char";
 pub(crate) const AGG_TOO_FEW: &str = "agg_too_few";
 pub(crate) const ROUND_EXCEL: &str = "round_excel";
+pub(crate) const REMOVED_FUNCTION: &str = "removed_function";
 /// Aggregate block: `type` is not sum / mean / median.
 pub(crate) const UNKNOWN_OPERATION: &str = "unknown_operation";
 /// Aggregate block: `decimals` is not a whole number in 0..=MAX_OPERATION_DECIMALS.
@@ -338,15 +339,12 @@ fn calls_named<'a>(toks: &'a [Tok], name: &'a str) -> impl Iterator<Item = Call>
     })
 }
 
-/// Accepted argument counts of every engine function, for picking WHICH call
-/// of a name is the wrong one.
+/// Accepted argument counts of every offered function (removed ones answer `removed_function`), for picking WHICH call is wrong.
 fn arity(name: &str) -> Option<(usize, usize)> {
     Some(match name {
-        "pi" | "e" => (0, 0),
-        "log" | "round" => (1, 2),
         "min" | "max" => (1, usize::MAX),
         "pow" => (2, 2),
-        n if crate::FORMULA_FUNCTIONS.contains(&n) => (1, 1),
+        n if crate::OFFERED_FORMULA_FUNCTIONS.contains(&n) => (1, 1),
         _ => return None,
     })
 }
@@ -483,6 +481,26 @@ pub(crate) fn eval_issue(
         (UNKNOWN_FUNCTION, bare_word_range(toks, name).or_else(|| call_word_range(toks, name)))
     };
     issue_at(formula, code, message, range)
+}
+
+/// Functions the engine still evaluates (saved sensors keep replaying) but the editor no longer accepts (user decision 2026-11-12).
+pub(crate) const REMOVED_FORMULA_FNS: &[&str] = &[
+    "ln", "log", "log10", "sign", "int", "round", "ceil", "floor",
+    "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
+    "pi", "e",
+];
+
+/// First use of a removed function (with or without brackets), ranged on its name.
+pub(crate) fn removed_function(formula: &str) -> Option<FormulaIssue> {
+    let ctx = Ctx::new(formula);
+    ctx.toks.iter().find(|t| t.kind == TokKind::Word && REMOVED_FORMULA_FNS.contains(&t.text.as_str())).map(|t| {
+        let message = format!(
+            "Formula error: '{}' is no longer available. Available functions: {}.",
+            t.text,
+            crate::FORMULA_FUNCTION_LIST
+        );
+        issue_at(formula, REMOVED_FUNCTION, message, Some((t.start, t.end)))
+    })
 }
 
 /// Worded about the divided part: `$A / 0` never has a value, even where the whole formula does.
@@ -717,5 +735,44 @@ mod tests {
         }
         // A non-convertible outer call keeps its shape; the inner one converts.
         assert_eq!(convert_legacy_round("round(round($A, 2), 0.5)"), "round(round($A * 100) / 100, 0.5)");
+    }
+
+    #[test]
+    fn removed_function_hits_every_removed_name_with_or_without_brackets() {
+        for name in REMOVED_FORMULA_FNS {
+            for f in [format!("{name}($A)"), format!("$A * {name}"), format!("1 + {name}()")] {
+                let issue = removed_function(&f).unwrap_or_else(|| panic!("{f}"));
+                assert_eq!(issue.code, REMOVED_FUNCTION, "{f}");
+                let r = issue.range.unwrap();
+                let units: Vec<u16> = f.encode_utf16().collect();
+                assert_eq!(String::from_utf16(&units[r[0]..r[1]]).unwrap(), *name, "{f}");
+                assert_eq!(
+                    issue.message,
+                    format!("Formula error: '{name}' is no longer available. Available functions: abs, sqrt, pow, exp, min, max."),
+                );
+            }
+        }
+        // The first one is reported, ranged after a Thai name.
+        let f = "${ค่า แรง} + sqrt($A) + ln($A) + round($A)";
+        let issue = removed_function(f).unwrap();
+        assert!(issue.message.contains("'ln'"), "{}", issue.message);
+        let r = issue.range.unwrap();
+        let units: Vec<u16> = f.encode_utf16().collect();
+        assert_eq!(String::from_utf16(&units[r[0]..r[1]]).unwrap(), "ln");
+    }
+
+    #[test]
+    fn removed_function_ignores_sensor_names_and_kept_functions() {
+        for f in [
+            "$round + 1",
+            "${ln} * 2",
+            "${x round(1, 2)} - $pi",
+            "$e + ${sin cos}",
+            "abs($A) + sqrt($B) + pow($A, 2) + exp($A) + min($A, $B) + max($A, $B)",
+            "ROUND($A)",
+            "lnn($A) + rounds",
+        ] {
+            assert_eq!(removed_function(f), None, "{f}");
+        }
     }
 }

@@ -151,6 +151,26 @@ fn eval(data: &ColumnarData, formula: &str) -> Result<Vec<f64>, String> {
     compute_formula_sensor(data, formula, Some("__qa_out"), false).map(|(_, c)| c)
 }
 
+/// Engine math through replay (replace = true); create gives the same bits, or refuses a removed function (2026-11-12).
+fn calc(data: &ColumnarData, formula: &str) -> Result<Vec<f64>, String> {
+    let replayed = compute_formula_sensor(data, formula, Some("__qa_out"), true).map(|(_, c)| c);
+    let created = eval(data, formula);
+    if crate::formula_diagnostics::removed_function(formula).is_some() {
+        let err = created.unwrap_err();
+        assert!(err.contains("is no longer available"), "{formula}: {err}");
+        if let Err(r) = &replayed {
+            assert_eq!(r, &err, "{formula}: a replay that fails says removed too");
+        }
+    } else {
+        match (&replayed, &created) {
+            (Ok(a), Ok(b)) => assert!(same_bits(a, b), "{formula}: create differs from replay"),
+            (Err(a), Err(b)) => assert_eq!(a, b, "{formula}"),
+            _ => panic!("{formula}: replay {replayed:?} vs create {created:?}"),
+        }
+    }
+    replayed
+}
+
 /// `SensorOperationConfig` from the exact JSON the frontend sends (`recomputeCall`), so the camelCase keys are tested.
 fn op_config(json: serde_json::Value) -> SensorOperationConfig {
     serde_json::from_value(json).expect("frontend operation config must deserialize")
@@ -225,7 +245,7 @@ fn a01_every_formula_case_matches_an_independent_calculation_on_every_row() {
     for seed in [1u64, 7, 42] {
         let data = dataset(seed);
         for (formula, names, f) in FORMULA_CASES {
-            let got = eval(&data, formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
+            let got = calc(&data, formula).unwrap_or_else(|e| panic!("{formula}: {e}"));
             let inputs: Vec<Vec<f64>> = names.iter().map(|n| col(&data, n)).collect();
             let want = reference(&inputs, f);
             assert_col_eq(&got, &want, 1e-12, &format!("seed {seed}: {formula}"));
@@ -256,7 +276,7 @@ fn a03_division_by_zero_and_domain_errors_are_missing_never_inf_or_a_number() {
     let zero_rows: Vec<usize> = (0..b.len()).filter(|&r| b[r] == 0.0).collect();
     assert!(!zero_rows.is_empty());
     for formula in ["$A / $B", "$C / $B", "log10($B)", "pow($B, -1)", "$B ^ -2"] {
-        let got = eval(&data, formula).unwrap();
+        let got = calc(&data, formula).unwrap();
         for &r in &zero_rows {
             assert!(got[r].is_nan(), "{formula}: row {r} (B == 0) gave {}", got[r]);
         }
@@ -328,9 +348,9 @@ fn a07_unary_minus_binds_tighter_than_power_pinned_convention() {
 fn a08_log_is_base_10_pinned() {
     let data = dataset(12);
     let c = col(&data, "C");
-    let got = eval(&data, "log($C)").unwrap();
+    let got = calc(&data, "log($C)").unwrap();
     assert_col_eq(&got, &reference(&[c.clone()], &|v| v[0].log10()), 1e-12, "log == log10");
-    let got = eval(&data, "log(2, $C)").unwrap();
+    let got = calc(&data, "log(2, $C)").unwrap();
     assert_col_eq(&got, &reference(&[c], &|v| v[0].log2()), 1e-12, "log(base, x)");
 }
 
@@ -339,7 +359,7 @@ fn a08_log_is_base_10_pinned() {
 fn a09_bug_natural_log_is_available_as_ln() {
     let data = dataset(13);
     let c = col(&data, "C");
-    let got = eval(&data, "ln($C)").expect("ln must be a supported function");
+    let got = calc(&data, "ln($C)").expect("a saved ln($C) must still replay");
     assert_col_eq(&got, &reference(&[c], &|v| v[0].ln()), 1e-12, "ln($C)");
 }
 
@@ -365,8 +385,6 @@ fn a10_bug_unknown_identifier_or_function_is_refused() {
 fn a10b_the_refusal_names_the_problem_and_matches_the_editor_check() {
     let data = dataset(14);
     for (formula, needle) in [
-        ("$A * pi", "Write pi() for"),
-        ("$A * e", "Write e() for"),
         ("sqr($A)", "unknown function 'sqr'"),
         ("sqrt($A, 2)", "sqrt takes 1 value but was given 2"),
         ("$A + x", "unknown name 'x'"),
@@ -379,26 +397,35 @@ fn a10b_the_refusal_names_the_problem_and_matches_the_editor_check() {
         assert!(!v.valid, "{formula}: the editor must flag it too");
         assert_eq!(v.error.as_deref(), Some(err.as_str()), "{formula}: same message in the editor");
     }
+    // `pi` / `e` without brackets: replay, create and the editor all say they are removed.
+    for (formula, name) in [("$A * pi", "'pi'"), ("$A * e", "'e'")] {
+        let err = compute_formula_sensor(&data, formula, Some("__qa_out"), true).unwrap_err();
+        assert!(err.contains(&format!("{name} is no longer available")), "{formula}: {err}");
+        let v = crate::validate_formula_against(&data, formula);
+        assert!(!v.valid && v.code == Some("removed_function"), "{formula}: {:?}", v.error);
+        assert_eq!(v.error.as_deref(), Some(err.as_str()), "{formula}: same message in the editor");
+        assert_eq!(v.error, eval(&data, formula).err(), "{formula}: same message on create");
+    }
     // NaN / inf RESULTS are still "missing" rows, not an error.
     assert!(eval(&data, "($A - $A) / ($B - $B)").unwrap().iter().all(|v| v.is_nan()));
 }
 
-/// Spreadsheet-style `round($A, 2)` would be read as `round(modulus, x)`; it must be refused, naming the formula to type instead.
+/// Spreadsheet-style `round($A, 2)` would be read as `round(modulus, x)`; it must be refused, not silently mis-rounded.
 #[test]
 fn a11_bug_round_with_decimals_rounds_the_sensor() {
     let data = dataset(15);
     let a = col(&data, "A");
-    let err = eval(&data, "round($A, 2)").unwrap_err();
-    assert_eq!(
-        err,
-        "Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead."
-    );
-    let got = eval(&data, "round($A * 100) / 100").unwrap();
+    let created = eval(&data, "round($A, 2)").unwrap_err();
+    assert!(created.contains("'round' is no longer available"), "{created}");
+    let err = compute_formula_sensor(&data, "round($A, 2)", Some("__qa_out"), true).unwrap_err();
+    assert_eq!(err, created, "replay says removed too");
+    // `round` is removed from the editor; saved forms still replay.
+    let got = calc(&data, "round($A * 100) / 100").unwrap();
     assert_col_eq(&got, &reference(std::slice::from_ref(&a), &|v| (v[0] * 100.0).round() / 100.0), 1e-12, "suggested formula");
     // The documented forms are untouched.
-    let got = eval(&data, "round(0.01, $A)").unwrap();
+    let got = calc(&data, "round(0.01, $A)").unwrap();
     assert_col_eq(&got, &reference(std::slice::from_ref(&a), &|v| (v[0] * 100.0).round() / 100.0), 1e-9, "round(0.01, $A)");
-    let got = eval(&data, "round($A)").unwrap();
+    let got = calc(&data, "round($A)").unwrap();
     assert_col_eq(&got, &reference(&[a], &|v| v[0].round()), 0.0, "round($A)");
 }
 
@@ -1086,7 +1113,7 @@ fn e01_every_formula_the_frontend_engine_builds_evaluates_to_the_intended_math()
         let formula = case["expression"].as_str().unwrap();
         let sensors: Vec<String> = case["sensors"].as_array().unwrap().iter().map(|s| s.as_str().unwrap().to_string()).collect();
         let id = case["ref"].as_str().unwrap();
-        let got = eval(&data, formula).unwrap_or_else(|e| panic!("{id}: {formula}: {e}"));
+        let got = calc(&data, formula).unwrap_or_else(|e| panic!("{id}: {formula}: {e}"));
         let inputs: Vec<Vec<f64>> = sensors.iter().map(|s| col(&data, s)).collect();
         let f = engine_ref(id);
         let want = reference(&inputs, &*f);
@@ -1102,6 +1129,6 @@ fn e02_bug_round_wrap_stores_the_nearest_double_to_the_decimal_value() {
         vec![Some("2024-01-01T00:00:00".into())],
         vec![vec![NAN], vec![1.0], vec![0.13]],
     );
-    let got = eval(&data, "round(($A + $B) * 100) / 100").unwrap();
+    let got = calc(&data, "round(($A + $B) * 100) / 100").unwrap();
     assert_eq!(got[0], 1.13, "got {:?}", got[0]);
 }

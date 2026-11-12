@@ -1672,7 +1672,7 @@ describe('F. Load workspace flow', () => {
 
     // Rust refuses unknown names/functions in formulas; a saved formula that was once accepted (`$A * pi`) gave an empty sensor.
     it('F35b. a saved formula Rust now refuses (`$sensor_a * pi`) does not break the open: the toast names the sensor WITH Rust’s reason, it is dropped from the plot and its recipe is kept to fix in Manage', async () => {
-      const PI_MSG = "Formula error: unknown name 'pi'. Write pi() for π.";
+      const PI_MSG = "Formula error: 'pi' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.";
       mockLoadWorkspace.mockResolvedValue({
         ...baseLoadedWs,
         selectedSensors: ['sensor_a', 'CIRCLE'],

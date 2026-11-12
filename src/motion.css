@@ -239,10 +239,9 @@ input, select, textarea { transition: border-color var(--dur-fast) var(--ease-ou
 .special-sensor-tabs[data-ind]::after { border-radius: 6px; background: var(--surface-hi); }
 .special-sensor-tabs[data-ind] button.is-on { background: transparent; }
 .special-sensor-tabs[data-ind] > button { position: relative; z-index: 1; }
-.fg-sheet-seg[data-ind]::after, .filter-op-seg[data-ind]::after, .fx-seg[data-ind]::after { border-radius: 5px; background: var(--blue-bg); border: 1px solid var(--blue-line); box-sizing: border-box; }
-.fg-sheet-seg[data-ind] button.on, .filter-op-seg[data-ind] button.is-on, .fx-seg[data-ind] button.on { background: transparent; border-color: transparent; }
-.fx-seg[data-ind]::after { background: var(--accent-muted); border-color: transparent; }
-.fg-sheet-seg[data-ind] > button, .filter-op-seg[data-ind] > button, .fx-seg[data-ind] > * { position: relative; z-index: 1; }
+.fg-sheet-seg[data-ind]::after, .filter-op-seg[data-ind]::after { border-radius: 5px; background: var(--blue-bg); border: 1px solid var(--blue-line); box-sizing: border-box; }
+.fg-sheet-seg[data-ind] button.on, .filter-op-seg[data-ind] button.is-on { background: transparent; border-color: transparent; }
+.fg-sheet-seg[data-ind] > button, .filter-op-seg[data-ind] > button { position: relative; z-index: 1; }
 
 /* 16. Generic (presence.ts): anything that appears reveals, anything that changes in place replays a short fade,
    anything that leaves fades / collapses / crossfades. Fills, borders and the resize handle ease too. */

@@ -82,7 +82,7 @@ vi.mock('../components/windows/SpecialSensorFormulaEditor', async (importOrigina
         }
         const formula = (text: string, name?: string, issue: unknown = null) => {
             standIn.formula = text;
-            props.onReport({ state: { mode: 'formula', text, roundDecimals: null, note: null }, issue, edited: false });
+            props.onReport({ state: { mode: 'formula', text, note: null }, issue, edited: false });
             if (name !== undefined) setField('Name', name);
         };
         const block = (name?: string) => {
@@ -297,7 +297,7 @@ describe('AddSensorWindow', () => {
         expect(last(explorerProps).sensors).toContain('CALC1');
     });
 
-    it('a rounded block stores its own decimals (multiOp.decimals), never a round() wrap', async () => {
+    it('a block keeps decimals only when the editor holds them (an old recipe): stored as multiOp.decimals, never a round() wrap', async () => {
         mockInvoke.mockImplementation((cmd: string) => (cmd === 'calculate_new_sensor' ? Promise.resolve('AVG') : Promise.resolve([])));
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1', 'TAG2']);
@@ -315,21 +315,21 @@ describe('AddSensorWindow', () => {
         });
     });
 
-    it('a formula with "Round the result" is created with the STORED text (round(X * 100) / 100)', async () => {
+    it('a formula is created with exactly the editor text (no rounding wrapper is added)', async () => {
         mockInvoke.mockImplementation((cmd: string) => (cmd === 'evaluate_formula' ? Promise.resolve('R') : Promise.resolve([])));
         render(<AddSensorWindow />);
         await deliverSensorsData(['TAG1', 'TAG2']);
         await act(async () => {
-            last(editorProps).onReport({ state: { mode: 'formula', text: '$TAG1 + $TAG2', roundDecimals: 2, note: null }, issue: null, edited: false });
+            last(editorProps).onReport({ state: { mode: 'formula', text: '$TAG1 + $TAG2', note: null }, issue: null, edited: false });
         });
         fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'R' } });
         fireEvent.click(screen.getByText('set-description'));
         fireEvent.click(screen.getByText('set-unit'));
         fireEvent.click(screen.getByText('set-component'));
         await act(async () => { fireEvent.click(screen.getByText('Add sensor')); await Promise.resolve(); await Promise.resolve(); });
-        expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: 'round(($TAG1 + $TAG2) * 100) / 100', customName: 'R' });
+        expect(mockInvoke).toHaveBeenCalledWith('evaluate_formula', { formula: '$TAG1 + $TAG2', customName: 'R' });
         expect(mockEmit).toHaveBeenCalledWith('add-sensor-selection', expect.objectContaining({
-            newRecipes: [{ kind: 'formula', tag: 'R', formula: 'round(($TAG1 + $TAG2) * 100) / 100' }],
+            newRecipes: [{ kind: 'formula', tag: 'R', formula: '$TAG1 + $TAG2' }],
         }));
     });
 
@@ -690,7 +690,7 @@ describe('AddSensorWindow', () => {
             if (cmd === 'extract_formula_refs') {
                 return Promise.resolve((args.formulas as string[]).map((f: string) => (chainRefs as any)[f] ?? ['TAG1']));
             }
-            if (cmd === 'evaluate_formula') return Promise.reject("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e().");
+            if (cmd === 'evaluate_formula') return Promise.reject("Formula error: unknown function 'foo'. Available functions: abs, sqrt, pow, exp, min, max.");
             return Promise.resolve([]);
         });
         await openManage({ specialSensorRecipes: [chainA] });
@@ -968,13 +968,14 @@ describe('AddSensorWindow multi-project isolation', () => {
 
 import { sensorRef } from '../utils/specialSensorNaming';
 import { createFakeRust } from './helpers/fakeRustSession';
+import { __resetPreviewFormulaModule, PREVIEW_DEBOUNCE_MS } from '../hooks/usePreviewFormula';
 
 const tkey = (s: string) => s.trim().toLowerCase();
 
 /** Fake backend (`helpers/fakeRustSession`, mirrors `lib.rs`); `derived` columns are copies of the first raw column. */
-function fakeRust(opts: { raw?: string[]; derived?: string[]; failRemove?: boolean; failEval?: string[] } = {}) {
+function fakeRust(opts: { raw?: string[]; derived?: string[]; failRemove?: boolean; failEval?: string[]; preview?: boolean } = {}) {
     const raw = opts.raw ?? ['TAG1', 'TAG2'];
-    const inner = createFakeRust({ headers: ['timestamp', ...raw], columns: raw.map(() => [1, 2, 3, 4]) });
+    const inner = createFakeRust({ headers: ['timestamp', ...raw], columns: raw.map(() => [1, 2, 3, 4]) }, { preview: opts.preview });
     for (const name of opts.derived ?? []) {
         void inner.invoke('evaluate_formula', { formula: sensorRef(raw[0]), customName: name });
     }
@@ -2731,7 +2732,8 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
     const badA = { kind: 'formula' as const, tag: 'A', formula: 'round($TAG1, 2)' };
     const healthyH = { kind: 'formula' as const, tag: 'H', formula: '$TAG1 * 2' };
     const onA = { kind: 'formula' as const, tag: 'B', formula: '${A} + 1' };
-    const ROUND_MSG = 'Formula error: round($TAG1, 2) does not round to 2 decimal places. Write round($TAG1 * 100) / 100 instead.';
+    // validate_formula's reason for the refused replay: round is a removed function.
+    const ROUND_MSG = "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.";
     const ROUND_TEXT = ROUND_MSG.replace(/\.$/, '');
     const meta = [
         { tag: 'A', description: 'Rounded', unit: 'bar', component: 'Uncategorized' },
@@ -2770,14 +2772,14 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect((screen.getByLabelText('Name') as HTMLInputElement).readOnly).toBe(true);
         expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
 
-        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1 * 100) / 100' } });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 100 / 100' } });
         await save();
 
         const evals = rust.calls.filter(c => c.cmd === 'evaluate_formula');
-        expect(evals.map(c => c.args)).toEqual([{ formula: 'round($TAG1 * 100) / 100', customName: 'A', replace: true, expectedGeneration: rust.inner.generation() }]);
+        expect(evals.map(c => c.args)).toEqual([{ formula: '$TAG1 * 100 / 100', customName: 'A', replace: true, expectedGeneration: rust.inner.generation() }]);
         expect(rust.has('A')).toBe(true);
         expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
-            recipe: { kind: 'formula', tag: 'A', formula: 'round($TAG1 * 100) / 100' }, recomputed: ['A'], workspaceId: 'ws-1',
+            recipe: { kind: 'formula', tag: 'A', formula: '$TAG1 * 100 / 100' }, recomputed: ['A'], workspaceId: 'ws-1',
             repaired: true, affectedTags: ['A'],
         }));
         expect(mockEmit.mock.calls.some(c => c[0] === 'rename-special-sensor')).toBe(false);
@@ -2836,23 +2838,58 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(screen.getByRole('status').textContent).toMatch(/Updated Rounded · A/);
     });
 
-    it('a "fix" that is still the spreadsheet round(x, n) is held back before saving: the check line names it with the engine-form fix, nothing is written, the sensor stays flagged', async () => {
-        disk.models = [usingA];
-        const rust = await open({ specialSensorRecipes: [badA], models: [usingA] });
-        await edit('A');
-        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1, 3)' } });
-        expect(screen.getByTestId('formula-check').textContent).toMatch(/round\(\$TAG1, 3\) does not round to 3 decimal places/);
-        expect(screen.getByTestId('edit-footer-hint').textContent).toMatch(/does not round to 3 decimal places/);
-        expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
-        await save();
-        expect(rust.has('A')).toBe(false);
-        expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
-        // The fix button writes the engine form.
-        fireEvent.click(within(screen.getByTestId('formula-check')).getByRole('button', { name: 'Use round(… * 1000) / 1000' }));
-        expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).value).toBe('round($TAG1 * 1000) / 1000');
-        await act(async () => { fireEvent.click(screen.getByText('Cancel edit')); });
-        await flush();
-        expect(screen.getByTestId('not-restored-A')).toBeTruthy();
+    it.each([
+        ['a legacy Sum with decimals', { kind: 'operation' as const, tag: 'A', sourceSensors: ['TAG1', 'TAG2'], operationConfig: { mode: 'multi' as const, multiOp: { type: 'sum' as const, decimals: 2 }, customName: 'A' } }, 'round(($TAG1 + $TAG2) * 100) / 100'],
+        ['a legacy single-op round', { kind: 'operation' as const, tag: 'A', sourceSensors: ['TAG1'], operationConfig: { mode: 'single' as const, singleOp: { type: 'round' as const, value: 1 }, customName: 'A' } }, 'round($TAG1 * 10) / 10'],
+    ])('%s opens as round(...) text the check refuses, yet a description-only save sends the stored recipe unchanged', async (_label, recipe, text) => {
+        __resetPreviewFormulaModule();
+        try {
+            const rust = await open({ specialSensorRecipes: [recipe] }, { preview: true });
+            await edit('A');
+            expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).value).toBe(text);
+            await act(async () => { await new Promise(r => setTimeout(r, PREVIEW_DEBOUNCE_MS + 30)); });
+            await flush();
+            expect(screen.getByTestId('formula-check').textContent).toContain(ROUND_TEXT);
+            fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Renamed text' } });
+            expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
+            await save();
+            expect(rust.calls.filter(c => WRITES.includes(c.cmd))).toHaveLength(0);
+            expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
+                recipe, recomputed: [], metadata: expect.objectContaining({ tag: 'A', description: 'Renamed text' }),
+            }));
+        } finally {
+            __resetPreviewFormulaModule();
+        }
+    });
+
+    it('a "fix" that still uses round is held back before saving: the check line says it is no longer available, nothing is written; without round it saves', async () => {
+        __resetPreviewFormulaModule();
+        try {
+            disk.models = [usingA];
+            const rust = await open({ specialSensorRecipes: [badA], models: [usingA] }, { preview: true });
+            await edit('A');
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round($TAG1 * 1000) / 1000' } });
+            await act(async () => { await new Promise(r => setTimeout(r, PREVIEW_DEBOUNCE_MS + 30)); });
+            await flush();
+            expect(rust.calls.some(c => c.cmd === 'preview_formula' && c.args.replace === true)).toBe(true);
+            expect(screen.getByTestId('formula-check').textContent).toContain(ROUND_TEXT);
+            expect(screen.getByTestId('edit-footer-hint').textContent).toContain("'round' is no longer available");
+            expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(true);
+            await save();
+            expect(rust.has('A')).toBe(false);
+            expect(mockEmit.mock.calls.some(c => c[0] === 'update-special-sensor')).toBe(false);
+            // No automatic fix for a removed function.
+            expect(within(screen.getByTestId('formula-check')).queryByRole('button', { name: /^Use / })).toBeNull();
+            // Deleting round lets it save.
+            fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '$TAG1 * 1000 / 1000' } });
+            await act(async () => { await new Promise(r => setTimeout(r, PREVIEW_DEBOUNCE_MS + 30)); });
+            await flush();
+            expect((screen.getByText('Save changes') as HTMLButtonElement).disabled).toBe(false);
+            await save();
+            expect(rust.has('A')).toBe(true);
+        } finally {
+            __resetPreviewFormulaModule();
+        }
     });
 
     it('a fix Rust still refuses at save time shows its message, writes nothing, and keeps the sensor flagged', async () => {
@@ -2927,7 +2964,7 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         expect(rust.has('B')).toBe(false);
         expect(rust.calls.filter(c => c.cmd === 'remove_sensor_columns')).toHaveLength(0); // no rollback
         const status = screen.getByRole('status').textContent ?? '';
-        expect(status).toMatch(/Restored Rounded · A\. On A · B still needs fixing: .*does not round to 2 decimal places.*\. 1 model\(s\) set back to Incomplete — train them again\.$/);
+        expect(status).toMatch(/Restored Rounded · A\. On A · B still needs fixing: .*'round' is no longer available.*\. 1 model\(s\) set back to Incomplete — train them again\.$/);
         expect(mockEmit).toHaveBeenCalledWith('update-special-sensor', expect.objectContaining({
             recipe: { kind: 'formula', tag: 'A', formula: '$TAG1 * 3' },
             recomputed: ['A'],
@@ -2936,11 +2973,11 @@ describe('AddSensorWindow: fixing a special sensor that could not be restored', 
         }));
         await flush();
         expect(screen.queryByTestId('not-restored-A')).toBeNull();
-        expect(screen.getByTestId('not-restored-B').getAttribute('title')).toMatch(/does not round to 2 decimal places/);
+        expect(screen.getByTestId('not-restored-B').getAttribute('title')).toMatch(/'round' is no longer available/);
         // B can now be fixed the same way.
         await edit('B');
         expect((screen.getByLabelText('Formula') as HTMLTextAreaElement).readOnly).toBe(false);
-        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: 'round(${A} * 100) / 100' } });
+        fireEvent.change(screen.getByLabelText('Formula'), { target: { value: '${A} * 100 / 100' } });
         await save();
         expect(rust.has('B')).toBe(true);
         expect(screen.queryByTestId('not-restored-B')).toBeNull();

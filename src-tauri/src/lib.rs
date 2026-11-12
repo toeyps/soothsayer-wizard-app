@@ -2848,27 +2848,24 @@ fn eval_extra_math_fn(name: &str, args: &[f64]) -> Option<f64> {
     }
 }
 
-/// `(name, argument count, example)` of every `eval_extra_math_fn` function,
-/// for the wrong-arity error message.
+/// `(name, argument count, example)` of the offered `eval_extra_math_fn` functions, for the wrong-arity message.
 const EXTRA_MATH_FNS: &[(&str, usize, &str)] = &[
     ("sqrt", 1, "sqrt($A)"),
     ("exp", 1, "exp($A)"),
-    ("log10", 1, "log10($A)"),
-    ("ln", 1, "ln($A)"),
     ("pow", 2, "pow($A, 2)"),
 ];
 
-/// fasteval built-ins that take arguments (`pi`/`e` are handled separately).
-const BUILTIN_FORMULA_FNS: &[&str] = &[
-    "int", "ceil", "floor", "abs", "sign", "log", "round", "min", "max", "sin", "cos", "tan",
-    "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
-];
+/// Offered fasteval built-ins, for the "needs a value in brackets" message.
+const BUILTIN_FORMULA_FNS: &[&str] = &["abs", "min", "max"];
 
-/// Shown with "unknown function" -- keep in sync with the Formula Syntax Help.
-const FORMULA_FUNCTION_LIST: &str =
-    "abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()";
+/// Shown with "unknown function" / "no longer available".
+const FORMULA_FUNCTION_LIST: &str = "abs, sqrt, pow, exp, min, max";
 
-/// All accepted function names; sent to the editor by `preview_formula` (a test checks it matches both lists).
+/// The functions the editor offers; sent by `preview_formula` (the rest of `FORMULA_FUNCTIONS` only replays saved sensors).
+const OFFERED_FORMULA_FUNCTIONS: &[&str] = &["abs", "sqrt", "pow", "exp", "min", "max"];
+
+/// Every name the engine evaluates (offered + removed; a test checks each replays).
+#[cfg(test)]
 const FORMULA_FUNCTIONS: &[&str] = &[
     "abs", "sqrt", "pow", "exp", "ln", "log", "log10", "round", "min", "max", "ceil", "floor",
     "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh",
@@ -3627,23 +3624,26 @@ mod special_sensor_tests {
         compute_formula_sensor(&dataset(), formula, Some("Z"), false).unwrap_err()
     }
 
+    /// Replay (replace = true) of a saved formula that does not compile.
+    fn replay_err_of(formula: &str) -> String {
+        compute_formula_sensor(&dataset(), formula, Some("Z"), true).unwrap_err()
+    }
+
     #[test]
     fn ln_is_the_natural_log_and_log_stays_base_10() {
+        // Removed from the editor: a saved sensor still replays (replace = true).
         let data = dataset_with(&["A"], vec![vec![std::f64::consts::E, 100.0, 0.0]]);
-        let (_, col) = compute_formula_sensor(&data, "ln($A)", Some("L"), false).unwrap();
+        let (_, col) = compute_formula_sensor(&data, "ln($A)", Some("L"), true).unwrap();
         assert!((col[0] - 1.0).abs() < 1e-12 && (col[1] - 100f64.ln()).abs() < 1e-12, "{col:?}");
         assert!(col[2].is_nan(), "ln(0) = -inf -> missing");
-        let (_, col) = compute_formula_sensor(&data, "log($A)", Some("L"), false).unwrap();
+        let (_, col) = compute_formula_sensor(&data, "log($A)", Some("L"), true).unwrap();
         assert!((col[1] - 2.0).abs() < 1e-12, "{col:?}");
+        let err = compute_formula_sensor(&data, "ln($A)", Some("L"), false).unwrap_err();
+        assert!(err.contains("'ln' is no longer available"), "{err}");
     }
 
     #[test]
     fn unknown_names_and_functions_are_refused_with_exact_messages() {
-        assert_eq!(err_of("$A * pi"), "Formula error: unknown name 'pi'. Write pi() for π.");
-        assert_eq!(
-            err_of("$A * e"),
-            "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…)."
-        );
         assert_eq!(
             err_of("$A + x"),
             "Formula error: unknown name 'x'. Write sensors as $Name, or ${Name} when the name has spaces or symbols."
@@ -3682,7 +3682,7 @@ mod special_sensor_tests {
     #[test]
     fn non_finite_results_stay_missing_rows_not_errors() {
         let data = dataset_with(&["A"], vec![vec![-1.0, 4.0, 0.0]]);
-        let (_, col) = compute_formula_sensor(&data, "sqrt($A) + ln($A)", Some("Z"), false).unwrap();
+        let (_, col) = compute_formula_sensor(&data, "sqrt($A) + ln($A)", Some("Z"), true).unwrap();
         assert!(same(&col, &[NAN, 2.0 + 4f64.ln(), NAN]), "{col:?}");
     }
 
@@ -3701,30 +3701,41 @@ mod special_sensor_tests {
 
     #[test]
     fn round_with_a_sensor_first_and_a_constant_second_is_refused() {
+        // The step-order guard still refuses on replay, answered as a removed function (never advice the editor refuses).
+        let removed = "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.";
+        for f in [
+            "round($A, 2)",
+            "round($A + $B, 1) * 3",
+            "round($A, 0)",
+            "round($A, 0.5)",
+            "round [ $A ; 3 ]",
+            "1 + round(round(0.1, $A), 2)",
+            "round(-$A, 2)",
+        ] {
+            assert_eq!(err_of(f), removed, "{f}");
+            assert_eq!(replay_err_of(f), removed, "{f}");
+        }
+        assert!(check_round_argument_order("round(min($A, $B), 2)").is_err());
+        assert!(check_round_argument_order("round(0.01, $A)").is_ok());
+        assert!(replay_err_of("ROUND($A, 2)").contains("unknown function 'ROUND'"));
+        assert!(replay_err_of("round(${Flow (m3/h)}, 2)").contains("Sensor not found"), "refs resolved first");
+    }
+
+    #[test]
+    fn replay_of_a_removed_function_that_does_not_compile_says_removed() {
         assert_eq!(
-            err_of("round($A, 2)"),
-            "Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead."
+            replay_err_of("$A * pi"),
+            "Formula error: 'pi' is no longer available. Available functions: abs, sqrt, pow, exp, min, max."
         );
         assert_eq!(
-            err_of("round($A + $B, 1) * 3"),
-            "Formula error: round($A + $B, 1) does not round to 1 decimal place. Write round(($A + $B) * 10) / 10 instead."
+            replay_err_of("$A * e"),
+            "Formula error: 'e' is no longer available. Available functions: abs, sqrt, pow, exp, min, max."
         );
-        assert_eq!(
-            err_of("round($A, 0)"),
-            "Formula error: round($A, 0) is not supported. Write round($A) to round to a whole number."
-        );
-        assert_eq!(
-            err_of("round($A, 0.5)"),
-            "Formula error: round($A, 0.5) is not supported. To round to the nearest step, put the step first: round(0.5, $A)."
-        );
-        // fasteval's other bracket / separator spellings, and nesting.
-        assert!(err_of("ROUND($A, 2)").contains("unknown function 'ROUND'"));
-        assert!(err_of("round [ $A ; 3 ]").contains("round($A, 3) does not round to 3 decimal places"));
-        assert!(err_of("1 + round(round(0.1, $A), 2)").contains("round(round(0.1, $A), 2)"));
-        assert!(err_of("round(min($A, $B), 2)").contains("Write round(min($A, $B) * 100) / 100"));
-        assert!(err_of("round(($A + 1), 2)").contains("Write round(($A + 1) * 100) / 100"));
-        assert!(err_of("round(-$A, 2)").contains("Write round((-$A) * 100) / 100"));
-        assert!(err_of("round(${Flow (m3/h)}, 2)").contains("Sensor not found"), "refs resolved first");
+        // A non-removed compile error keeps its own message.
+        assert!(replay_err_of("$A +").starts_with("Formula parse error"));
+        // One that compiles still replays with values.
+        let (_, col) = compute_formula_sensor(&dataset(), "ln($A)", Some("Z"), true).unwrap();
+        assert_eq!(col, vec![0.0, 2f64.ln(), 3f64.ln()]);
     }
 
     #[test]
@@ -3733,11 +3744,16 @@ mod special_sensor_tests {
             &["A", "B", "round", "x round(1, 2)"],
             vec![vec![1.234], vec![0.5], vec![7.0], vec![9.0]],
         );
-        let ok = |f: &str| compute_formula_sensor(&data, f, Some("Z"), false).unwrap_or_else(|e| panic!("{f}: {e}")).1[0];
+        let run = |f: &str, replace: bool| {
+            compute_formula_sensor(&data, f, Some("Z"), replace).unwrap_or_else(|e| panic!("{f}: {e}")).1[0]
+        };
+        // `round` replays only (removed from the editor).
+        let ok = |f: &str| run(f, true);
         assert_eq!(ok("round($A)"), 1.0);
         assert!((ok("round(0.01, $A)") - 1.23).abs() < 1e-12);
         assert_eq!(ok("round($B, $A)"), 1.0, "step from a sensor: fasteval semantics kept");
         assert!((ok("$A + round(1.5, 2)") - (1.234 + 1.5)).abs() < 1e-12, "no sensor on either side: a constant");
+        let ok = |f: &str| run(f, false);
         assert_eq!(ok("$round + 1"), 8.0, "a SENSOR called round is not the function");
         assert_eq!(ok("${x round(1, 2)} * 2"), 18.0, "text inside braces is a name");
     }
@@ -3784,7 +3800,7 @@ mod special_sensor_tests {
     #[test]
     fn validate_gives_the_same_verdict_and_message_as_compute() {
         let data = dataset();
-        for f in ["$A + $B", "$A * pi", "round($A, 2)", "$A +", "$nope + 1", "ln($A)", "$A(2)", "1 + 2"] {
+        for f in ["$A + $B", "$A * sqrt", "pow($A)", "$A +", "$nope + 1", "exp($A)", "ln($A)", "$A(2)", "1 + 2"] {
             let v = validate_formula_against(&data, f);
             match compute_formula_sensor(&data, f, Some("Z"), false) {
                 Ok(_) => assert!(v.valid && v.error.is_none(), "{f}: {:?}", v.error),
@@ -3795,6 +3811,12 @@ mod special_sensor_tests {
             }
         }
         assert_eq!(validate_formula_against(&data, "$B + $A + $b").referenced_sensors, vec!["B", "A", "b"]);
+        // Removed functions: create and validate give the same removed message.
+        for f in ["$A * pi", "round($A, 2)"] {
+            let v = validate_formula_against(&data, f);
+            assert_eq!(v.code, Some(formula_diagnostics::REMOVED_FUNCTION), "{f}");
+            assert_eq!(v.error, compute_formula_sensor(&data, f, Some("Z"), false).err(), "{f}");
+        }
     }
 
     #[test]
@@ -4099,20 +4121,32 @@ mod formula_gate_tests {
 
     #[test]
     fn the_function_list_is_exactly_the_engines_and_every_entry_compiles() {
-        let mut expected: Vec<&str> = BUILTIN_FORMULA_FNS.to_vec();
-        expected.extend(EXTRA_MATH_FNS.iter().map(|(n, _, _)| *n));
-        expected.extend(["pi", "e"]);
+        // The message lists cover exactly the offered functions.
+        let mut messages: Vec<&str> = BUILTIN_FORMULA_FNS.to_vec();
+        messages.extend(EXTRA_MATH_FNS.iter().map(|(n, _, _)| *n));
+        messages.sort_unstable();
+        let mut offered = OFFERED_FORMULA_FUNCTIONS.to_vec();
+        offered.sort_unstable();
+        assert_eq!(messages, offered);
         let mut got = FORMULA_FUNCTIONS.to_vec();
-        expected.sort_unstable();
         got.sort_unstable();
-        assert_eq!(got, expected);
+        // Offered + removed = the engine's list, with no overlap.
+        let removed = formula_diagnostics::REMOVED_FORMULA_FNS;
+        assert!(OFFERED_FORMULA_FUNCTIONS.iter().all(|f| FORMULA_FUNCTIONS.contains(f) && !removed.contains(f)));
+        let mut union: Vec<&str> = OFFERED_FORMULA_FUNCTIONS.iter().chain(removed.iter()).copied().collect();
+        union.sort_unstable();
+        assert_eq!(union, got);
+        assert_eq!(OFFERED_FORMULA_FUNCTIONS.join(", "), FORMULA_FUNCTION_LIST);
         for f in FORMULA_FUNCTIONS {
             let formula = match *f {
                 "pi" | "e" => format!("$A * {f}()"),
                 "pow" => "pow($A, 2)".to_string(),
                 _ => format!("{f}($A)"),
             };
-            assert!(compute_formula_sensor(&data(), &formula, Some("Z"), false).is_ok(), "{formula}");
+            // Every engine function replays; only the offered ones create.
+            assert!(compute_formula_sensor(&data(), &formula, Some("Z"), true).is_ok(), "{formula}");
+            let created = compute_formula_sensor(&data(), &formula, Some("Z"), false);
+            assert_eq!(created.is_ok(), OFFERED_FORMULA_FUNCTIONS.contains(f), "{formula}: {created:?}");
         }
     }
 
@@ -4143,8 +4177,10 @@ mod formula_gate_tests {
         assert_eq!(v.code, Some("unknown_sensor"));
         assert_eq!(v.range, Some([13, 18]));
         let v = validate_formula_against(&data(), "round($A, 2)");
-        assert_eq!(v.code, Some("round_excel"));
-        assert_eq!(v.range, Some([0, 12]));
+        assert_eq!(v.code, Some("removed_function"));
+        assert_eq!(v.range, Some([0, 5]));
+        let v = validate_formula_against(&data(), "${ค่า แรง} * pi");
+        assert_eq!((v.code, v.range), (Some("removed_function"), Some([13, 15])));
         let v = validate_formula_against(&data(), "$A + 1");
         assert!(v.valid && v.code.is_none() && v.range.is_none());
         // A valid verdict has no code / range keys.
@@ -4193,6 +4229,39 @@ mod formula_gate_tests {
         assert_eq!(old.multi_op.unwrap().decimals, None);
         assert_eq!(round_to_decimals(1.005, 2.0), (1.005f64 * 100.0).round() / 100.0);
         assert_eq!(round_to_decimals(-0.25, 1.0), -0.3);
+    }
+
+    #[test]
+    fn removed_functions_are_refused_by_validate_and_preview_in_both_modes() {
+        for (f, name) in [("ln($A)", "ln"), ("$A * pi", "pi"), ("round($A, 2)", "round"), ("${ค่า แรง} + sin($A)", "sin")] {
+            let v = validate_formula_against(&data(), f);
+            assert_eq!(v.code, Some(formula_diagnostics::REMOVED_FUNCTION), "{f}");
+            let r = v.range.unwrap();
+            let units: Vec<u16> = f.encode_utf16().collect();
+            assert_eq!(String::from_utf16(&units[r[0]..r[1]]).unwrap(), name, "{f}");
+            for replace in [false, true] {
+                let p = build_formula_preview_with(&data(), Some(f), None, None, replace, &never_cancelled).unwrap();
+                assert!(!p.ok, "{f} replace={replace}");
+                assert_eq!(p.issues[0].code, formula_diagnostics::REMOVED_FUNCTION, "{f} replace={replace}");
+                assert_eq!(p.issues[0].range, v.range, "{f} replace={replace}");
+                assert_eq!(Some(&p.issues[0].message), v.error.as_ref(), "{f}");
+                assert_eq!(p.functions, OFFERED_FORMULA_FUNCTIONS);
+            }
+        }
+        // Kept functions pass the editor.
+        assert!(validate_formula_against(&data(), "abs($A) + sqrt($A) + pow($A, 2) + exp($A) + min($A, 1) + max($A, 1)").valid);
+    }
+
+    #[test]
+    fn a_saved_sensor_with_a_removed_function_still_replays() {
+        let (_, col) = compute_formula_sensor(&data(), "ln($A)", Some("Z"), true).unwrap();
+        assert_eq!(col, vec![1.5f64.ln(), 4f64.ln()]);
+        let (_, col) = compute_formula_sensor(&data(), "round($A) + floor(${ค่า แรง}) * pi()", Some("Z"), true).unwrap();
+        assert_eq!(col[0], 2.0 + 2.0 * std::f64::consts::PI);
+        assert!(col[1].is_nan(), "missing input -> missing");
+        // Create refuses the same text.
+        let err = compute_formula_sensor(&data(), "ln($A)", Some("Z"), false).unwrap_err();
+        assert!(err.contains("'ln' is no longer available"), "{err}");
     }
 }
 
@@ -4342,8 +4411,6 @@ fn formula_eval_error_message(
         );
     }
     match name.as_str() {
-        "pi" => "Formula error: unknown name 'pi'. Write pi() for π.".to_string(),
-        "e" => "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…).".to_string(),
         n if BUILTIN_FORMULA_FNS.contains(&n) => {
             format!("Formula error: {} needs a value in brackets, e.g. {}($A).", n, n)
         }
@@ -4358,8 +4425,7 @@ fn formula_eval_error_message(
     }
 }
 
-/// Refuses `round(<sensor expr>, <constant>)`: fasteval's `round(step, x)` rounds x to a multiple of step, so `round($A, 2)` would silently store 0, A or 2A.
-/// Refused (code `round_excel`) with the formula to type. `round(x)`, `round(step, $A)`, `round($A, $B)` and sensor-free rounds pass; `convert_legacy_formula` converts old text.
+/// Replay guard: fasteval's `round(step, x)` would silently turn a saved `round($A, 2)` into 0, A or 2A, so it is refused (`convert_legacy_formula` converts old text first).
 fn check_round_argument_order(formula: &str) -> Result<(), FormulaIssue> {
     let chars: Vec<char> = formula.chars().collect();
     let spans = scan_sensor_refs(formula);
@@ -4367,16 +4433,10 @@ fn check_round_argument_order(formula: &str) -> Result<(), FormulaIssue> {
     let Some(call) = excel_round_calls(&chars, &in_ref, &spans).into_iter().next() else {
         return Ok(());
     };
-    let text = |a: usize, b: usize| chars[a..b].iter().collect::<String>().trim().to_string();
-    let message = round_order_message(
-        &text(call.x.0, call.x.1),
-        &text(call.n.0, call.n.1),
-        is_formula_atom(&chars, &in_ref, &spans, call.x.0, call.x.1),
-    );
     Err(formula_diagnostics::issue_at(
         formula,
         formula_diagnostics::ROUND_EXCEL,
-        message,
+        "Formula error: round(value, decimals) is not supported.",
         Some((call.start, call.end)),
     ))
 }
@@ -4520,35 +4580,6 @@ fn round_places(n: &str) -> Option<u32> {
         .map(|v| v as u32)
 }
 
-/// Message for a refused `round(x, n)`, with `x` and `n` as typed; `x_is_simple` = can multiply without brackets.
-fn round_order_message(x: &str, n: &str, x_is_simple: bool) -> String {
-    let places = round_places(n);
-    match places {
-        Some(0) => format!(
-            "Formula error: round({}, {}) is not supported. Write round({}) to round to a whole number.",
-            x, n, x
-        ),
-        Some(p) => {
-            let scale = 10u64.pow(p);
-            let xw = if x_is_simple { x.to_string() } else { format!("({})", x) };
-            format!(
-                "Formula error: round({}, {}) does not round to {} decimal place{}. Write round({} * {}) / {} instead.",
-                x,
-                n,
-                p,
-                if p == 1 { "" } else { "s" },
-                xw,
-                scale,
-                scale
-            )
-        }
-        None => format!(
-            "Formula error: round({}, {}) is not supported. To round to the nearest step, put the step first: round({}, {}).",
-            x, n, n, x
-        ),
-    }
-}
-
 /// Refusal for a formula with no sensor reference; shared by `validate_formula` and `compute_formula_sensor`.
 const FORMULA_NO_REFS_ERROR: &str =
     "Formula contains no sensor references. Use $SensorName or ${Sensor Name} syntax.";
@@ -4631,6 +4662,10 @@ fn formula_gate(
         return Err(issue);
     }
     let src_idx = resolve_formula_sources(headers, formula)?;
+    // Editor-only gate, so an edited sensor can't keep a removed function either; replay never comes here.
+    if let Some(issue) = formula_diagnostics::removed_function(formula) {
+        return Err(issue);
+    }
     let compiled = compile_formula(formula)?;
     if !replace {
         if let Some(issue) = create_only_formula_issue(formula) {
@@ -4716,8 +4751,15 @@ fn compute_formula_sensor(
         return Err(format!("A sensor named '{}' already exists", name));
     }
 
-    // 4. Parse once and prove it evaluates (refuses a bad formula up front).
-    let compiled = compile_formula(formula)?;
+    // 4. Parse once and prove it evaluates. Create refuses removed functions, as the editor does;
+    // a saved one that does not compile says so too, never compile advice the editor would refuse.
+    let removed = formula_diagnostics::removed_function(formula);
+    if !replace {
+        if let Some(issue) = removed {
+            return Err(issue.into());
+        }
+    }
+    let compiled = compile_formula(formula).map_err(|e| String::from(removed.unwrap_or(e)))?;
     // Only a create gets the create-only refusals; replay must keep restoring old recipes.
     if !replace {
         if let Some(issue) = create_only_formula_issue(formula) {
@@ -4826,15 +4868,13 @@ struct FormulaPreview {
     values: Vec<Option<f64>>,
     /// `[first, last]` timestamp text of the dataset, same format as `timestamps`; null if not ok or no parseable time.
     period: Option<[String; 2]>,
-    /// Every engine function name (the editor's suggestion / error list).
+    /// The offered function names (the editor's suggestion / error list).
     functions: &'static [&'static str],
     limits: FormulaPreviewLimits,
-    /// Set only for a `round_excel` refusal when converting every spreadsheet-order round passes the gate; offered as the fix.
-    converted_formula: Option<String>,
 }
 
 impl FormulaPreview {
-    fn refused(issue: FormulaIssue, converted_formula: Option<String>) -> Self {
+    fn refused(issue: FormulaIssue) -> Self {
         FormulaPreview {
             ok: false,
             issues: vec![issue],
@@ -4842,9 +4882,8 @@ impl FormulaPreview {
             timestamps: Vec::new(),
             values: Vec::new(),
             period: None,
-            functions: FORMULA_FUNCTIONS,
+            functions: OFFERED_FORMULA_FUNCTIONS,
             limits: FormulaPreviewLimits { max_len: MAX_FORMULA_LEN, max_depth: MAX_FORMULA_DEPTH },
-            converted_formula,
         }
     }
 }
@@ -4874,18 +4913,13 @@ fn build_formula_preview_with(
         (None, None) => return Err("BAD_REQUEST: send formula or aggregate".to_string()),
         (Some(f), None) => match formula_gate(&data.headers, f, replace) {
             Ok((compiled, src_idx)) => eval_formula_column(data, &compiled, &src_idx, cancelled)?,
-            Err(issue) => {
-                let converted = (issue.code == formula_diagnostics::ROUND_EXCEL)
-                    .then(|| formula_diagnostics::convert_legacy_round(f))
-                    .filter(|c| c != f && formula_gate(&data.headers, c, replace).is_ok());
-                return Ok(FormulaPreview::refused(issue, converted));
-            }
+            Err(issue) => return Ok(FormulaPreview::refused(issue)),
         },
         (None, Some(a)) => {
             let op = MultiOperation { op_type: a.op_type.clone(), decimals: a.decimals };
             match check_multi_operation(&data.headers, &a.sources, &op, !replace) {
                 Ok(idx) => compute_multi_column(data, &idx, &op, cancelled)?,
-                Err(issue) => return Ok(FormulaPreview::refused(issue, None)),
+                Err(issue) => return Ok(FormulaPreview::refused(issue)),
             }
         }
     };
@@ -4927,9 +4961,8 @@ fn build_formula_preview_with(
         timestamps,
         values,
         period: dataset_period_text(data),
-        functions: FORMULA_FUNCTIONS,
+        functions: OFFERED_FORMULA_FUNCTIONS,
         limits: FormulaPreviewLimits { max_len: MAX_FORMULA_LEN, max_depth: MAX_FORMULA_DEPTH },
-        converted_formula: None,
     })
 }
 

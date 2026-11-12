@@ -1,5 +1,6 @@
 //! Formula editor and Quick build, Rust side (in-crate: functions are private).
-//! Pins: issue codes with UTF-16 ranges; preview == validate == Create/Save; bounded preview; decimals; div_zero/agg_too_few are create-only.
+//! Pins: issue codes with UTF-16 ranges; preview == validate == Create/Save; bounded preview; decimals; div_zero/agg_too_few are create-only;
+//! removed functions (2026-11-12) are editor/create refusals, replay still computes them.
 
 use crate::csv_processor::ColumnarData;
 use crate::formula_diagnostics::{self as fd, convert_legacy_round};
@@ -63,6 +64,19 @@ fn same_bits(a: &[f64], b: &[f64]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x.is_nan() && y.is_nan()) || x.to_bits() == y.to_bits())
 }
 
+/// The replay gate before its removed-function message: limits, references, compile (incl. the round guard).
+fn replay_gate(data: &ColumnarData, f: &str) -> Result<(), fd::FormulaIssue> {
+    if let Some(issue) = crate::formula_limit_issue(f) {
+        return Err(issue);
+    }
+    crate::resolve_formula_sources(&data.headers, f)?;
+    crate::compile_formula(f).map(|_| ())
+}
+
+fn replay_code(data: &ColumnarData, f: &str) -> Option<&'static str> {
+    replay_gate(data, f).err().map(|i| i.code)
+}
+
 fn state_with(data: ColumnarData) -> (AppState, u64) {
     let state = AppState(RwLock::new(None));
     let generation = install_session(&state, data).unwrap();
@@ -76,12 +90,13 @@ const CODE_CASES: &[(&str, &str, Option<&str>)] = &[
     ("$A + nope", "unknown_function", Some("nope")),
     ("ROUND($A)", "unknown_function", Some("ROUND")),
     ("$A * abs", "fn_no_bracket", Some("abs")),
-    ("$A * pi", "fn_no_bracket", Some("pi")),
+    ("$A * pi", "removed_function", Some("pi")),
     ("$A * sqrt", "fn_no_bracket", Some("sqrt")),
     ("pow($A)", "bad_arg_count", Some("pow($A)")),
     ("abs($A) + abs($A, 1)", "bad_arg_count", Some("abs($A, 1)")),
     ("sqrt($A, 2)", "bad_arg_count", Some("sqrt($A, 2)")),
-    ("pi(2) * $A", "bad_arg_count", Some("pi(2)")),
+    ("pi(2) * $A", "removed_function", Some("pi")),
+    ("${x😀} + sin($A)", "removed_function", Some("sin")),
     ("${ค่าแรงดัน} + $nope", "unknown_sensor", Some("$nope")),
     ("${x😀} * ${Missing (bar)}", "unknown_sensor", Some("${Missing (bar)}")),
     ("($A + 1", "unclosed_bracket", Some("(")),
@@ -101,9 +116,10 @@ const CODE_CASES: &[(&str, &str, Option<&str>)] = &[
     ("$A + 1.2.3", "bad_number", Some("1.2.3")),
     ("$A @ 2", "bad_char", Some("@")),
     ("$A = 2", "bad_char", Some("=")),
-    ("round($A, 2)", "round_excel", Some("round($A, 2)")),
-    ("1 + round(${ค่าแรงดัน}, 1) * 3", "round_excel", Some("round(${ค่าแรงดัน}, 1)")),
-    ("round [ $A ; 3 ]", "round_excel", Some("round [ $A ; 3 ]")),
+    // Spreadsheet-order round: the editor refuses `round` itself (round_excel is only the replay guard).
+    ("round($A, 2)", "removed_function", Some("round")),
+    ("1 + round(${ค่าแรงดัน}, 1) * 3", "removed_function", Some("round")),
+    ("round [ $A ; 3 ]", "removed_function", Some("round")),
 ];
 
 #[test]
@@ -168,22 +184,27 @@ const VALID: &[&str] = &[
     "$A + $B",
     "${Flow (m3/h)} * 2 - ${ค่าแรงดัน}",
     "max($A, $B, ${x😀}) - min($A, $B, ${x😀})",
-    "round(0.01, $A)",
-    "round($A * 100) / 100",
     "abs($A - $B)",
     "($B / $A) * 100",
     "-$A ^ 2",
-    "ln(${ค่าแรงดัน}) + log10($B) + exp(0) + pow($A, 2) + sqrt(abs($A))",
-    "sign($A) + int($B) + ceil($A) + floor($B) + pi() + e()",
+    "exp(0) + pow($A, 2) + sqrt(abs($A))",
     "$A / 0.5",
     "($A > 2) && ($B < 3)",
     "2k * $A",
 ];
 
+/// Valid engine formulas using removed functions: they replay, the editor and create refuse them.
+const LEGACY_VALID: &[&str] = &[
+    "round(0.01, $A)",
+    "round($A * 100) / 100",
+    "ln(${ค่าแรงดัน}) + log10($B) + exp(0) + pow($A, 2) + sqrt(abs($A))",
+    "sign($A) + int($B) + ceil($A) + floor($B) + pi() + e()",
+];
+
 #[test]
 fn preview_validate_and_create_give_the_same_verdict_code_and_message() {
     let data = dataset();
-    let all = VALID.iter().copied().chain(CODE_CASES.iter().map(|c| c.0));
+    let all = VALID.iter().copied().chain(LEGACY_VALID.iter().copied()).chain(CODE_CASES.iter().map(|c| c.0));
     for f in all {
         let p = preview(&data, f);
         let v = validate_formula_against(&data, f);
@@ -209,22 +230,30 @@ fn preview_validate_and_create_give_the_same_verdict_code_and_message() {
             }
             Err(e) => {
                 assert!(!p.ok && !v.valid, "{f}");
-                assert_eq!(p.issues[0].message, e, "{f}: preview message");
-                assert_eq!(v.error.as_deref(), Some(e.as_str()), "{f}: validate message");
+                assert_eq!(v.error.as_deref(), Some(p.issues[0].message.as_str()), "{f}: validate message");
                 assert_eq!(v.code, Some(p.issues[0].code), "{f}: validate code");
                 assert_eq!(v.range, p.issues[0].range, "{f}: validate range");
+                if fd::removed_function(f).is_some() {
+                    assert_eq!(p.issues[0].code, fd::REMOVED_FUNCTION, "{f}");
+                }
+                assert_eq!(p.issues[0].message, e, "{f}: preview message");
             }
         }
+    }
+    for f in LEGACY_VALID {
+        assert!(compute_formula_sensor(&data, f, Some("Z"), true).is_ok(), "{f}: replay");
     }
 }
 
 #[test]
 fn the_error_lists_the_engines_own_function_list() {
     let p = preview(&dataset(), "sqr($A)");
-    assert!(p.issues[0].message.contains("Available functions: abs, sqrt"), "{}", p.issues[0].message);
-    for f in ["abs", "sqrt", "ln", "log10", "round", "min", "max", "pi", "e", "atanh", "int", "sign"] {
-        assert!(p.functions.contains(&f), "{f}");
+    assert!(p.issues[0].message.ends_with("Available functions: abs, sqrt, pow, exp, min, max."), "{}", p.issues[0].message);
+    assert_eq!(p.functions, ["abs", "sqrt", "pow", "exp", "min", "max"]);
+    for f in fd::REMOVED_FORMULA_FNS {
+        assert!(!p.functions.contains(f), "{f}");
     }
+    assert_eq!(preview(&dataset(), "$A + 1").functions, p.functions, "same list when ok");
 }
 
 
@@ -295,9 +324,10 @@ fn request_and_response_json_shapes() {
     }
     let data = dataset();
     let v = serde_json::to_value(preview(&data, "$A + 1")).unwrap();
-    for key in ["ok", "issues", "stats", "timestamps", "values", "period", "functions", "limits", "converted_formula"] {
+    for key in ["ok", "issues", "stats", "timestamps", "values", "period", "functions", "limits"] {
         assert!(v.get(key).is_some(), "missing {key}: {v}");
     }
+    assert!(v.get("converted_formula").is_none(), "{v}");
     assert_eq!(v["limits"], serde_json::json!({ "max_len": 4096, "max_depth": 64 }));
     for key in ["min", "max", "mean", "rows", "missing"] {
         assert!(v["stats"].get(key).is_some(), "stats.{key}");
@@ -308,7 +338,6 @@ fn request_and_response_json_shapes() {
     assert_eq!(v["stats"], serde_json::Value::Null);
     assert_eq!(v["issues"][0]["code"], "unknown_sensor");
     assert_eq!(v["issues"][0]["range"], serde_json::json!([0, 5]));
-    assert_eq!(v["converted_formula"], serde_json::Value::Null);
 }
 
 
@@ -633,26 +662,27 @@ fn converted_formulas_compile_and_round_exactly() {
         ("max(round($A, 1), round($B, 2))", both(&|x, y| round_dec(x, 1).max(round_dec(y, 2)))),
     ];
     for (legacy, want) in cases {
-        assert_eq!(preview(&data, legacy).issues[0].code, "round_excel", "{legacy}");
+        assert_eq!(replay_code(&data, legacy), Some(fd::ROUND_EXCEL), "{legacy}");
         let converted = convert_legacy_round(legacy);
-        let (_, got) = compute_formula_sensor(&data, &converted, Some("Z"), false)
+        // Replay of the converted text (the editor refuses `round` itself).
+        let (_, got) = compute_formula_sensor(&data, &converted, Some("Z"), true)
             .unwrap_or_else(|e| panic!("{legacy} -> {converted}: {e}"));
         assert!(same_bits(&got, &want), "{legacy} -> {converted}");
         assert_eq!(convert_legacy_round(&converted), converted, "idempotent: {legacy}");
-        // The preview offers exactly this conversion as the fix.
-        assert_eq!(preview(&data, legacy).converted_formula.as_deref(), Some(converted.as_str()), "{legacy}");
+        // The preview refuses `round` itself.
+        assert_eq!(preview(&data, legacy).issues[0].code, fd::REMOVED_FUNCTION, "{legacy}");
     }
     // Brace names with symbols and Thai convert too.
     let f = "round(${Flow (m3/h)} / ${ค่าแรงดัน}, 2)";
     let c = convert_legacy_round(f);
     assert_eq!(c, "round((${Flow (m3/h)} / ${ค่าแรงดัน}) * 100) / 100");
-    assert!(compute_formula_sensor(&data, &c, Some("Z"), false).is_ok());
+    assert!(compute_formula_sensor(&data, &c, Some("Z"), true).is_ok());
 }
 
 #[test]
 fn conversion_leaves_other_formulas_alone_and_other_errors_still_refuse() {
     let data = dataset();
-    for f in VALID {
+    for f in VALID.iter().chain(LEGACY_VALID) {
         assert_eq!(convert_legacy_round(f), *f, "{f}");
         let out = convert_legacy_formula(f.to_string());
         assert!(!out.changed && out.formula == *f);
@@ -661,7 +691,7 @@ fn conversion_leaves_other_formulas_alone_and_other_errors_still_refuse() {
     assert!(out.changed);
     assert_eq!(out.formula, "round($A * 100) / 100");
 
-    // Another problem in the same formula: conversion fixes the round but it stays refused, with no fix offered.
+    // Another problem in the same formula: conversion fixes the round but the gate (minus removed_function) still refuses it.
     for (f, still) in [
         ("round($A, 2) / 0", "div_zero"),
         ("round($A, 2) + sqr($B)", "unknown_function"),
@@ -669,18 +699,18 @@ fn conversion_leaves_other_formulas_alone_and_other_errors_still_refuse() {
     ] {
         let p = preview(&data, f);
         assert!(!p.ok, "{f}");
-        assert_eq!(p.converted_formula, None, "{f}");
         let c = convert_legacy_round(f);
-        let after = preview(&data, &c);
-        assert!(!after.ok, "{f} -> {c}");
-        assert_eq!(after.issues[0].code, still, "{f} -> {c}: {}", after.issues[0].message);
+        assert_ne!(c, f);
+        let after = replay_code(&data, &c).or_else(|| fd::division_by_zero(&c).map(|i| i.code));
+        assert_eq!(after, Some(still), "{f} -> {c}");
     }
     // An unknown sensor is reported before the round (references first).
     let p = preview(&data, "round($A, 2) + $nope");
-    assert_eq!((p.issues[0].code, p.converted_formula.as_deref()), ("unknown_sensor", None));
+    assert_eq!(p.issues[0].code, "unknown_sensor");
     // A step that is not a whole number of places: refused, not converted.
     let p = preview(&data, "round($A, 0.5)");
-    assert_eq!((p.issues[0].code, p.converted_formula.as_deref()), ("round_excel", None));
+    assert_eq!(p.issues[0].code, "removed_function");
+    assert_eq!(replay_code(&data, "round($A, 0.5)"), Some(fd::ROUND_EXCEL));
     assert_eq!(convert_legacy_round("round($A, 0.5)"), "round($A, 0.5)");
 }
 
@@ -704,7 +734,8 @@ fn conversion_and_the_size_limits() {
     assert_eq!(validate_formula_against(&data, &out.formula).code, Some("too_long"));
     assert!(compute_formula_sensor(&data, &out.formula, Some("Z"), true).unwrap_err().starts_with("Formula too long"));
     let p = preview(&data, &edge);
-    assert_eq!((p.issues[0].code, p.converted_formula.as_deref()), ("round_excel", None));
+    assert_eq!(p.issues[0].code, "removed_function");
+    assert_eq!(replay_code(&data, &edge), Some(fd::ROUND_EXCEL));
 }
 
 #[test]
@@ -726,14 +757,13 @@ fn the_converter_agrees_with_the_refusal_on_every_shape() {
         "$round",
     ];
     for f in shapes {
-        let refused = preview(&data, f).issues.first().map(|i| i.code) == Some(fd::ROUND_EXCEL);
+        let refused = replay_code(&data, f) == Some(fd::ROUND_EXCEL);
         let c = convert_legacy_round(f);
         if !refused {
             assert_eq!(c, f, "{f}: converted although not refused");
         } else {
             assert_ne!(c, f, "{f}: refused but not converted");
-            let after = preview(&data, &c);
-            assert!(after.issues.iter().all(|i| i.code != fd::ROUND_EXCEL), "{f} -> {c}");
+            assert_ne!(replay_code(&data, &c), Some(fd::ROUND_EXCEL), "{f} -> {c}");
         }
     }
 }

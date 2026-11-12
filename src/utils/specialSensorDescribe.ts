@@ -41,8 +41,7 @@ export interface SpecialSensorDescription {
     expression: string;
     /** Sensors it reads, in order of first use (for Inline labels). */
     sources: string[];
-    /** Decimals it rounds to (the formula's "Round the result" or the block's
-     *  `multiOp.decimals`); null = not rounded. */
+    /** Decimals an old recipe rounds to (a formula's trailing round, or `multiOp.decimals`); null = not rounded. */
     decimals: number | null;
 }
 

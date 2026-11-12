@@ -27,13 +27,15 @@ const META: SensorMetadata[] = [
     { tag: 'C', description: 'Speed', unit: 'RPM', component: 'Motor' },
     { tag: 'Flow (m3/h)', description: 'Flow', unit: 'm3/h', component: 'Pump' },
 ];
-const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'ln', 'log', 'log10', 'round', 'min', 'max', 'ceil', 'floor', 'pi', 'e'];
+// Rust's preview_formula `functions` since 2026-11-12.
+const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'];
+const removedMsg = (name: string) => `Formula error: '${name}' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.`;
 
 const ok = (over: Partial<FormulaPreviewResult> = {}): FormulaPreviewResult => ({
     ok: true, issues: [], stats: { min: 1, max: 9, mean: 4.5, rows: 1234, missing: 12 },
     timestamps: ['2024-01-01 00:00:00', '2024-01-02 00:00:00'], values: [1, null, 9],
     period: ['2024-01-01 00:00:00', '2024-03-01 00:00:00'],
-    functions: FUNCTIONS, limits: { max_len: 4096, max_depth: 64 }, converted_formula: null, ...over,
+    functions: FUNCTIONS, limits: { max_len: 4096, max_depth: 64 }, ...over,
 });
 const refused = (code: string, message: string, range?: [number, number], over: Partial<FormulaPreviewResult> = {}): FormulaPreviewResult => ok({
     ok: false, issues: [{ code, message, ...(range ? { range } : {}) }], stats: null, values: [], timestamps: [], period: null, ...over,
@@ -161,7 +163,7 @@ describe('the check line and the report', () => {
         const { last } = setup();
         expect(last()).toEqual({ state: null, issue: null, edited: false });
         type('abs($A');
-        expect(last().state).toMatchObject({ mode: 'formula', text: 'abs($A', roundDecimals: null });
+        expect(last().state).toEqual({ mode: 'formula', text: 'abs($A', note: null });
         expect(last().issue).toMatchObject({ code: 'unclosed_bracket' });
         fireEvent.click(within(check()).getByRole('button', { name: 'Add )' }));
         expect(field().value).toBe('abs($A)');
@@ -171,19 +173,20 @@ describe('the check line and the report', () => {
     });
 
     it('always sends the text to Rust (even when the cheap check fails); Rust has the last word', async () => {
-        reply = () => refused('round_excel', 'Formula error: round($A, 2) does not round to 2 decimal places.', [0, 12], {
-            converted_formula: 'round($A * 100) / 100',
-        });
+        reply = () => refused('removed_function', removedMsg('ln'), [5, 7]);
         const { last } = setup();
-        type('round($A, 2)');
+        // A removed function is flagged at once, before Rust answers.
+        type('$A + ln($A)');
+        expect(last().issue).toMatchObject({ code: 'removed_function', range: [5, 7] });
         await flush();
-        expect(mockInvoke).toHaveBeenCalledWith('preview_formula', expect.objectContaining({ formula: 'round($A, 2)', maxPoints: 600, replace: false }));
-        expect(check().textContent).toContain('does not round to 2 decimal places');
-        // The fix uses Rust's own conversion: the engine form, never round(0.01, …).
-        const fix = within(check()).getByRole('button', { name: 'Use round(… * 100) / 100' });
-        fireEvent.click(fix);
-        expect(field().value).toBe('round($A * 100) / 100');
+        expect(mockInvoke).toHaveBeenCalledWith('preview_formula', expect.objectContaining({ formula: '$A + ln($A)', maxPoints: 600, replace: false }));
+        expect(check().textContent).toContain("'ln' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.");
+        expect(last().issue).toMatchObject({ code: 'removed_function' });
+        expect([...mirror().querySelectorAll('.err')].map(e => e.textContent)).toEqual(['ln']);
+        // No automatic fix: only the message itself (it selects the range); the user deletes the function.
+        expect(within(check()).getAllByRole('button').map(b => b.textContent)).toEqual([expect.stringContaining("'ln' is no longer available")]);
         reply = () => ok();
+        type('$A + $A');
         await flush();
         expect(last().issue).toBeNull();
         expect(check().textContent).toMatch(/✓ Valid · uses 1 sensor · computed on 1,234 rows/);
@@ -374,39 +377,56 @@ describe('structural edits', () => {
     });
 });
 
-describe('Round the result', () => {
-    it('is set in one place, shows the stored form and previews the stored text', async () => {
+describe('no rounding and only the kept functions (2026-11-12)', () => {
+    it('there is no "Round the result" row; the typed text is previewed exactly as typed', async () => {
         const { last } = setup();
         type('$A + $B');
-        fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '2' }));
-        expect(screen.getByTestId('round-hint').textContent).toContain('stored as round(… * 100) / 100');
+        expect(screen.queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
+        expect(screen.queryByTestId('round-hint')).toBeNull();
+        expect(screen.queryByText('Round the result')).toBeNull();
         const s = last().state!;
-        expect(s.mode === 'formula' && editorStateFormula(s)).toBe('round(($A + $B) * 100) / 100');
+        expect(s.mode === 'formula' && editorStateFormula(s)).toBe('$A + $B');
         await flush();
-        expect(mockInvoke).toHaveBeenLastCalledWith('preview_formula', expect.objectContaining({ formula: 'round(($A + $B) * 100) / 100' }));
+        expect(mockInvoke).toHaveBeenLastCalledWith('preview_formula', expect.objectContaining({ formula: '$A + $B' }));
     });
 
-    it('Rust ranges on the stored text map back into the field', async () => {
-        reply = () => refused('unknown_sensor', 'Sensor not found: Zed', [12, 16]);
+    it('the palette offers exactly abs, √, exp, min, max', () => {
+        setup();
+        const fns = [...within(screen.getByRole('toolbar', { name: 'Insert' })).getAllByRole('button')]
+            .filter(b => b.classList.contains('fn'));
+        expect(fns.map(b => b.textContent)).toEqual(['abs', '√', 'exp', 'min', 'max']);
+        for (const gone of ['ln', 'log10', 'round', 'ceil', 'floor']) {
+            expect(screen.queryByRole('button', { name: `Insert ${gone}` })).toBeNull();
+        }
+    });
+
+    it('"All functions" lists every function you can use, each written name( )', async () => {
+        setup();
+        type('$A + 1');
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: /All functions/ }));
+        const menu = screen.getByRole('menu', { name: 'All functions' });
+        expect(menu.textContent).toContain('Every function you can use · click to insert');
+        expect(within(menu).getAllByRole('menuitem').map(b => b.querySelector('.fx-mono')?.textContent))
+            .toEqual(FUNCTIONS.map(f => `${f}( )`));
+    });
+
+    it('Rust ranges are used on the field as they are', async () => {
+        reply = () => refused('unknown_sensor', 'Sensor not found: Zed', [5, 9]);
         setup();
         type('$A + $Zed');
         fireEvent.blur(field()); // the word is finished: the suggestions close
-        fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '2' }));
         await flush();
-        // `round(($A + $Zed) * 100) / 100`: [12, 16) is `$Zed`, at [5, 9) in the field.
         expect([...mirror().querySelectorAll('.err')].map(e => e.textContent)).toEqual(['$Zed']);
     });
 
-    it('never wraps a body with an unpaired bracket: the broken text is checked and saved as typed', async () => {
+    it('once the function list is in, a removed function is flagged at once while typing', async () => {
         const { last } = setup();
-        type('$A) + ($B');
-        fireEvent.blur(field());
-        fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '2' }));
-        await flush();
-        const s = last().state!;
-        expect(s.mode === 'formula' && editorStateFormula(s)).toBe('$A) + ($B');
-        const sent = mockInvoke.mock.calls.filter(c => c[0] === 'preview_formula').map(c => (c[1] as { formula: string }).formula);
-        expect(sent.some(f => f.startsWith('round('))).toBe(false);
+        type('$A + 1');
+        await flush(); // the function list arrives with the first preview
+        type('floor($A) * 2');
+        expect(last().issue).toMatchObject({ code: 'removed_function', range: [0, 5] });
+        expect(check().textContent).toContain(removedMsg('floor'));
     });
 });
 
@@ -432,17 +452,30 @@ describe('Quick build', () => {
         expect(field().value).toBe('$A + 5');
     });
 
-    it('1 picked: round reveals decimals and writes the engine form; with text Insert brackets the piece', () => {
+    it('1 picked: the Transform pills are exactly abs, √, exp (no decimals); with text Insert brackets the piece', () => {
         setup({ quickSelected: ['A'] });
-        fireEvent.click(within(within(qb()).getByRole('group', { name: 'Transform' })).getByRole('button', { name: 'round' }));
-        expect(out().textContent).toBe('round($A * 100) / 100');
-        fireEvent.change(within(qb()).getByLabelText('Decimals'), { target: { value: '1' } });
-        expect(out().textContent).toBe('round($A * 10) / 10');
+        const transform = within(within(qb()).getByRole('group', { name: 'Transform' }));
+        expect(transform.getAllByRole('button').map(b => b.textContent)).toEqual(['abs', '√', 'exp']);
+        expect(within(qb()).queryByLabelText('Decimals')).toBeNull();
+        fireEvent.click(transform.getByRole('button', { name: 'exp' }));
+        expect(out().textContent).toBe('exp($A)');
+        fireEvent.click(within(within(qb()).getByRole('group', { name: 'Combine with a number' })).getByRole('button', { name: '+' }));
+        fireEvent.change(within(qb()).getByLabelText('Value'), { target: { value: '1' } });
+        expect(out().textContent).toBe('$A + 1');
         type('2 * ', 4);
         fireEvent.click(within(qb()).getByRole('button', { name: 'Insert at cursor' }));
-        expect(field().value).toBe('2 * (round($A * 10) / 10)');
+        expect(field().value).toBe('2 * ($A + 1)');
         fireEvent.click(within(qb()).getByRole('button', { name: 'Replace formula' }));
-        expect(field().value).toBe('round($A * 10) / 10');
+        expect(field().value).toBe('$A + 1');
+    });
+
+    it('2+ picked: the Then wrap pills are exactly abs, √, exp (no decimals)', () => {
+        setup({ quickSelected: ['A', 'B'] });
+        const wrap = within(within(qb()).getByRole('group', { name: 'Then wrap' }));
+        expect(wrap.getAllByRole('button').map(b => b.textContent)).toEqual(['abs', '√', 'exp']);
+        fireEvent.click(wrap.getByRole('button', { name: '√' }));
+        expect(out().textContent).toBe('sqrt($A + $B)');
+        expect(within(qb()).queryByLabelText('Decimals')).toBeNull();
     });
 
     it('2+ picked: a chain with + by default; a sign menu changes it; a combination dims the signs', () => {
@@ -480,16 +513,15 @@ describe('Quick build', () => {
         expect(screen.getByTestId('formula-card').textContent).toContain('Average block');
         expect(screen.queryByLabelText('Formula')).toBeNull();
         expect(last().state).toEqual({ mode: 'block', type: 'mean', sources: ['A', 'B', 'C'], decimals: null, note: null });
-        // Round the result on a block = the block's own decimals (multiOp.decimals), never a round() wrap.
-        fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '1' }));
-        expect(last().state).toMatchObject({ mode: 'block', decimals: 1 });
+        // A new block never rounds: no rounding control, no multiOp.decimals.
+        expect(screen.queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
         expect(editorStateToRecipe(last().state!, 'AVG')).toEqual({
             kind: 'operation', tag: 'AVG', sourceSensors: ['A', 'B', 'C'],
-            operationConfig: { mode: 'multi', multiOp: { type: 'mean', decimals: 1 }, customName: 'AVG' },
+            operationConfig: { mode: 'multi', multiOp: { type: 'mean' }, customName: 'AVG' },
         });
         await flush();
         expect(mockInvoke).toHaveBeenLastCalledWith('preview_formula', expect.objectContaining({
-            aggregate: { type: 'mean', sources: ['A', 'B', 'C'], decimals: 1 }, formula: undefined,
+            aggregate: { type: 'mean', sources: ['A', 'B', 'C'] }, formula: undefined,
         }));
     });
 
@@ -534,35 +566,45 @@ describe('Quick build', () => {
 describe('Edit, Locked and Repair', () => {
     const F = (formula: string): SpecialSensorRecipe => ({ kind: 'formula', tag: 'S1', formula });
 
-    it('Edit opens the stored formula with its rounding split out; edited flips once the maths change', async () => {
+    it('Edit of an old round() sensor opens its full stored text; the check blocks until round is deleted', async () => {
+        reply = args => (String(args.formula).includes('round')
+            ? refused('removed_function', removedMsg('round'), [0, 5]) : ok());
         const { last } = setup({ initialRecipe: F('round(($A + $B) * 100) / 100') });
-        expect(field().value).toBe('$A + $B');
-        expect(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '2' }).getAttribute('aria-checked')).toBe('true');
+        expect(field().value).toBe('round(($A + $B) * 100) / 100');
+        expect(screen.queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
         expect(last()).toMatchObject({ edited: false });
         await flush();
         // Edit previews with `replace: true`, the same value Save sends.
-        expect(mockInvoke).toHaveBeenCalledWith('preview_formula', expect.objectContaining({ replace: true }));
-        type('$A - $B');
-        expect(last()).toMatchObject({ edited: true });
+        expect(mockInvoke).toHaveBeenCalledWith('preview_formula', expect.objectContaining({ formula: 'round(($A + $B) * 100) / 100', replace: true }));
+        expect(check().textContent).toContain(removedMsg('round'));
+        expect(last().issue).toMatchObject({ code: 'removed_function' });
+        expect([...mirror().querySelectorAll('.err')].map(e => e.textContent)).toEqual(['round']);
+        // Deleting the function lets it validate.
+        type('($A + $B) * 100 / 100');
+        await flush();
+        expect(last()).toMatchObject({ issue: null, edited: true });
+        expect(check().textContent).toContain('✓ Valid');
     });
 
-    it('a stored rounding outside the usual choices (4 places) shows as one more, selected, choice', () => {
-        const { last } = setup({ initialRecipe: F('round($A * 10000) / 10000') });
-        expect(field().value).toBe('$A');
-        const group = within(screen.getByRole('radiogroup', { name: 'Round the result' }));
-        expect(group.getAllByRole('radio').map(r => r.textContent)).toEqual(['Off', '0', '1', '2', '3', '4']);
-        expect(group.getByRole('radio', { name: '4' }).getAttribute('aria-checked')).toBe('true');
-        expect(last()).toMatchObject({ edited: false });
-        // Picking a usual choice drops the extra one.
-        fireEvent.click(group.getByRole('radio', { name: '2' }));
-        expect(within(screen.getByRole('radiogroup', { name: 'Round the result' })).queryByRole('radio', { name: '4' })).toBeNull();
+    it('Edit of an old ln() sensor: refused even when the rest is valid; removing ln clears it', async () => {
+        reply = args => (String(args.formula).includes('ln(') ? refused('removed_function', removedMsg('ln'), [0, 2]) : ok());
+        const { last } = setup({ initialRecipe: F('ln($A) * 2') });
+        expect(field().value).toBe('ln($A) * 2');
+        await flush();
+        expect(last().issue).toMatchObject({ code: 'removed_function' });
+        expect(check().textContent).toContain("'ln' is no longer available");
+        type('$A * 2');
+        await flush();
+        expect(last().issue).toBeNull();
     });
 
-    it('a block stored with 5 decimals shows 5 selected', () => {
-        setup({
-            initialRecipe: { kind: 'operation', tag: 'AVG', sourceSensors: ['A', 'B'], operationConfig: { mode: 'multi', multiOp: { type: 'mean', decimals: 5 }, customName: 'AVG' } },
-        });
-        expect(within(screen.getByRole('radiogroup', { name: 'Round the result' })).getByRole('radio', { name: '5' }).getAttribute('aria-checked')).toBe('true');
+    it('a block stored with decimals keeps them (hidden): no rounding control, an untouched save returns the stored recipe', () => {
+        const stored: SpecialSensorRecipe = { kind: 'operation', tag: 'AVG', sourceSensors: ['A', 'B'], operationConfig: { mode: 'multi', multiOp: { type: 'mean', decimals: 5 }, customName: 'AVG' } };
+        const { last } = setup({ initialRecipe: stored });
+        expect(screen.queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
+        expect(last().state).toMatchObject({ mode: 'block', type: 'mean', decimals: 5 });
+        expect(last().edited).toBe(false);
+        expect(editorStateToRecipe(last().state!, 'AVG', stored)).toBe(stored);
     });
 
     it('a legacy Sum operation opens expanded as A + B + C with a note', () => {
@@ -570,7 +612,7 @@ describe('Edit, Locked and Repair', () => {
             initialRecipe: { kind: 'operation', tag: 'SUM', sourceSensors: ['A', 'B', 'C'], operationConfig: { mode: 'multi', multiOp: { type: 'sum' }, customName: 'SUM' } },
         });
         expect(field().value).toBe('$A + $B + $C');
-        expect(screen.getByTestId('formula-note').textContent).toContain('Opened from a Sum recipe as A + B + C');
+        expect(screen.getByTestId('formula-note').textContent).toBe('Opened from a Sum recipe as A + B + C. Saving without changing it keeps the stored recipe; a changed one saves as a formula, without round().');
         expect(last()).toMatchObject({ edited: false });
     });
 
@@ -595,9 +637,7 @@ describe('Edit, Locked and Repair', () => {
         expect(check().textContent).toContain('Name and formula are locked. Used by Pump model (target).');
         expect(screen.queryByTestId('quick-build')).toBeNull();
         expect(screen.queryByRole('toolbar', { name: 'Insert' })).toBeNull();
-        for (const r of within(screen.getByRole('radiogroup', { name: 'Round the result' })).getAllByRole('radio')) {
-            expect((r as HTMLButtonElement).disabled).toBe(true);
-        }
+        expect(screen.queryByRole('radiogroup', { name: 'Round the result' })).toBeNull();
         await flush();
         expect(mockInvoke).not.toHaveBeenCalledWith('preview_formula', expect.anything());
     });

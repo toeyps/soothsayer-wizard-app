@@ -10,7 +10,7 @@ import { fmtNum, sensorHaystack, sensorTitle, useSensorLookup } from '../sensor/
 import type { SpecialSensorRecipe } from '../../types';
 import type { FormulaIssue } from '../../types/formula';
 import { bracketPairAt, referencedSensors, tokenizeFormula, type FormulaToken } from '../../utils/formulaTokens';
-import { checkAggregate, checkFormula, sensorResolver, ZERO_ARG_FUNCTIONS } from '../../utils/formulaCheck';
+import { checkAggregate, checkFormula, sensorResolver } from '../../utils/formulaCheck';
 import {
     applyCompletion, autocompleteContext, functionSuggestions, issueWhileTyping,
     type AutocompleteContext, type CompletionItem,
@@ -19,7 +19,6 @@ import {
     fixForIssue, insertFunction, insertOperator, insertSensorAt, replaceSensorEverywhere, unwrapAt, wrapSelection,
     type FormulaEdit,
 } from '../../utils/formulaFixes';
-import { rangeToBody, withRoundResult } from '../../utils/formulaRounding';
 import { formatDataStamp } from '../../utils/workbenchDate';
 import {
     blockPreviewAggregate, editorStateFormula, insertQuickPiece, quickMulti, quickSingle, recipeToEditorState,
@@ -85,20 +84,13 @@ interface Props {
 /** Wording per engine function; the LIST comes from Rust, unknown names show without a meaning. */
 const FN_HELP: Record<string, string> = {
     abs: 'size of a value, sign removed', sqrt: 'square root', pow: 'pow(x, n) = x ^ n', exp: 'e ^ x',
-    ln: 'natural log', log: 'log base 10', log10: 'log base 10',
-    round: 'round(x) to a whole number · for decimals round(x * 100) / 100',
-    min: 'smallest of the values', max: 'largest of the values', ceil: 'round up', floor: 'round down',
-    sin: 'sine (radians)', cos: 'cosine (radians)', tan: 'tangent (radians)', asin: 'arc sine', acos: 'arc cosine',
-    atan: 'arc tangent', sinh: 'hyperbolic sine', cosh: 'hyperbolic cosine', tanh: 'hyperbolic tangent',
-    asinh: 'inverse sinh', acosh: 'inverse cosh', atanh: 'inverse tanh', sign: '−1, 0 or 1',
-    int: 'whole part, decimals cut', pi: 'π = 3.14159…', e: 'e = 2.71828…',
+    min: 'smallest of the values', max: 'largest of the values',
 };
-const PALETTE_FNS = ['abs', 'sqrt', 'ln', 'log10', 'exp', 'round', 'min', 'max', 'ceil', 'floor'];
-const FN_LABEL: Record<string, string> = { sqrt: '√', log10: 'log₁₀' };
+const PALETTE_FNS = ['abs', 'sqrt', 'exp', 'min', 'max'];
+const FN_LABEL: Record<string, string> = { sqrt: '√' };
 const OP_SYMBOL: Record<QuickNumberOp, string> = { '+': '+', '-': '−', '*': '×', '/': '÷', '^': '^' };
 const OP_NAME: Record<QuickNumberOp, string> = { '+': 'add', '-': 'subtract', '*': 'multiply', '/': 'divide', '^': 'power' };
 const BLOCK_NAME = { mean: 'Average', median: 'Median', sum: 'Sum' } as const;
-const ROUND_CHOICES: Array<number | null> = [null, 0, 1, 2, 3];
 const EMPTY_REPORT: FormulaEditorReport = { state: null, issue: null, edited: false };
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
@@ -123,7 +115,7 @@ function sameState(a: FormulaEditorState | null, b: FormulaEditorState | null): 
 const issueKey = (i: FormulaIssue | null) => (i ? `${i.code}|${i.message}|${i.range?.join(',') ?? ''}` : '');
 
 const NOTE_TEXT: Record<FormulaEditorNote, string> = {
-    'legacy-sum': 'Opened from a Sum recipe as A + B + C. Saving keeps the same result (a row is missing when any source is missing) and stores it as a formula.',
+    'legacy-sum': 'Opened from a Sum recipe as A + B + C. Saving without changing it keeps the stored recipe; a changed one saves as a formula, without round().',
     'legacy-operation': 'Opened from a one-sensor operation as its formula. Saving without changing the maths keeps the stored recipe as it is.',
 };
 
@@ -134,7 +126,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
 
     const initial = useMemo(() => (initialRecipe ? recipeToEditorState(initialRecipe) : null), []); // eslint-disable-line react-hooks/exhaustive-deps
     const [text, setText] = useState(initial?.mode === 'formula' ? initial.text : '');
-    const [roundDecimals, setRoundDecimals] = useState<number | null>(initial?.mode === 'formula' ? initial.roundDecimals : null);
     const [block, setBlock] = useState<BlockState | null>(
         initial?.mode === 'block' ? { type: initial.type, sources: [...initial.sources], decimals: initial.decimals } : null,
     );
@@ -143,8 +134,8 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const state = useMemo<FormulaEditorState | null>(() => {
         if (block) return { mode: 'block', ...block, note };
         if (!text.trim()) return null;
-        return { mode: 'formula', text, roundDecimals, note };
-    }, [block, text, roundDecimals, note]);
+        return { mode: 'formula', text, note };
+    }, [block, text, note]);
 
     const taRef = useRef<HTMLTextAreaElement>(null);
     const mirrorRef = useRef<HTMLDivElement>(null);
@@ -161,12 +152,11 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const tokens = useMemo(() => tokenizeFormula(text), [text]);
     const isKnown = useMemo(() => sensorResolver(knownSensors), [knownSensors]);
 
-    const rounded = useMemo(() => withRoundResult(text, roundDecimals), [text, roundDecimals]);
     const previewInput = useMemo(() => {
         if (locked) return null;
         if (block) return { aggregate: blockPreviewAggregate(block) };
-        return rounded.formula ? { formula: rounded.formula } : null;
-    }, [locked, block, rounded]);
+        return text.trim() ? { formula: text } : null;
+    }, [locked, block, text]);
     const preview = usePreviewFormula({ input: previewInput, generation, replace: editing });
     const functions = preview.functions;
     const mode = editing ? 'edit' : 'create';
@@ -178,14 +168,9 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
             maxLength: preview.limits?.max_len, maxDepth: preview.limits?.max_depth,
         });
     }, [locked, block, text, tokens, isKnown, functions, mode, preview.limits]);
-    // Rust checked the STORED text (with the round wrapper): its ranges map back into the field.
-    const rustIssues = useMemo(
-        () => (block ? preview.issues : preview.issues.map(i => ({ ...i, range: rangeToBody(i.range, rounded) }))),
-        [block, preview.issues, rounded],
-    );
     const verdict = useMemo(
-        () => resolveFormulaVerdict(cheap, { isCurrent: preview.isCurrent, ok: preview.ok, issues: rustIssues }),
-        [cheap, preview.isCurrent, preview.ok, rustIssues],
+        () => resolveFormulaVerdict(cheap, { isCurrent: preview.isCurrent, ok: preview.ok, issues: preview.issues }),
+        [cheap, preview.isCurrent, preview.ok, preview.issues],
     );
     const blocking = locked || !state ? null : verdict.issue;
     // No red flash for the word still being typed.
@@ -400,7 +385,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const applyQuickFormula = (f: QuickFormula) => {
         if (locked) return;
         setBlock(null);
-        setRoundDecimals(null);
         if (taRef.current && !block) applyEdit({ text: f.formula, selection: [f.formula.length, f.formula.length] });
         else { setText(f.formula); setNote(null); pendingSel.current = [f.formula.length, f.formula.length]; }
     };
@@ -412,14 +396,12 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const applyQuickBlock = (b: QuickBlock) => {
         if (locked) return;
         setText('');
-        setRoundDecimals(null);
         setNote(null);
         setAc(null);
-        setBlock({ type: b.type, sources: [...b.sources], decimals: b.decimals });
+        setBlock({ type: b.type, sources: [...b.sources], decimals: null });
     };
     const clearAll = () => {
         setBlock(null);
-        setRoundDecimals(null);
         setNote(null);
         setAc(null);
         if (taRef.current && text) applyEdit({ text: '', selection: [0, 0] });
@@ -436,8 +418,8 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     const errRange = !locked && shown?.range ? shown.range : null;
     const fix = useMemo(() => {
         if (locked || block || !shown) return null;
-        return fixForIssue(text, shown, { functions, convertedFormula: roundDecimals === null ? preview.converted_formula : null });
-    }, [locked, block, shown, text, functions, roundDecimals, preview.converted_formula]);
+        return fixForIssue(text, shown, { functions });
+    }, [locked, block, shown, text, functions]);
     const placeholder = useMemo(() => {
         const [a, b] = sensors;
         return a && b ? `e.g. (${sensorRef(a)} - ${sensorRef(b)}) * 100` : 'e.g. ($A - $B) * 100';
@@ -645,36 +627,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                     {note && !locked && <span className="fx-info" data-testid="formula-note">{NOTE_TEXT[note]}</span>}
                 </div>
 
-                <div className="fx-rrow">
-                    <span>Round the result</span>
-                    <span className="fx-seg" role="radiogroup" aria-label="Round the result">
-                        {(() => {
-                            // A stored value outside the usual choices is shown as one more selected choice, never as no selection.
-                            const current = block ? block.decimals : roundDecimals;
-                            return current !== null && current !== undefined && !ROUND_CHOICES.includes(current)
-                                ? [...ROUND_CHOICES, current] : ROUND_CHOICES;
-                        })().map(v => {
-                            const current = block ? block.decimals : roundDecimals;
-                            const on = v === current;
-                            return (
-                                <button
-                                    key={String(v)}
-                                    type="button"
-                                    role="radio"
-                                    aria-checked={on}
-                                    className={on ? 'on' : ''}
-                                    disabled={!!locked}
-                                    onClick={() => (block ? setBlock({ ...block, decimals: v }) : setRoundDecimals(v))}
-                                >
-                                    {v === null ? 'Off' : v}
-                                </button>
-                            );
-                        })}
-                    </span>
-                    <span className="fx-hint" data-testid="round-hint">
-                        <RoundHint block={block} roundDecimals={roundDecimals} stored={rounded.formula} />
-                    </span>
-                </div>
                 {!locked && !block && (
                     <div className="fx-hint pad kbd">
                         Type freely · <kbd>$</kbd> or a name suggests sensors, a letter suggests functions (<kbd>Ctrl</kbd>+<kbd>Space</kbd> anytime) · select a part and press <kbd>(</kbd> to wrap it · <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes
@@ -746,12 +698,12 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
             {fnMenu && (
                 <AnchoredPopover anchorRect={fnMenu} onRequestClose={closeFnMenu} style={{ width: 380, padding: 4, maxHeight: 'none', overflow: 'visible' }}>
                     <div className="fx-menu fx-fnmenu" role="menu" aria-label="All functions" onKeyDown={e => { if (e.key === 'Escape') { e.stopPropagation(); closeFnMenu(); } }}>
-                        <div className="fx-mhead">Every function the engine evaluates · click to insert</div>
+                        <div className="fx-mhead">Every function you can use · click to insert</div>
                         {functions && functions.length > 0 ? (
                             <div className="fx-fngrid">
                                 {functions.map(f => (
                                     <button key={f} type="button" role="menuitem" className="fx-mitem" onClick={() => { closeFnMenu(); insertFn(f); }}>
-                                        <span className="fx-mono">{f}{ZERO_ARG_FUNCTIONS.has(f) ? '()' : '( )'}</span>
+                                        <span className="fx-mono">{f}( )</span>
                                         <small>{FN_HELP[f] ?? ''}</small>
                                     </button>
                                 ))}
@@ -759,7 +711,7 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
                         ) : (
                             <div className="fx-hint pad" style={{ paddingTop: 6 }}>The list comes from the engine with the first check — type a formula first.</div>
                         )}
-                        <div className="fx-mfoot">log = log base 10 · ln = natural log · round(x) = whole number; for decimals round(x * 100) / 100 · 5k = 5000 · −A ^ 2 = (−A)²</div>
+                        <div className="fx-mfoot">5k = 5000 · −A ^ 2 = (−A)²</div>
                     </div>
                 </AnchoredPopover>
             )}
@@ -783,23 +735,6 @@ const SpecialSensorFormulaEditor = forwardRef<FormulaEditorHandle, Props>(functi
     );
 });
 export default SpecialSensorFormulaEditor;
-
-/** The stored form of the "Round the result" setting, shown where it is set (one place). */
-function RoundHint({ block, roundDecimals, stored }: { block: BlockState | null; roundDecimals: number | null; stored: string }) {
-    if (block) {
-        return block.decimals === null
-            ? <>Keeps the full value.</>
-            : <>Rounds to {plural(block.decimals, 'decimal')}; stored with the {BLOCK_NAME[block.type]}’s own decimals.</>;
-    }
-    if (roundDecimals === null) return <>Keeps the full value.</>;
-    const scale = 10 ** roundDecimals;
-    const form = roundDecimals === 0 ? 'round(…)' : `round(… * ${scale}) / ${scale}`;
-    return (
-        <>
-            Rounds to {plural(roundDecimals, 'decimal')} · stored as <span className="fx-mono" title={stored}>{form}</span>
-        </>
-    );
-}
 
 /** The painted mirror: the text split into token spans, with a zero-width marker at the autocomplete anchor to place the popover. */
 function renderMirror(
@@ -923,7 +858,7 @@ const PreviewPlot = memo(function PreviewPlot({ values, empty }: { values: (numb
 
 /* Quick build: options depend only on how many sensors are picked; nothing hidden is committed. The generated text is shown, then written into the editor (generators in `utils/quickBuild.ts`). */
 
-const TRANSFORM_LABEL: Record<QuickTransform, string> = { abs: 'abs', sqrt: '√', log10: 'log₁₀', exp: 'exp', ceil: 'ceil', floor: 'floor', round: 'round' };
+const TRANSFORM_LABEL: Record<QuickTransform, string> = { abs: 'abs', sqrt: '√', exp: 'exp' };
 type OneChoice = null | { kind: 'number'; op: QuickNumberOp } | { kind: 'transform'; fn: QuickTransform };
 
 export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, onInsert, onBlock }: {
@@ -939,12 +874,10 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
     const n = selected.length;
     const [one, setOne] = useState<OneChoice>(null);
     const [value, setValue] = useState('');
-    const [dec, setDec] = useState(2);
     const [signs, setSigns] = useState<QuickNumberOp[]>([]);
     const [combine, setCombine] = useState<QuickCombine>(null);
     const [inputTag, setInputTag] = useState<string | null>(null);
     const [wrap, setWrap] = useState<QuickTransform | null>(null);
-    const [wrapDec, setWrapDec] = useState(2);
     const [signMenu, setSignMenu] = useState<{ i: number; rect: PopoverAnchorRect } | null>(null);
     const signTrigger = useRef<HTMLElement | null>(null);
     const closeSignMenu = useCallback(() => setSignMenu(null), []);
@@ -968,16 +901,15 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
         if (n === 1) {
             return quickSingle(selected[0], one === null ? null
                 : one.kind === 'number' ? { kind: 'number', op: one.op, value }
-                    : { kind: 'transform', transform: { fn: one.fn, ...(one.fn === 'round' ? { decimals: dec } : {}) } });
+                    : { kind: 'transform', transform: one.fn });
         }
         return quickMulti(selected, {
             combine,
             signs,
             inputTag,
-            wrap: wrap ? { fn: wrap, ...(wrap === 'round' ? { decimals: wrapDec } : {}) } : null,
-            blockDecimals: null,
+            wrap,
         });
-    }, [n, selected, one, value, dec, combine, signs, inputTag, wrap, wrapDec]);
+    }, [n, selected, one, value, combine, signs, inputTag, wrap]);
 
     if (n === 0 || !result) {
         return (
@@ -994,20 +926,6 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
         <button key={key ?? String(label)} type="button" className={`fx-k ${cls}${on ? ' on' : ''}`} aria-pressed={on} onClick={onClick} title={title}>{label}</button>
     );
     const toggleCombine = (c: Exclude<QuickCombine, null>) => setCombine(combine === c ? null : c);
-    const decimalsInput = (v: number, set: (d: number) => void) => (
-        <label className="fx-qbdec">
-            decimals
-            <input
-                className="fx-qbin sm"
-                type="number"
-                min={0}
-                max={15}
-                aria-label="Decimals"
-                value={v}
-                onChange={e => set(Math.max(0, Math.min(15, Math.trunc(Number(e.target.value) || 0))))}
-            />
-        </label>
-    );
 
     return (
         <div className="fx-card" data-testid="quick-build">
@@ -1036,7 +954,6 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
                             () => setOne(one?.kind === 'transform' && one.fn === f ? null : { kind: 'transform', fn: f }),
                             FN_HELP[f] ?? f, 'fn', `t${f}`,
                         ))}
-                        {one?.kind === 'transform' && one.fn === 'round' && decimalsInput(dec, setDec)}
                     </div>
                 </div>
             ) : (
@@ -1088,7 +1005,6 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
                         <div className="fx-qbrow" role="group" aria-label="Then wrap">
                             <span className="fx-cap">Then wrap</span>
                             {QUICK_TRANSFORMS.map(f => pill(wrap === f, TRANSFORM_LABEL[f], () => setWrap(wrap === f ? null : f), FN_HELP[f] ?? f, 'fn', `w${f}`))}
-                            {wrap === 'round' && decimalsInput(wrapDec, setWrapDec)}
                         </div>
                     )}
                 </div>

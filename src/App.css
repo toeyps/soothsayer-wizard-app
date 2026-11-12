@@ -4198,11 +4198,6 @@ body {
 .fx-fix { font: inherit; font-size: 11px; font-weight: 600; background: none; border: 1px solid var(--border-strong); color: var(--text-primary); border-radius: 6px; padding: 2px 8px; cursor: pointer; flex-shrink: 0; }
 .fx-fix:hover { background: var(--hover-bg); }
 .fx-info { flex-basis: 100%; color: var(--text-secondary); font-size: 11.5px; }
-.fx-rrow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); padding: 8px 14px 10px; border-top: 1px solid var(--border); }
-.fx-seg { display: inline-flex; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 7px; padding: 2px; gap: 2px; }
-.fx-seg button { font: inherit; font-family: var(--mono); font-size: 11.5px; border: 0; background: none; color: var(--text-secondary); padding: 3px 9px; border-radius: 5px; cursor: pointer; }
-.fx-seg button.on { background: var(--accent-muted); color: var(--accent-hi); font-weight: 600; }
-.fx-seg button:disabled { opacity: .4; cursor: default; }
 .fx-hint { font-size: 11px; color: var(--text-faint); }
 .fx-hint.pad { padding: 0 14px 10px; }
 .fx-hint.kbd { padding-top: 0; }
@@ -4212,9 +4207,6 @@ body {
 .fx-mono { font-family: var(--mono); }
 .fx-aggbox { margin: 10px 14px 0; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 10px; min-height: 44px; border-radius: 9px; background: var(--fnc-muted); border: 1px solid var(--fnc-line); }
 .fx-an { font-weight: 700; color: var(--fnc); text-transform: uppercase; letter-spacing: .06em; font-size: 10.5px; margin-right: 4px; }
-.fx-src { display: inline-flex; gap: 4px; align-items: center; background: var(--input-bg); border: 1px solid var(--border-strong); border-radius: 6px; padding: 2px 2px 2px 8px; font-size: 12px; font-weight: 500; max-width: 280px; min-width: 0; }
-.fx-src.unk { border-style: dashed; border-color: var(--danger); }
-.fx-src button { background: none; border: 0; color: var(--text-faint); cursor: pointer; padding: 0 3px; display: grid; place-items: center; }
 .fx-ac { display: grid; gap: 1px; }
 .fx-acrow { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12px; cursor: pointer; min-width: 0; color: var(--text-primary); }
 .fx-acrow.on { background: var(--accent-muted); }
@@ -4259,8 +4251,6 @@ body {
 .fx-qbrow .fx-k.on { background: var(--accent-muted); color: var(--fx-sens); border-color: var(--accent-line); }
 .fx-qbrow .fx-k.fn.on { color: var(--fnc); background: var(--fnc-muted); border-color: var(--fnc-line); }
 .fx-qbin { height: 24px; width: 88px; background: var(--input-bg); border: 1px solid var(--accent-color); border-radius: 6px; color: var(--text-primary); font: inherit; font-family: var(--mono); font-size: 12px; padding: 0 8px; outline: none; margin-left: 4px; }
-.fx-qbin.sm { width: 52px; border-color: var(--border-strong); }
-.fx-qbdec { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-secondary); margin-left: 6px; }
 .fx-qbradio { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--text-secondary); margin-left: 6px; min-width: 0; }
 .fx-qbradio input { accent-color: var(--accent-color); margin: 0; }
 .fx-chain { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; min-width: 0; }

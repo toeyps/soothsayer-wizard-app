@@ -15,7 +15,7 @@ import type { FormulaPreviewResult } from '../types/formula';
 const okReply = (over: Partial<FormulaPreviewResult> = {}): FormulaPreviewResult => ({
     ok: true, issues: [], stats: { min: 1, max: 3, mean: 2, rows: 3, missing: 0 },
     timestamps: ['t1', 't2'], values: [1, 3], period: ['t1', 't3'],
-    functions: ['abs', 'sqrt'], limits: { max_len: 4096, max_depth: 64 }, converted_formula: null,
+    functions: ['abs', 'sqrt'], limits: { max_len: 4096, max_depth: 64 },
     ...over,
 });
 const refused = (code: string, range?: [number, number]): FormulaPreviewResult => okReply({
@@ -55,7 +55,7 @@ describe('usePreviewFormula', () => {
         expect(Object.keys(args).some(k => k.includes('_'))).toBe(false);
         expect(result.current).toMatchObject({
             ok: true, issues: [], stats: { rows: 3 }, values: [1, 3], timestamps: ['t1', 't2'], period: ['t1', 't3'],
-            functions: ['abs', 'sqrt'], limits: { max_len: 4096, max_depth: 64 }, converted_formula: null,
+            functions: ['abs', 'sqrt'], limits: { max_len: 4096, max_depth: 64 },
             loading: false, isCurrent: true, stale: false, error: null,
         });
         expect(getKnownFormulaFunctions()).toEqual(['abs', 'sqrt']);

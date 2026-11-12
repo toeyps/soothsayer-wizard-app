@@ -6,7 +6,8 @@ import {
 import { checkFormula, sensorResolver } from '../utils/formulaCheck';
 import { tokenizeFormula } from '../utils/formulaTokens';
 
-const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'ln', 'log', 'log10', 'round', 'min', 'max', 'ceil', 'floor', 'sin', 'cos', 'tan', 'sign', 'int', 'pi', 'e'];
+// Rust's preview_formula `functions` since 2026-11-12.
+const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'min', 'max'];
 const issueOf = (f: string, ctx = {}) => checkFormula(f, tokenizeFormula(f), { functions: FUNCTIONS, ...ctx });
 const edit = (fix: FormulaFix | null) => (fix && fix.kind === 'edit' ? fix : null);
 
@@ -25,19 +26,6 @@ describe('fixForIssue: one fix per stable code, usable on an issue from the chec
         expect(edit(fixForIssue('$A(1 - $B)', issueOf('$A(1 - $B)')))?.edit.text).toBe('$A * (1 - $B)');
     });
 
-    it('round_excel -> "Use round(… * 100) / 100": Rust\'s converted_formula when given, else the local rewrite of that call', () => {
-        const f = '2 ^ round($A, 1)';
-        const issue = issueOf(f)!;
-        expect(issue.code).toBe('round_excel');
-        expect(edit(fixForIssue(f, issue))).toMatchObject({ label: 'Use round(… * 10) / 10', edit: { text: '2 ^ (round($A * 10) / 10)' } });
-        expect(edit(fixForIssue(f, issue, { convertedFormula: 'FROM RUST' }))?.edit.text).toBe('FROM RUST');
-        expect(edit(fixForIssue('round($A, 0)', issueOf('round($A, 0)')))).toMatchObject({ label: 'Use round(…)', edit: { text: 'round($A)' } });
-        // Not convertible (a step that is not a whole number): no fix.
-        expect(fixForIssue('round($A, 0.5)', issueOf('round($A, 0.5)'))).toBeNull();
-        // A Rust issue (same code + range) works the same.
-        expect(edit(fixForIssue('round($A, 2)', { code: 'round_excel', message: 'm', range: [0, 12] }))?.edit.text).toBe('round($A * 100) / 100');
-    });
-
     it('unknown_function -> "Use sqrt" when an engine function is close; nothing otherwise', () => {
         const f = 'sqr($A)';
         expect(edit(fixForIssue(f, issueOf(f), { functions: FUNCTIONS }))).toMatchObject({ label: 'Use sqrt', edit: { text: 'sqrt($A)', selection: [4, 4] } });
@@ -46,9 +34,17 @@ describe('fixForIssue: one fix per stable code, usable on an issue from the chec
         expect(fixForIssue(f, issueOf(f))).toBeNull(); // no function list -> no guess
     });
 
-    it('fn_no_bracket -> "Add ( )" with the caret inside (after, for pi / e)', () => {
+    it('fn_no_bracket -> "Add ( )" with the caret inside', () => {
         expect(edit(fixForIssue('abs + $A', issueOf('abs + $A')))).toMatchObject({ label: 'Add ( )', edit: { text: 'abs() + $A', selection: [4, 4] } });
-        expect(edit(fixForIssue('$A * pi', issueOf('$A * pi')))).toMatchObject({ edit: { text: '$A * pi()', selection: [9, 9] } });
+        expect(edit(fixForIssue('$A * sqrt', issueOf('$A * sqrt')))).toMatchObject({ edit: { text: '$A * sqrt()', selection: [10, 10] } });
+    });
+
+    it('removed_function has no fix: the user deletes the function themselves', () => {
+        for (const f of ['round($A * 100) / 100', '$A * pi', 'ln($A)', 'round($A, 2)']) {
+            const issue = issueOf(f);
+            expect(issue?.code, f).toBe('removed_function');
+            expect(fixForIssue(f, issue), f).toBeNull();
+        }
     });
 
     it('unmatched_close -> "Remove it"', () => {
@@ -69,6 +65,8 @@ describe('fixForIssue: one fix per stable code, usable on an issue from the chec
 });
 
 describe('closestFunction', () => {
+    // Generic helper: any list works; this one has near names to tell apart.
+    const FUNCTIONS = ['abs', 'sqrt', 'pow', 'exp', 'ln', 'log', 'log10', 'min', 'max', 'floor'];
     it('case, then edit distance, then prefix', () => {
         expect(closestFunction('SQRT', FUNCTIONS)).toBe('sqrt');
         expect(closestFunction('sqr', FUNCTIONS)).toBe('sqrt');
@@ -114,6 +112,6 @@ describe('structural edits', () => {
     it('insertFunction wraps the selection (inside kept selected), or puts the caret inside fn()', () => {
         expect(insertFunction('$A - $B', 0, 7, 'abs')).toEqual({ text: 'abs($A - $B)', selection: [4, 11] });
         expect(insertFunction('', 0, 0, 'sqrt')).toEqual({ text: 'sqrt()', selection: [5, 5] });
-        expect(insertFunction('$A *', 4, 4, 'pi')).toEqual({ text: '$A * pi()', selection: [9, 9] });
+        expect(insertFunction('$A *', 4, 4, 'exp')).toEqual({ text: '$A * exp()', selection: [9, 9] });
     });
 });

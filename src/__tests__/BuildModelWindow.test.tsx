@@ -641,7 +641,7 @@ describe('BuildModelWindow (Build Model Workbench, Phase A)', () => {
             expect(predictorPicker.getDesc).toBeUndefined();
             const scope = render(<>{predictorPicker.scope}</>).container.textContent;
             expect(scope).toMatch(/^All sensors except the target · \d+$/);
-            expect(screen.getByTestId('stiffness-select').textContent).toContain('Strict6/7'); // 10_000 -> "Strict"
+            expect(screen.getByTestId('stiffness-select').textContent).toBe('Strict'); // 10_000 -> "Strict", no step counter
 
             cleanup();
             const clu = makeModel({ id: 'c1', kind: 'clustering', targetSensor: '', xSensor: 'TAG1', ySensor: 'TAG2', numClusters: 3 });

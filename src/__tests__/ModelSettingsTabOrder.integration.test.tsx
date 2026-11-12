@@ -97,7 +97,7 @@ describe('Model settings — Tab walks the form in the order it reads, for every
         // Stiffness is one tab stop (the select); arrows change the step
         const stiff = tabStops(form).filter(el => fieldOf(el) === 'Stiffness').map(el => el.textContent);
         expect(stiff).toHaveLength(1);
-        expect(stiff[0]).toMatch(/\d\/7$/);
+        expect(stiff[0]).not.toMatch(/\d\/7/); // no step counter
         // Training data: Workspace before Custom
         expect(tabStops(form).filter(el => fieldOf(el) === 'Training data').map(el => el.textContent)).toEqual(['Workspace', 'Custom']);
     });

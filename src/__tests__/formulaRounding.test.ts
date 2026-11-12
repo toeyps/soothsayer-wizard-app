@@ -1,7 +1,7 @@
 import { convertLegacyRoundStandIn } from './helpers/legacyRoundStandIn';
 import { describe, it, expect } from 'vitest';
 import {
-    hasUnpairedBracket, rangeToBody, roundExpression, roundPlaces, splitRoundResult, withRoundResult,
+    hasUnpairedBracket, roundExpression, splitRoundResult, withRoundResult,
 } from '../utils/formulaRounding';
 
 describe('roundExpression: the engine form round(X * 10^N) / 10^N, never round(0.01, X)', () => {
@@ -16,35 +16,24 @@ describe('roundExpression: the engine form round(X * 10^N) / 10^N, never round(0
     });
 });
 
-describe('"Round the result": withRoundResult / splitRoundResult / rangeToBody', () => {
-    it('applies the setting and reports where the body sits in the stored text', () => {
-        expect(withRoundResult('  $A + $B ', 2)).toEqual({ formula: 'round(($A + $B) * 100) / 100', bodyStart: 7, bodyLead: 2, bodyLength: 7 });
-        expect(withRoundResult('$A', 1)).toMatchObject({ formula: 'round($A * 10) / 10', bodyStart: 6 });
-        expect(withRoundResult('$A + 1', null)).toMatchObject({ formula: '$A + 1', bodyStart: 0 });
-        expect(withRoundResult('', 2).formula).toBe('');
+describe('legacy rounding text: withRoundResult / splitRoundResult (replay + describe)', () => {
+    it('rounds the trimmed body; null decimals keeps it as is', () => {
+        expect(withRoundResult('  $A + $B ', 2)).toBe('round(($A + $B) * 100) / 100');
+        expect(withRoundResult('$A', 1)).toBe('round($A * 10) / 10');
+        expect(withRoundResult('$A + 1', null)).toBe('$A + 1');
+        expect(withRoundResult('', 2)).toBe('');
     });
 
     it('never wraps a body with an unpaired bracket (the wrapper could pair with it and hide the mistake)', () => {
         for (const body of ['$A) + ($B', '(($A + $B)', '$A + $B)', 'max($A, $B', '[$A + 1', '$A ] + 1']) {
             expect(hasUnpairedBracket(body), body).toBe(true);
             for (const d of [0, 2]) {
-                expect(withRoundResult(body, d), `${body} @${d}`).toEqual({ formula: body.trim(), bodyStart: 0, bodyLead: 0, bodyLength: body.trim().length });
+                expect(withRoundResult(body, d), `${body} @${d}`).toBe(body.trim());
             }
         }
-        expect(withRoundResult('  $A) + ($B', 2)).toEqual({ formula: '$A) + ($B', bodyStart: 0, bodyLead: 2, bodyLength: 9 });
+        expect(withRoundResult('  $A) + ($B', 2)).toBe('$A) + ($B');
         expect(hasUnpairedBracket('($A + $B) * max($A, $B)')).toBe(false);
-        expect(withRoundResult('($A + $B) * 2', 2).formula).toBe('round((($A + $B) * 2) * 100) / 100');
-    });
-
-    it('maps a Rust range on the stored text back into the textarea, clamped to the body', () => {
-        const r = withRoundResult(' $A + $Nope', 2); // stored: round(($A + $Nope) * 100) / 100
-        const stored = r.formula;
-        const at = stored.indexOf('$Nope');
-        expect(rangeToBody([at, at + 5], r)).toEqual([6, 11]);
-        expect(' $A + $Nope'.slice(6, 11)).toBe('$Nope');
-        expect(rangeToBody([0, stored.length], r)).toEqual([1, 11]); // the whole call -> the whole body
-        expect(rangeToBody([stored.length - 3, stored.length], r)).toBeUndefined(); // only the wrapper
-        expect(rangeToBody(undefined, r)).toBeUndefined();
+        expect(withRoundResult('($A + $B) * 2', 2)).toBe('round((($A + $B) * 2) * 100) / 100');
     });
 
     it('splits only what re-applies to EXACTLY the stored text (opening + saving never rewrites a formula)', () => {
@@ -60,20 +49,9 @@ describe('"Round the result": withRoundResult / splitRoundResult / rangeToBody',
             expect(splitRoundResult(f), f).toEqual({ body: f, decimals: null });
         }
         for (const [body, d] of [['$A', 2], ['$A + $B', 3], ['max($A, $B) - min($A, $B)', 1], ['$A', 0]] as const) {
-            const stored = withRoundResult(body, d).formula;
+            const stored = withRoundResult(body, d);
             expect(splitRoundResult(stored)).toEqual({ body, decimals: d });
         }
-    });
-});
-
-describe('roundPlaces', () => {
-    it('a plain whole number 0..15 only', () => {
-        expect(roundPlaces(' 2 ')).toBe(2);
-        expect(roundPlaces('0')).toBe(0);
-        expect(roundPlaces('2.0')).toBe(2);
-        expect(roundPlaces('16')).toBeNull();
-        expect(roundPlaces('0.5')).toBeNull();
-        expect(roundPlaces('$A')).toBeNull();
     });
 });
 

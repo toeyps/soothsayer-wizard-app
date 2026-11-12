@@ -251,7 +251,7 @@ describe('ManageSpecialSensors -- edit lock (the expanded row)', () => {
 describe('ManageSpecialSensors -- not restored', () => {
     const usesC = makeModel({ id: 'm2', name: 'Pump model', targetSensor: 'special C' });
     const specialC: SpecialSensorRecipe = { kind: 'formula', tag: 'special C', formula: 'round($11PT1214A.PV, 2)' };
-    const REASON = 'Formula error: round($11PT1214A.PV, 2) does not round to 2 decimal places.';
+    const REASON = "Formula error: 'round' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.";
     const refs = new Map([['special a', ['11PT1214A.PV']], ['special c', ['11PT1214A.PV']]]);
 
     it('flags ONLY the not-restored row, with the reason in its tooltip and an amber note under it', () => {

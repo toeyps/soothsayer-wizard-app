@@ -12,8 +12,8 @@ describe('recipeHowToBuild', () => {
         expect(recipeHowToBuild(formula('P', '$11EI1301.PV * ${Gen Load} / 100'))).toBe('Calculated as 11EI1301.PV × Gen Load / 100');
     });
     it('a formula with Round the result', () => {
-        expect(recipeHowToBuild(formula('R', withRoundResult('$A + $B', 2).formula))).toBe('Calculated as A + B, rounded to 2 decimal places');
-        expect(recipeHowToBuild(formula('R1', withRoundResult('$A', 1).formula))).toBe('Calculated as A, rounded to 1 decimal place');
+        expect(recipeHowToBuild(formula('R', withRoundResult('$A + $B', 2)))).toBe('Calculated as A + B, rounded to 2 decimal places');
+        expect(recipeHowToBuild(formula('R1', withRoundResult('$A', 1)))).toBe('Calculated as A, rounded to 1 decimal place');
     });
     it('an older step round round(0.01, X)', () => {
         expect(recipeHowToBuild(formula('L', 'round(0.01, $A * 2)'))).toBe('Calculated as A × 2, rounded to 2 decimal places');

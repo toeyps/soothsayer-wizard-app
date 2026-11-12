@@ -116,7 +116,7 @@ describe('replaySpecialSensorRecipes: a formula Rust now refuses (against the fa
         ], invoker);
         expect(r.failed).toEqual(['Circle']);
         expect(r.skipped).toEqual(['Twice']);
-        expect(r.errors).toEqual({ Circle: "Formula error: unknown name 'pi'. Write pi() for π." });
+        expect(r.errors).toEqual({ Circle: "Formula error: 'pi' is no longer available. Available functions: abs, sqrt, pow, exp, min, max." });
         expect(rust.has('Circle')).toBe(false);
         expect(rust.chartValues('Ok')).toEqual([5, 7, 9]);
     });
@@ -131,31 +131,54 @@ describe('replaySpecialSensorRecipes: a formula Rust now refuses (against the fa
 
 // The fake formula gate must keep matching lib.rs `compile_formula` for the cases frontend tests rely on.
 describe('fake Rust formula gate mirrors lib.rs messages', () => {
-    const cases: [string, string | null][] = [
-        ['$A * pi', "Formula error: unknown name 'pi'. Write pi() for π."],
-        ['$A * e', "Formula error: unknown name 'e'. Write e() for Euler's number (2.718…)."],
-        ['$A + x', "Formula error: unknown name 'x'. Write sensors as $Name, or ${Name} when the name has spaces or symbols."],
-        ['sqr($A)', "Formula error: unknown function 'sqr'. Available functions: abs, sqrt, pow, exp, ln, log (base 10), log10, round, min, max, ceil, floor, sin, cos, tan, pi(), e()."],
-        ['$A(2)', 'Formula error: $A is a sensor, not a function. Put an operator before the bracket, e.g. $A * (…).'],
-        ['round($A, 2)', 'Formula error: round($A, 2) does not round to 2 decimal places. Write round($A * 100) / 100 instead.'],
-        ['round($A + $B, 1)', 'Formula error: round($A + $B, 1) does not round to 1 decimal place. Write round(($A + $B) * 10) / 10 instead.'],
-        ['round($A, 0)', 'Formula error: round($A, 0) is not supported. Write round($A) to round to a whole number.'],
-        ['round($A)', null],
-        ['round(0.01, $A)', null],
-        ['round($A, $B)', null],
-        ['round(($A + $B) * 100) / 100', null],
-        ['ln($A) + log($B) + $A * pi() + e()', null],
+    const removed = (name: string) =>
+        `Formula error: '${name}' is no longer available. Available functions: abs, sqrt, pow, exp, min, max.`;
+    // [formula, validate_formula error, create (evaluate_formula) error]: both refuse a removed function before compiling.
+    const cases: [string, string | null, string | null][] = [
+        ['$A * pi', removed('pi'), 'same'],
+        ['$A * e', removed('e'), 'same'],
+        ['$A + x', "Formula error: unknown name 'x'. Write sensors as $Name, or ${Name} when the name has spaces or symbols.", 'same'],
+        ['sqr($A)', "Formula error: unknown function 'sqr'. Available functions: abs, sqrt, pow, exp, min, max.", 'same'],
+        ['$A(2)', 'Formula error: $A is a sensor, not a function. Put an operator before the bracket, e.g. $A * (…).', 'same'],
+        ['round($A, 2)', removed('round'), 'same'],
+        ['round($A + $B, 1)', removed('round'), 'same'],
+        ['round($A, 0)', removed('round'), 'same'],
+        ['round($A)', removed('round'), 'same'],
+        ['round(0.01, $A)', removed('round'), 'same'],
+        ['round(($A + $B) * 100) / 100', removed('round'), 'same'],
+        ['ln($A) + log($B) + $A * pi() + e()', removed('ln'), 'same'],
+        ['abs($A) + sqrt($B) + pow($A, 2) + exp($A) + min($A, $B) + max($A, $B)', null, null],
+        ['$round + ${ln}', null, null],
     ];
-    for (const [f, want] of cases) {
+    for (const [f, want, createWant] of cases) {
         it(f, async () => {
             const { createFakeRust } = await import('./helpers/fakeRustSession');
-            const rust = createFakeRust({ headers: ['timestamp', 'A', 'B'], columns: [[1, 2], [3, 4]] });
+            const rust = createFakeRust({ headers: ['timestamp', 'A', 'B', 'round', 'ln'], columns: [[1, 2], [3, 4], [5, 6], [7, 8]] });
             const v = await rust.invoke('validate_formula', { formula: f }) as { valid: boolean; error: string | null };
             expect(v.error).toBe(want);
             expect(v.valid).toBe(want === null);
-            if (want) await expect(rust.invoke('evaluate_formula', { formula: f, customName: 'X' })).rejects.toBe(want);
+            const create = rust.invoke('evaluate_formula', { formula: f, customName: 'X' });
+            const c = createWant === 'same' ? want : createWant;
+            if (c) await expect(create).rejects.toBe(c);
+            else await expect(create).resolves.toBe('X');
         });
     }
+
+    it('a saved sensor with a removed function still replays (replace: true)', async () => {
+        const { createFakeRust } = await import('./helpers/fakeRustSession');
+        const rust = createFakeRust({ headers: ['timestamp', 'A'], columns: [[1.26, 4]] });
+        await expect(rust.invoke('evaluate_formula', { formula: 'round($A * 10) / 10 + ln(1)', customName: 'X', replace: true })).resolves.toBe('X');
+        await expect(rust.invoke('evaluate_formula', { formula: 'ln($A)', customName: 'Y' })).rejects.toBe(removed('ln'));
+    });
+
+    it('a saved removed-function formula that does not compile names the removed function on replay', async () => {
+        const { createFakeRust } = await import('./helpers/fakeRustSession');
+        const rust = createFakeRust({ headers: ['timestamp', 'A'], columns: [[1, 2]] });
+        for (const [f, name] of [['$A * pi', 'pi'], ['$A * e', 'e'], ['round($A, 2)', 'round']]) {
+            await expect(rust.invoke('evaluate_formula', { formula: f, customName: 'X', replace: true })).rejects.toBe(removed(name));
+        }
+    });
+
     it('a parse error carries the "Formula parse error:" prefix', async () => {
         const { createFakeRust } = await import('./helpers/fakeRustSession');
         const rust = createFakeRust({ headers: ['timestamp', 'A'], columns: [[1]] });

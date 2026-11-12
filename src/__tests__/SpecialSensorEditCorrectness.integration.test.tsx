@@ -4,7 +4,7 @@ import { render, screen, fireEvent, within } from '@testing-library/react';
 import type { SensorMetadata, SpecialSensorRecipe } from '../types';
 import SpecialSensorFormulaEditor, { type FormulaEditorReport } from '../components/windows/SpecialSensorFormulaEditor';
 import { SensorMetaProvider } from '../components/sensor/SensorLabel';
-import { quickMulti, editorStateToRecipe, type QuickCombine, type QuickNumberOp, type QuickTransform } from '../utils/quickBuild';
+import { QUICK_TRANSFORMS, quickMulti, editorStateToRecipe, type QuickCombine, type QuickNumberOp, type QuickTransform } from '../utils/quickBuild';
 import { runSpecialSensorEdit, SpecialSensorEditError } from '../utils/specialSensorEdit';
 import { recomputeSpecialSensors } from '../utils/specialSensorRecompute';
 import { replaySpecialSensorRecipes } from '../utils/specialSensorReplay';
@@ -23,13 +23,20 @@ const SIGN: Record<string, QuickNumberOp> = { '+': '+', '−': '-', '×': '*', '
 
 describe('Quick build builds exactly the formulas the Rust engine is verified against', () => {
     for (const c of fixture.cases) {
+        // Removed 2026-11-12 (round, log10): Quick build no longer offers the wrap; the engine still replays the text.
+        if (c.wrapFunc && !QUICK_TRANSFORMS.includes(c.wrapFunc as QuickTransform)) {
+            it(`${c.ref}: ${c.wrapFunc} is not offered as a Then wrap`, () => {
+                expect(QUICK_TRANSFORMS).not.toContain(c.wrapFunc);
+            });
+            continue;
+        }
         it(`${c.ref}: ${c.expression}`, () => {
             const built = quickMulti(c.sensors, {
                 combine: c.operationId ? COMBINE[c.operationId] : null,
                 signs: c.chainOps.map(sym => SIGN[sym]),
                 // The old builder's "starting value" (the input = 100 %) was the first sensor.
                 inputTag: c.operationId === 'efficiency_pct' ? c.sensors[0] : null,
-                wrap: c.wrapFunc ? { fn: c.wrapFunc as QuickTransform, decimals: c.wrapValue } : null,
+                wrap: c.wrapFunc ? c.wrapFunc as QuickTransform : null,
             });
             expect(built).toMatchObject({ kind: 'formula', formula: c.expression, ready: true });
         });

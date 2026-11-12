@@ -20,7 +20,7 @@ export type FormulaIssueCode =
     | 'bad_number'
     | 'bad_char'
     | 'agg_too_few'
-    | 'round_excel'
+    | 'removed_function'
     | 'unknown_operation'
     | 'bad_decimals'
     | 'parse_error';
@@ -73,8 +73,6 @@ export interface FormulaPreviewResult {
     /** Every engine function name -- the ONLY source of that list in the app. */
     functions: string[];
     limits: FormulaPreviewLimits;
-    /** Set only for a `round_excel` refusal whose whole-text conversion passes the gate. */
-    converted_formula: string | null;
 }
 
 /** Rust's `convert_legacy_formula` reply. */
