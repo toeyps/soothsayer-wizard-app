@@ -452,13 +452,13 @@ describe('Quick build', () => {
         expect(field().value).toBe('$A + 5');
     });
 
-    it('1 picked: the Transform pills are exactly abs, √, exp (no decimals); with text Insert brackets the piece', () => {
+    it('1 picked: the Transform pill is abs only (no decimals); with text Insert brackets the piece', () => {
         setup({ quickSelected: ['A'] });
         const transform = within(within(qb()).getByRole('group', { name: 'Transform' }));
-        expect(transform.getAllByRole('button').map(b => b.textContent)).toEqual(['abs', '√', 'exp']);
+        expect(transform.getAllByRole('button').map(b => b.textContent)).toEqual(['abs']);
         expect(within(qb()).queryByLabelText('Decimals')).toBeNull();
-        fireEvent.click(transform.getByRole('button', { name: 'exp' }));
-        expect(out().textContent).toBe('exp($A)');
+        fireEvent.click(transform.getByRole('button', { name: 'abs' }));
+        expect(out().textContent).toBe('abs($A)');
         fireEvent.click(within(within(qb()).getByRole('group', { name: 'Combine with a number' })).getByRole('button', { name: '+' }));
         fireEvent.change(within(qb()).getByLabelText('Value'), { target: { value: '1' } });
         expect(out().textContent).toBe('$A + 1');
@@ -469,13 +469,25 @@ describe('Quick build', () => {
         expect(field().value).toBe('$A + 1');
     });
 
-    it('2+ picked: the Then wrap pills are exactly abs, √, exp (no decimals)', () => {
+    it('2+ picked: the Then wrap pill is abs only (no decimals)', () => {
         setup({ quickSelected: ['A', 'B'] });
         const wrap = within(within(qb()).getByRole('group', { name: 'Then wrap' }));
-        expect(wrap.getAllByRole('button').map(b => b.textContent)).toEqual(['abs', '√', 'exp']);
-        fireEvent.click(wrap.getByRole('button', { name: '√' }));
-        expect(out().textContent).toBe('sqrt($A + $B)');
+        expect(wrap.getAllByRole('button').map(b => b.textContent)).toEqual(['abs']);
+        fireEvent.click(wrap.getByRole('button', { name: 'abs' }));
+        expect(out().textContent).toBe('abs($A + $B)');
         expect(within(qb()).queryByLabelText('Decimals')).toBeNull();
+    });
+
+    it('2 picked: Then wrap is hidden for Spread and |A − B| (never negative), and a chosen abs is not applied there', () => {
+        setup({ quickSelected: ['A', 'B'] });
+        fireEvent.click(within(within(qb()).getByRole('group', { name: 'Then wrap' })).getByRole('button', { name: 'abs' }));
+        for (const [name, formula] of [['Spread', 'max($A, $B) - min($A, $B)'], ['|A − B|', 'abs($A - $B)']] as const) {
+            fireEvent.click(within(qb()).getByRole('button', { name }));
+            expect(within(qb()).queryByRole('group', { name: 'Then wrap' })).toBeNull();
+            expect(out().textContent).toBe(formula);
+            fireEvent.click(within(qb()).getByRole('button', { name }));
+        }
+        expect(out().textContent).toBe('abs($A + $B)');
     });
 
     it('2+ picked: a chain with + by default; a sign menu changes it; a combination dims the signs', () => {

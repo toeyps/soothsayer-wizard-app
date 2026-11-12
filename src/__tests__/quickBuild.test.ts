@@ -15,8 +15,7 @@ describe('quickSingle (1 picked sensor)', () => {
         expect(quickSingle('Flow (m3/h)', { kind: 'number', op: '*', value: '1.5' })).toMatchObject({ formula: '${Flow (m3/h)} * 1.5', ready: true, hasTopLevelOperator: true });
         expect(quickSingle('A', { kind: 'number', op: '-', value: '-5' }).formula).toBe('$A - (-5)');
         expect(quickSingle('A', { kind: 'number', op: '/', value: '2k' }).formula).toBe('$A / 2k');
-        expect(quickSingle('A', { kind: 'transform', transform: 'sqrt' }).formula).toBe('sqrt($A)');
-        expect(quickSingle('A', { kind: 'transform', transform: 'exp' }).formula).toBe('exp($A)');
+        expect(quickSingle('A', { kind: 'transform', transform: 'abs' }).formula).toBe('abs($A)');
     });
 
     it('stays dim ("Enter the number") until a number is typed', () => {
@@ -24,12 +23,12 @@ describe('quickSingle (1 picked sensor)', () => {
         expect(quickSingle('A', { kind: 'number', op: '+', value: 'abc' }).ready).toBe(false);
     });
 
-    it('offers exactly abs, sqrt and exp (no rounding transform)', () => {
-        expect([...QUICK_TRANSFORMS]).toEqual(['abs', 'sqrt', 'exp']);
+    it('offers abs only (no sqrt, exp or rounding transform)', () => {
+        expect([...QUICK_TRANSFORMS]).toEqual(['abs']);
     });
 
     it('everything it writes passes the check', () => {
-        for (const c of [null, { kind: 'number', op: '^', value: '2' }, { kind: 'transform', transform: 'abs' }, { kind: 'transform', transform: 'sqrt' }, { kind: 'transform', transform: 'exp' }] as const) {
+        for (const c of [null, { kind: 'number', op: '^', value: '2' }, { kind: 'transform', transform: 'abs' }] as const) {
             expect(valid(quickSingle('A', c).formula)).toBeNull();
         }
     });
@@ -57,8 +56,8 @@ describe('quickMulti (2+ picked sensors)', () => {
 
     it('Then wrap with a kept transform; the result passes the check', () => {
         expect((quickMulti(['A', 'B'], { combine: null, wrap: 'abs' }) as QuickFormula)).toMatchObject({ formula: 'abs($A + $B)', hasTopLevelOperator: false });
-        const wrapped = (quickMulti(['A', 'B'], { combine: 'sum', wrap: 'sqrt' }) as QuickFormula).formula;
-        expect(wrapped).toBe('sqrt($A + $B)');
+        const wrapped = (quickMulti(['A', 'B'], { combine: 'sum', wrap: 'abs' }) as QuickFormula).formula;
+        expect(wrapped).toBe('abs($A + $B)');
         expect(valid(wrapped)).toBeNull();
     });
 
@@ -93,7 +92,7 @@ describe('numberOperand / applyTransform', () => {
         expect(numberOperand('$A')).toBeNull();
     });
     it('transforms', () => {
-        expect(applyTransform('$A + $B', 'exp')).toBe('exp($A + $B)');
+        expect(applyTransform('$A + $B', 'abs')).toBe('abs($A + $B)');
         expect(applyTransform(' $A ', 'abs')).toBe('abs($A)');
     });
 });

@@ -9,9 +9,9 @@ import { insertPiece, type FormulaEdit } from './formulaFixes';
 /** Pure generators returning formula text or, for Average/Median, the aggregate block. Sensors follow Rust `sensor_ref_token` (`sensorRef`). */
 
 export type QuickNumberOp = '+' | '-' | '*' | '/' | '^';
-/** The transforms the card offers (`sqrt` = √). */
-export type QuickTransform = 'abs' | 'sqrt' | 'exp';
-export const QUICK_TRANSFORMS: readonly QuickTransform[] = ['abs', 'sqrt', 'exp'];
+/** The transforms the card offers (abs only, user 2026-11-12). */
+export type QuickTransform = 'abs';
+export const QUICK_TRANSFORMS: readonly QuickTransform[] = ['abs'];
 export const QUICK_NUMBER_OPS: readonly QuickNumberOp[] = ['+', '-', '*', '/', '^'];
 
 /** Formula text Quick build would write. */

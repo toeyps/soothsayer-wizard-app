@@ -23,7 +23,7 @@ const SIGN: Record<string, QuickNumberOp> = { '+': '+', '−': '-', '×': '*', '
 
 describe('Quick build builds exactly the formulas the Rust engine is verified against', () => {
     for (const c of fixture.cases) {
-        // Removed 2026-11-12 (round, log10): Quick build no longer offers the wrap; the engine still replays the text.
+        // Removed 2026-11-12 (round, log10, sqrt, exp): Quick build no longer offers the wrap; the engine still replays the text.
         if (c.wrapFunc && !QUICK_TRANSFORMS.includes(c.wrapFunc as QuickTransform)) {
             it(`${c.ref}: ${c.wrapFunc} is not offered as a Then wrap`, () => {
                 expect(QUICK_TRANSFORMS).not.toContain(c.wrapFunc);

@@ -858,7 +858,6 @@ const PreviewPlot = memo(function PreviewPlot({ values, empty }: { values: (numb
 
 /* Quick build: options depend only on how many sensors are picked; nothing hidden is committed. The generated text is shown, then written into the editor (generators in `utils/quickBuild.ts`). */
 
-const TRANSFORM_LABEL: Record<QuickTransform, string> = { abs: 'abs', sqrt: '√', exp: 'exp' };
 type OneChoice = null | { kind: 'number'; op: QuickNumberOp } | { kind: 'transform'; fn: QuickTransform };
 
 export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, onInsert, onBlock }: {
@@ -896,6 +895,8 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
         if (n !== 2 && (combine === 'absdiff' || combine === 'efficiency')) setCombine(null);
     }, [selected, n, combine, inputTag]);
 
+    // abs adds nothing to |A − B| or Spread (never negative), so Then wrap is hidden there.
+    const wrapShown = combine !== 'absdiff' && combine !== 'spread';
     const result = useMemo<QuickResult | null>(() => {
         if (n === 0) return null;
         if (n === 1) {
@@ -907,9 +908,9 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
             combine,
             signs,
             inputTag,
-            wrap,
+            wrap: wrapShown ? wrap : null,
         });
-    }, [n, selected, one, value, combine, signs, inputTag, wrap]);
+    }, [n, selected, one, value, combine, signs, inputTag, wrap, wrapShown]);
 
     if (n === 0 || !result) {
         return (
@@ -950,7 +951,7 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
                     <div className="fx-qbrow" role="group" aria-label="Transform">
                         <span className="fx-cap">Transform</span>
                         {QUICK_TRANSFORMS.map(f => pill(
-                            one?.kind === 'transform' && one.fn === f, TRANSFORM_LABEL[f],
+                            one?.kind === 'transform' && one.fn === f, FN_LABEL[f] ?? f,
                             () => setOne(one?.kind === 'transform' && one.fn === f ? null : { kind: 'transform', fn: f }),
                             FN_HELP[f] ?? f, 'fn', `t${f}`,
                         ))}
@@ -1001,10 +1002,10 @@ export function QuickBuild({ selected, editorEmpty, blockMode, onClear, onUse, o
                             ))}
                         </div>
                     )}
-                    {result.kind === 'formula' && (
+                    {result.kind === 'formula' && wrapShown && (
                         <div className="fx-qbrow" role="group" aria-label="Then wrap">
                             <span className="fx-cap">Then wrap</span>
-                            {QUICK_TRANSFORMS.map(f => pill(wrap === f, TRANSFORM_LABEL[f], () => setWrap(wrap === f ? null : f), FN_HELP[f] ?? f, 'fn', `w${f}`))}
+                            {QUICK_TRANSFORMS.map(f => pill(wrap === f, FN_LABEL[f] ?? f, () => setWrap(wrap === f ? null : f), FN_HELP[f] ?? f, 'fn', `w${f}`))}
                         </div>
                     )}
                 </div>
